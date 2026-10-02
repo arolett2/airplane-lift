@@ -80,7 +80,8 @@ export function bindStrips(
   lofted.surfaces.forEach((surf, i) => {
     const list = byId.get(surf.id);
     if (!list || list.length === 0) return;
-    const sorted = [...list].sort((a, b) => a.eta - b.eta);
+    // Root-to-tip order. |eta| keeps this right even if a side reports mirrored (negative) etas.
+    const sorted = [...list].sort((a, b) => Math.abs(a.eta) - Math.abs(b.eta));
     let total = 0;
     for (const s of sorted) total += Math.max(0, s.width);
     const u = new Float64Array(sorted.length);

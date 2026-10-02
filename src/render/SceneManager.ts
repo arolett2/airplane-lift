@@ -247,6 +247,8 @@ export class SceneManager implements SceneManagerApi {
     this.scene.background = null;
     this.labelRenderer.domElement.remove();
     this.renderer.dispose();
+    // Release the GL context now rather than waiting for GC (browsers cap live contexts).
+    this.renderer.forceContextLoss();
     this.renderer.domElement.remove();
   }
 

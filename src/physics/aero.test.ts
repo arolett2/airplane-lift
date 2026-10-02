@@ -694,6 +694,15 @@ describe('computeSection', () => {
     expect(airfoilModel).toBe(fakes.getAirfoilModel.mock.results[0]!.value);
   });
 
+  it('reuses the last section flow for an unchanged wing, flow and eta', () => {
+    const cache = createAeroCache();
+    const a = computeSection(DEFAULT_WING, DEFAULT_FLOW, 0.35, cache);
+    const b = computeSection(DEFAULT_WING, DEFAULT_FLOW, 0.35, cache);
+    expect(b).toBe(a);
+    computeSection(DEFAULT_WING, DEFAULT_FLOW, 0.5, cache);
+    expect(fakes.computeSectionFlow).toHaveBeenCalledTimes(2);
+  });
+
   it('uses the nearest strip airfoil, so flaps show inside the flapped span only', () => {
     const cache = createAeroCache();
     computeSection(flapsDown, DEFAULT_FLOW, 0.45, cache); // nearest: strip 1 (flapped)

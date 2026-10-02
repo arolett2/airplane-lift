@@ -87,6 +87,8 @@ export interface SolvedState {
   solution: CoupledSolution;
   /** Assembled result (requestId of the first request that produced it). */
   aero: AeroResult | null;
+  /** Last section flow computed for this state, keyed by its (clamped) eta. */
+  section: { eta: number; flow: SectionFlow } | null;
 }
 
 export interface AeroCacheStats {
@@ -336,6 +338,7 @@ export function solveState(wing: WingConfig, flow: FlowConditions, cache: AeroCa
     stripAlphaGeometric,
     solution,
     aero: null,
+    section: null,
   };
   lruSet(cache.solves, key, state, cache.capacity);
   return state;
@@ -704,16 +707,20 @@ export function computeSection(
   const etaClamped = Math.min(1, Math.max(0, Number.isFinite(eta) ? eta : 0));
   if (entry.rightWingStrips.length === 0) throw new Error('computeSection: no right wing strips');
 
+  if (state.section && state.section.eta === etaClamped) return state.section.flow;
+
   const { i0, i1, t, nearest } = interpolateStrips(model, entry.rightWingStrips, etaClamped);
   const lerp = (arr: Float64Array): number => arr[i0]! + (arr[i1]! - arr[i0]!) * t;
   const alphaGeometric = lerp(state.stripAlphaGeometric);
   const alphaEffective = lerp(sol.stripAlphaEffective);
   const reynolds = lerp(state.stripReynolds);
 
-  return computeSectionFlow(airfoils[nearest]!, {
+  const flowResult = computeSectionFlow(airfoils[nearest]!, {
     eta: etaClamped,
     alphaGeometric,
     alphaInduced: alphaGeometric - alphaEffective,
     reynolds,
   });
+  state.section = { eta: etaClamped, flow: flowResult };
+  return flowResult;
 }

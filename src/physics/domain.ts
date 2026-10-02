@@ -3,7 +3,7 @@
  * Sized from the wing span so every aircraft fits. TUNNEL frame, meters.
  * Shared by the flow-field grid (physics) and the tunnel model (render).
  */
-import type { Vec3 } from './types';
+import type { Vec3, WingGeometry } from './types';
 
 export interface TunnelDomain {
   min: Vec3;
@@ -24,4 +24,12 @@ export function tunnelDomain(overallSpan: number, rootChord: number): TunnelDoma
     min: [-ahead, -halfWidth, -halfHeight],
     max: [behind, halfWidth, halfHeight],
   };
+}
+
+/** The domain used for a given wing everywhere (worker flow field, streamlines, renderer). */
+export function domainForGeometry(geometry: WingGeometry): TunnelDomain {
+  let maxChord = 0;
+  for (const surface of geometry.surfaces)
+    for (const section of surface.sections) maxChord = Math.max(maxChord, section.chord);
+  return tunnelDomain(geometry.overallSpan, maxChord);
 }

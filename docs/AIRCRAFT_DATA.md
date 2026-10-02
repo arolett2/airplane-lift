@@ -31,18 +31,18 @@ overall span.
 
 ## Published figures
 
-| Preset       | Overall span (m)                             | Reference area (m2)                          | Quarter-chord sweep (deg)            | MTOW (kg)                          | Cruise                                    |
-| ------------ | -------------------------------------------- | -------------------------------------------- | ------------------------------------ | ---------------------------------- | ----------------------------------------- |
-| `b747-400`   | 64.44 [1][2]                                 | 525 (5,650 sq ft) [3]; some sources: 541 [2] | 37.5 [4]                             | 396,890 (875,000 lb) [1][3]        | Mach 0.85 at 35,000 ft [3]                |
-| `b747-8`     | 68.40 (224 ft 7 in) [5]                      | 554 (5,960 sq ft) [5]                        | 37.5 (basic 747 sweep) [4][5]        | 442,000 (975,000 lb) [5]           | Mach 0.855 [5]                            |
-| `b737-800`   | 35.79 with winglets, 34.32 without [6]       | 124.6 (1,341 sq ft) [6][7]                   | 25 (estimate from memory, see below) | 79,016 (174,200 lb) [6]            | Mach 0.785 typical; 0.82 max [6]          |
-| `b737-max8`  | 35.92 (117 ft 10 in) [8][9]                  | 124.6 (same wing as NG, estimate)            | 25 (as 737-800)                      | 82,191 [9] (Wikipedia: 82,600) [8] | about Mach 0.79 (estimate)                |
-| `b787-9`     | 60.12 (197 ft 3 in) [10][11]                 | 377 (4,058 sq ft) [10][11]                   | 32 [12] (32.2 in design papers)      | 254,011 (560,000 lb) [10][12]      | Mach 0.85 [10][12]; ceiling 13,100 m [10] |
-| `a320neo`    | 35.80 [13] (34.1 for the ceo with fences)    | 122.6 (A320 family) [14]                     | 25 [14]                              | 79,000 [13][15]                    | Mach 0.78 [13]                            |
-| `a380-800`   | 79.75 [16][17]                               | 845 [16][17]                                 | 33.5 [16][17]                        | 575,000 [17]                       | Mach 0.85 [16][17]                        |
-| `cessna-172` | 11.00 (36 ft 1 in) [18]                      | 16.2 (174 sq ft) [18]                        | 0 [18]                               | 1,157 (2,550 lb) [18]              | 122 kt TAS at about 8,000 ft [18]         |
-| `glider-18m` | 18.00 [19]                                   | 10.5 [19]                                    | about 0                              | 600 with water ballast [19]        | best glide ratio 50 [19]                  |
-| `f16`        | 9.45 (31 ft 0 in; 9.96 m with missiles) [20] | 27.87 (300 sq ft) [20][21]                   | 40 leading edge [21]; 32.7 derived   | 19,190 (42,300 lb) [20]            | Mach 0.85 at 9 km: estimate               |
+| Preset       | Overall span (m)                             | Reference area (m2)                                                                | Quarter-chord sweep (deg)            | MTOW (kg)                          | Cruise                                    |
+| ------------ | -------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------ | ---------------------------------- | ----------------------------------------- |
+| `b747-400`   | 64.44 [1][2]                                 | 525 (5,650 sq ft) [3]; some sources: 541 [2]                                       | 37.5 [4]                             | 396,890 (875,000 lb) [1][3]        | Mach 0.85 at 35,000 ft [3]                |
+| `b747-8`     | 68.40 (224 ft 7 in) [5]                      | 554 (5,960 sq ft) [5]                                                              | 37.5 (basic 747 sweep) [4][5]        | 442,000 (975,000 lb) [5]           | Mach 0.855 [5]                            |
+| `b737-800`   | 35.79 with winglets, 34.32 without [6]       | 124.6 (1,341 sq ft) [6][7]                                                         | 25 (estimate from memory, see below) | 79,016 (174,200 lb) [6]            | Mach 0.785 typical; 0.82 max [6]          |
+| `b737-max8`  | 35.90 to 35.92 (about 117 ft 10 in) [9]      | 124.6 (same wing as NG, estimate)                                                  | 25 (as 737-800)                      | 82,191 [9] (Wikipedia: 82,600) [8] | about Mach 0.79 (estimate)                |
+| `b787-9`     | 60.12 (197 ft 3 in) [10][11]                 | 377 (4,058 sq ft) [10][11]                                                         | 32 [12] (32.2 in design papers)      | 254,011 (560,000 lb) [10][12]      | Mach 0.85 [10][12]; ceiling 13,100 m [10] |
+| `a320neo`    | 35.80 [13] (34.1 for the ceo with fences)    | 122.6 (commonly quoted A320-family figure; not confirmed in a primary source) [14] | 25 [14]                              | 79,000 [13][15]                    | Mach 0.78 [13]                            |
+| `a380-800`   | 79.75 [16][17]                               | 845 [16][17]                                                                       | 33.5 [16][17]                        | 575,000 [17]                       | Mach 0.85 [16][17]                        |
+| `cessna-172` | 11.00 (36 ft 1 in) [18]                      | 16.2 (174 sq ft) [18]                                                              | 0 [18]                               | 1,157 (2,550 lb) [18]              | 122 kt TAS at about 8,000 ft [18]         |
+| `glider-18m` | 18.00 [19]                                   | 10.5 [19]                                                                          | about 0                              | 600 with water ballast [19]        | best glide ratio 50 [19]                  |
+| `f16`        | 9.45 (31 ft 0 in; 9.96 m with missiles) [20] | 27.87 (300 sq ft) [20][21]                                                         | 40 leading edge [21]; 32.7 derived   | 19,190 (42,300 lb) [20]            | Mach 0.85 at 9 km: estimate               |
 
 Other published figures used:
 

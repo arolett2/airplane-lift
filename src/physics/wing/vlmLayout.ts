@@ -37,6 +37,15 @@ export interface HalfStrip {
   spanTangent: Vec3;
   /** Unit chord direction (LE -> TE) orthogonal to the span tangent. */
   chordDir: Vec3;
+  /**
+   * Axes of the WingSection interpolated at the strip centre (types.ts): the chord direction
+   * (+x rotated by twist about the section span tangent), the matching normal, and the section
+   * span tangent (0, cos roll, sin roll) itself, about which twist (and virtual twist) rotates.
+   * Unlike `chordDir`, these are streamwise: sweep does not tilt them.
+   */
+  sectionChordDir: Vec3;
+  sectionNormal: Vec3;
+  twistAxis: Vec3;
   airfoil: Naca4Params;
   flap: FlapState | null;
   slat: boolean;
@@ -87,6 +96,9 @@ export interface LayoutOptions {
 /* Small vector helpers (build time only)                                                      */
 /* ------------------------------------------------------------------------------------------ */
 
+function add(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
 function sub(a: Vec3, b: Vec3): Vec3 {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 }
@@ -170,6 +182,50 @@ function sameFlap(a: FlapState | null, b: FlapState | null): boolean {
   return a.chordFrac === b.chordFrac && a.deflection === b.deflection;
 }
 
+/**
+ * One side edge of a strip: the section it is cut from, the flap camber lines averaged on it,
+ * whether it is a wing root that must lie in the symmetry plane, and an optional transition
+ * shift: weight * (from - to), pointwise along the chord. A segment that starts on an edge other
+ * than its own inboard section (a device on its parent's tip edge, or a segment stretched back
+ * over skipped slivers) blends from that edge (weight 1 at the segment start) to its own sections
+ * (weight 0 at its end), so the junction is exact and its skew is spread over the whole segment.
+ */
+interface StripEdge {
+  section: FramedSection;
+  flaps: readonly (FlapState | null)[];
+  onSymmetryPlane: boolean;
+  shift?: { from: StripEdge; to: StripEdge; weight: number };
+}
+
+/**
+ * Camber-surface point of a strip edge. A root edge on the symmetry plane is projected onto
+ * y = 0 along its section span tangent: with dihedral (roll != 0) the section plane is tilted, so
+ * camber and twist would otherwise push the root's camber line across y = 0, where it would
+ * overlap its own mirror image (crossed root trailing legs pass right next to the root control
+ * points, and the error grows without bound as the mesh is refined).
+ */
+function edgePoint(e: StripEdge, x: number): Vec3 {
+  const p = camberPoint(e.section, e.flaps, x);
+  const d = edgeShift(e, x);
+  p[0] += d[0];
+  p[1] += d[1];
+  p[2] += d[2];
+  if (e.onSymmetryPlane) {
+    const ty = Math.cos(e.section.roll);
+    const tz = Math.sin(e.section.roll);
+    if (Math.abs(ty) > 0.2) p[2] -= (p[1] / ty) * tz;
+    p[1] = 0;
+  }
+  return p;
+}
+
+/** The transition shift of an edge at chord fraction x (zero without one). */
+function edgeShift(e: StripEdge, x: number): Vec3 {
+  if (!e.shift || e.shift.weight === 0) return [0, 0, 0];
+  const { from, to, weight } = e.shift;
+  return scaleVec(sub(edgePoint(from, x), edgePoint(to, x)), weight);
+}
+
 /** Quarter-chord point of the chord line (no camber). */
 function quarterChord(s: FramedSection): Vec3 {
   const q = 0.25 * s.chord;
@@ -197,9 +253,14 @@ export interface StripPiece {
  * Distribute `n` strips over segments of the given (arc) lengths with half-cosine clustering
  * toward the far end (the tip). Strip edges always land on segment boundaries (sections), so
  * kinks and flap ends are resolved exactly. Every non-degenerate segment gets at least one strip
- * (so the total can exceed n only when there are more segments than strips).
+ * (so the total can exceed n only when there are more segments than strips). Segments with
+ * `usable[k] === false` get no strips (a gap in the lattice).
  */
-export function distributeStrips(arcs: readonly number[], n: number): StripPiece[] {
+export function distributeStrips(
+  arcs: readonly number[],
+  n: number,
+  usable?: readonly boolean[],
+): StripPiece[] {
   const total = arcs.reduce((s, a) => s + a, 0);
   if (!(total > 0)) return [];
   // Cumulative arc fraction u at each section, and the cosine parameter g(u) = (2/pi) asin(u):
@@ -208,7 +269,7 @@ export function distributeStrips(arcs: readonly number[], n: number): StripPiece
   const u: number[] = [0];
   for (let k = 0; k < arcs.length; k++) u.push(u[k]! + arcs[k]! / total);
   u[arcs.length] = 1;
-  const valid = arcs.map((a) => a > 1e-9 * total);
+  const valid = arcs.map((a, k) => a > 1e-9 * total && usable?.[k] !== false);
   const raw = arcs.map((_, k) => n * (g(u[k + 1]!) - g(u[k]!)));
   const counts = raw.map((r, k) => (valid[k] ? Math.max(1, Math.floor(r)) : 0));
   let deficit = n - counts.reduce((s, c) => s + c, 0);
@@ -265,6 +326,76 @@ export function segmentArcs(surface: LiftingSurface): number[] {
   return arcs;
 }
 
+/**
+ * Limits for a usable strip (see edgesUsable): the chordwise run of the edge-to-edge vector per
+ * unit spanwise run (tan of the local sweep, ~83 deg), and the largest turn of the spanwise
+ * direction between the leading and trailing edge (beyond 90 deg the strip overlaps itself).
+ */
+export const MAX_SEGMENT_SKEW = 8;
+export const MAX_SEGMENT_FOLD = Math.PI / 2;
+
+/**
+ * Whether a strip between two edges can carry horseshoes. The edge-to-edge vector d(x) is checked
+ * along the chord (x = 0, 1/2, 1). The strip is unusable when, at any station, d runs mostly
+ * along the chord (bound vortices nearly parallel to the trailing legs: near-singular influence
+ * matrix), or when its spanwise part turns by more than MAX_SEGMENT_FOLD between stations (a
+ * strip twisted, rolled or toed so hard over a tiny span that it folds over itself). Both happen
+ * only on slivers whose span is a small fraction of their chord, e.g. the blend of a very small
+ * winglet on a long tip chord; leaving such a sliver out costs nothing, while keeping it can wreck
+ * the whole solution.
+ */
+function edgesUsable(a: StripEdge, b: StripEdge): boolean {
+  const ca = a.section.chordDir;
+  const cb = b.section.chordDir;
+  const u = normalize([ca[0] + cb[0], ca[1] + cb[1], ca[2] + cb[2]]);
+  let first: Vec3 | null = null;
+  for (const x of [0, 0.5, 1]) {
+    const d = sub(edgePoint(b, x), edgePoint(a, x));
+    const along = dot(d, u);
+    const perp = sub(d, scaleVec(u, along));
+    const p = norm(perp);
+    if (!(p > 0) || Math.abs(along) > MAX_SEGMENT_SKEW * p) return false;
+    if (!first) first = perp;
+    else if (dot(first, perp) < Math.cos(MAX_SEGMENT_FOLD) * norm(first) * p) return false;
+  }
+  return true;
+}
+
+/** Whether segment k of a surface can carry strips (see edgesUsable). */
+export function segmentUsable(surface: LiftingSurface, k: number): boolean {
+  const flap = [segmentFlap(surface, k)];
+  return edgesUsable(
+    { section: framedSection(surface, k, 0), flaps: flap, onSymmetryPlane: false },
+    { section: framedSection(surface, k, 1), flaps: flap, onSymmetryPlane: false },
+  );
+}
+
+/**
+ * For each right surface, the surface whose tip its root sits on (a tip device on the wing tip),
+ * or null. Match: root and tip leading edges within 2% of the larger chord in the y-z plane and
+ * within one chord in x.
+ */
+function findParents(right: readonly LiftingSurface[]): (LiftingSurface | null)[] {
+  const parents = right.map((s) => {
+    const root = s.sections[0]!;
+    let best: LiftingSurface | null = null;
+    let bestD = Infinity;
+    for (const p of right) {
+      if (p === s) continue;
+      const tip = p.sections[p.sections.length - 1]!;
+      const scale = Math.max(tip.chord, root.chord);
+      const d = Math.hypot(root.le[1] - tip.le[1], root.le[2] - tip.le[2]);
+      if (d <= 0.02 * scale && Math.abs(root.le[0] - tip.le[0]) <= scale && d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    return best;
+  });
+  // No cycles (two surfaces each starting on the other's tip): keep neither link.
+  return parents.map((p, i) => (p && parents[right.indexOf(p)] === right[i] ? null : p));
+}
+
 /* ------------------------------------------------------------------------------------------ */
 /* Layout                                                                                       */
 /* ------------------------------------------------------------------------------------------ */
@@ -279,13 +410,44 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
   const nc = Math.max(1, Math.round(options.chordwisePanels));
   const xs = cosineSpacing(nc);
 
-  // Strip pieces per surface (+ the eta offset where each surface starts).
-  const plans: { surface: LiftingSurface; pieces: StripPiece[]; arcs: number[]; eta0: number }[] =
-    [];
+  // A surface starting on another's tip (tip device on the wing tip) starts exactly on that
+  // surface's last strip edge (see StripEdge.shift), so the two share their trailing legs. With
+  // separately built edges (other roll, twist, toe or chord at the junction) one surface's legs
+  // land next to the other's control points; the wing's tip strips are only millimetres wide.
+  const parentList = findParents(right);
+  const parentOf = new Map(right.map((s, i) => [s, parentList[i]!]));
+  // Parents before the devices that hang off them (the geometry's order already is, usually).
+  const ordered: LiftingSurface[] = [];
+  while (ordered.length < right.length) {
+    const ready = right.filter((s) => {
+      const parent = parentOf.get(s);
+      return !ordered.includes(s) && (!parent || ordered.includes(parent));
+    });
+    ordered.push(...(ready.length > 0 ? ready : right.filter((s) => !ordered.includes(s))));
+  }
+  // A wing whose root sits on the symmetry plane gets its root edge projected onto y = 0.
+  const symTol = 1e-6 * Math.max(geometry.referenceSpan, geometry.overallSpan, 1);
+  /** Outboard edge of each surface's last strip, where its devices start. */
+  const lastEdge = new Map<LiftingSurface, StripEdge>();
+
+  const boundA: number[] = [];
+  const boundB: number[] = [];
+  const trailingA: number[] = [];
+  const trailingB: number[] = [];
+  const controlPoints: number[] = [];
+  const normals: number[] = [];
+  const panelAreas: number[] = [];
+  const panelStrip: number[] = [];
+  const edgeA: number[] = [];
+  const edgeB: number[] = [];
+  const strips: HalfStrip[] = [];
+
   let wingArcSoFar = 0;
-  for (const surface of right) {
+  for (const surface of ordered) {
+    const parent = parentOf.get(surface) ?? null;
     const arcs = segmentArcs(surface);
     const arc = arcs.reduce((a, b) => a + b, 0);
+    const nSeg = arcs.length;
     let n: number;
     let eta0: number;
     if (surface.role === 'wing') {
@@ -297,33 +459,47 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
       n = Math.max(1, Math.round(options.spanwisePanelsDevice));
       eta0 = 1;
     }
-    plans.push({ surface, pieces: distributeStrips(arcs, n), arcs, eta0 });
-  }
+    const rootOnSymmetryPlane =
+      surface.role === 'wing' && Math.abs(surface.sections[0]!.le[1]) <= symTol;
+    const ownEdge = (k: number, f: number): StripEdge => ({
+      section: framedSection(surface, k, f),
+      flaps: [segmentFlap(surface, k)],
+      onSymmetryPlane: rootOnSymmetryPlane && k === 0 && f === 0,
+    });
 
-  const stripCount = plans.reduce((s, p) => s + p.pieces.length, 0);
-  const panelCount = stripCount * nc;
-  const boundA = new Float64Array(3 * panelCount);
-  const boundB = new Float64Array(3 * panelCount);
-  const trailingA = new Float64Array(3 * panelCount);
-  const trailingB = new Float64Array(3 * panelCount);
-  const controlPoints = new Float64Array(3 * panelCount);
-  const normals = new Float64Array(3 * panelCount);
-  const panelAreas = new Float64Array(panelCount);
-  const panelStrip = new Int32Array(panelCount);
-  const edgeA = new Float64Array(3 * (nc + 1) * stripCount);
-  const edgeB = new Float64Array(3 * (nc + 1) * stripCount);
-  const strips: HalfStrip[] = [];
+    // Which segments carry strips, decided per segment (so independent of the mesh). A segment
+    // starts where the lattice left off: the previous usable segment's end, the parent's last
+    // edge (device) or the surface's own root. If it cannot blend from there (see edgesUsable),
+    // its own inboard section is tried (leaving a gap), and if that fails too it is skipped and
+    // the next segment blends back over it.
+    const parentEdge = parent ? lastEdge.get(parent) : undefined;
+    let cur: StripEdge = parentEdge ?? ownEdge(0, 0);
+    let curIsOwn = !parentEdge;
+    const usable: boolean[] = [];
+    /** Edge segment k blends from (null: its own inboard section). */
+    const blendFrom: (StripEdge | null)[] = [];
+    for (let k = 0; k < nSeg; k++) {
+      const end = ownEdge(k, 1);
+      if (edgesUsable(cur, end)) {
+        usable.push(true);
+        blendFrom.push(curIsOwn ? null : cur);
+      } else if (edgesUsable(ownEdge(k, 0), end)) {
+        usable.push(true);
+        blendFrom.push(null);
+      } else {
+        usable.push(false);
+        blendFrom.push(null);
+        curIsOwn = false;
+        continue;
+      }
+      cur = end;
+      curIsOwn = true;
+    }
+    const pieces = distributeStrips(arcs, n, usable);
 
-  const put = (arr: Float64Array, p: number, v: Vec3) => {
-    arr[3 * p] = v[0];
-    arr[3 * p + 1] = v[1];
-    arr[3 * p + 2] = v[2];
-  };
-
-  let p = 0;
-  for (const { surface, pieces, arcs, eta0 } of plans) {
     const cumArc: number[] = [0];
-    for (let k = 0; k < arcs.length; k++) cumArc.push(cumArc[k]! + arcs[k]!);
+    for (let k = 0; k < nSeg; k++) cumArc.push(cumArc[k]! + arcs[k]!);
+    let prevB: StripEdge | null = null;
     for (const piece of pieces) {
       const k = piece.segment;
       const s0 = surface.sections[k]!;
@@ -333,7 +509,6 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
       // Edge camber: on a section shared with a differently-flapped segment, average the two
       // so the neighbours' trailing legs coincide (else the wake gets a spurious vortex dipole
       // along the flap end; the real sheet's vertical step there carries no vorticity).
-      const nSeg = surface.sections.length - 1;
       const flapsA =
         piece.f0 === 0 && k > 0 && !sameFlap(segmentFlap(surface, k - 1), flap)
           ? [segmentFlap(surface, k - 1), flap]
@@ -342,45 +517,66 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
         piece.f1 === 1 && k + 1 < nSeg && !sameFlap(segmentFlap(surface, k + 1), flap)
           ? [flap, segmentFlap(surface, k + 1)]
           : [flap];
+      const from = blendFrom[k]!;
+      const shift = (f: number): StripEdge['shift'] =>
+        from && f < 1 ? { from, to: ownEdge(k, 0), weight: 1 - f } : undefined;
+      // The first strip of a blended segment starts exactly on the edge it blends from; any other
+      // strip starts on the previous strip's outboard edge (they coincide when contiguous).
+      const edgeSpecA: StripEdge =
+        piece.f0 === 0 && from
+          ? from
+          : piece.f0 > 0 && prevB
+            ? prevB
+            : {
+                section: framedSection(surface, k, piece.f0),
+                flaps: flapsA,
+                onSymmetryPlane: rootOnSymmetryPlane && k === 0 && piece.f0 === 0,
+              };
+      const edgeSpecB: StripEdge = {
+        section: framedSection(surface, k, piece.f1),
+        flaps: flapsB,
+        onSymmetryPlane: false,
+        shift: shift(piece.f1),
+      };
+      prevB = edgeSpecB;
+      const ea = edgeSpecA.section;
+      const eb = edgeSpecB.section;
       const fm = 0.5 * (piece.f0 + piece.f1);
-      const ea = framedSection(surface, k, piece.f0);
-      const eb = framedSection(surface, k, piece.f1);
       const ec = framedSection(surface, k, fm);
 
-      const qa = quarterChord(ea);
-      const qb = quarterChord(eb);
+      const qa = add(quarterChord(ea), edgeShift(edgeSpecA, 0.25));
+      const qb = add(quarterChord(eb), edgeShift(edgeSpecB, 0.25));
       const span = sub(qb, qa);
       const width = norm(span);
       const t = normalize(span);
       const cd = normalize(sub(ec.chordDir, scaleVec(t, dot(ec.chordDir, t))));
       const normal = normalize(cross(cd, t));
-      const teA = camberPoint(ea, flapsA, 1);
-      const teB = camberPoint(eb, flapsB, 1);
+      const teA = edgePoint(edgeSpecA, 1);
+      const teB = edgePoint(edgeSpecB, 1);
 
-      const panelStart = p;
-      for (let k = 0; k <= nc; k++) {
-        const o = 3 * ((nc + 1) * strips.length + k);
-        edgeA.set(camberPoint(ea, flapsA, xs[k]!), o);
-        edgeB.set(camberPoint(eb, flapsB, xs[k]!), o);
+      const panelStart = panelAreas.length;
+      for (let m = 0; m <= nc; m++) {
+        edgeA.push(...edgePoint(edgeSpecA, xs[m]!));
+        edgeB.push(...edgePoint(edgeSpecB, xs[m]!));
       }
       const stripIndex = strips.length;
-      for (let i = 0; i < nc; i++, p++) {
+      const fc = piece.fc;
+      for (let i = 0; i < nc; i++) {
         const x0 = xs[i]!;
         const x1 = xs[i + 1]!;
         const xq = x0 + 0.25 * (x1 - x0);
         const x3 = x0 + 0.75 * (x1 - x0);
-        put(boundA, p, camberPoint(ea, flapsA, xq));
-        put(boundB, p, camberPoint(eb, flapsB, xq));
-        put(trailingA, p, teA);
-        put(trailingB, p, teB);
-        const pa3 = camberPoint(ea, flapsA, x3);
-        const pb3 = camberPoint(eb, flapsB, x3);
-        const fc = piece.fc;
-        put(controlPoints, p, [
+        boundA.push(...edgePoint(edgeSpecA, xq));
+        boundB.push(...edgePoint(edgeSpecB, xq));
+        trailingA.push(...teA);
+        trailingB.push(...teB);
+        const pa3 = edgePoint(edgeSpecA, x3);
+        const pb3 = edgePoint(edgeSpecB, x3);
+        controlPoints.push(
           pa3[0] + fc * (pb3[0] - pa3[0]),
           pa3[1] + fc * (pb3[1] - pa3[1]),
           pa3[2] + fc * (pb3[2] - pa3[2]),
-        ]);
+        );
         // Normal of the local camber surface: chordwise tangent (camber slope in the centre
         // section's axes) crossed with the spanwise tangent through the control point.
         const slope = camberLine(ec.airfoil, flap, x3).slope;
@@ -389,13 +585,13 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
           ec.chordDir[1] + slope * ec.normalDir[1],
           ec.chordDir[2] + slope * ec.normalDir[2],
         ];
-        put(normals, p, normalize(cross(tc, sub(pb3, pa3))));
-        const pa0 = camberPoint(ea, flapsA, x0);
-        const pa1 = camberPoint(ea, flapsA, x1);
-        const pb0 = camberPoint(eb, flapsB, x0);
-        const pb1 = camberPoint(eb, flapsB, x1);
-        panelAreas[p] = 0.5 * norm(cross(sub(pb1, pa0), sub(pb0, pa1)));
-        panelStrip[p] = stripIndex;
+        normals.push(...normalize(cross(tc, sub(pb3, pa3))));
+        const pa0 = edgePoint(edgeSpecA, x0);
+        const pa1 = edgePoint(edgeSpecA, x1);
+        const pb0 = edgePoint(edgeSpecB, x0);
+        const pb1 = edgePoint(edgeSpecB, x1);
+        panelAreas.push(0.5 * norm(cross(sub(pb1, pa0), sub(pb0, pa1))));
+        panelStrip.push(stripIndex);
       }
 
       const arcMid = cumArc[k]! + fm * arcs[k]!;
@@ -404,10 +600,13 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
         eta: eta0 + arcMid / semispanArc,
         width,
         chord: ec.chord,
-        center: quarterChord(ec),
+        center: add(quarterChord(ec), edgeShift({ ...edgeSpecB, shift: shift(fm) }, 0.25)),
         normal,
         spanTangent: t,
         chordDir: cd,
+        sectionChordDir: ec.chordDir,
+        sectionNormal: ec.normalDir,
+        twistAxis: [0, Math.cos(ec.roll), Math.sin(ec.roll)],
         airfoil: ec.airfoil,
         flap,
         slat,
@@ -416,25 +615,26 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
         panelCount: nc,
         teA,
         teB,
-        controlFraction: piece.fc,
+        controlFraction: fc,
       });
     }
+    if (prevB) lastEdge.set(surface, prevB);
   }
 
   return {
     strips,
-    panelCount,
-    boundA,
-    boundB,
-    trailingA,
-    trailingB,
-    controlPoints,
-    normals,
-    panelAreas,
-    panelStrip,
+    panelCount: panelAreas.length,
+    boundA: Float64Array.from(boundA),
+    boundB: Float64Array.from(boundB),
+    trailingA: Float64Array.from(trailingA),
+    trailingB: Float64Array.from(trailingB),
+    controlPoints: Float64Array.from(controlPoints),
+    normals: Float64Array.from(normals),
+    panelAreas: Float64Array.from(panelAreas),
+    panelStrip: Int32Array.from(panelStrip),
     chordwisePanels: nc,
-    edgeA,
-    edgeB,
+    edgeA: Float64Array.from(edgeA),
+    edgeB: Float64Array.from(edgeB),
     semispanArc,
   };
 }

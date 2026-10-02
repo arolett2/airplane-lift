@@ -239,3 +239,39 @@ export function makeMockPolar(spec: MockPolarSpec): SectionPolar {
     attachedFraction: (alpha) => attached(alpha),
   };
 }
+
+/**
+ * Polar shaped like the airfoil module's viscous polars past stall: slope 2 pi, a rounded peak at
+ * `alphaStall`, then a blend (over ~4 deg) to the flat-plate curve 1.8 sin(a) cos(a), which stays
+ * near 0.8-0.9 out to 45 deg. Deep-stall strips on this polar settle at large effective angles,
+ * which is where the coupling's artificial viscosity bites hardest. Odd about the zero-lift angle.
+ */
+export function makeFlatPlateStallPolar(alphaZeroLift: number, alphaStall: number): SectionPolar {
+  const a0 = alphaZeroLift;
+  const slope = 2 * Math.PI;
+  const w = 3 * DEG;
+  const x1 = alphaStall - w;
+  const peak = slope * (x1 - a0 + w / 2);
+  const pre = (a: number) =>
+    a <= x1 ? slope * (a - a0) : slope * (a - a0 - ((a - x1) * (a - x1)) / (2 * w));
+  const cl = (a: number): number => {
+    if (a < 2 * a0 - alphaStall) return -cl(2 * a0 - a);
+    if (a <= alphaStall) return pre(a);
+    const t = 1 - Math.exp(-(a - alphaStall) / (4 * DEG));
+    return peak + (1.8 * Math.sin(a) * Math.cos(a) - peak) * t;
+  };
+  const attached = (a: number) => {
+    const x = Math.abs(a - a0) - (alphaStall - a0);
+    return x <= 0 ? 1 : Math.exp(-x / (6 * DEG));
+  };
+  return {
+    alphaZeroLift: a0,
+    liftSlope: slope,
+    clMax: () => peak,
+    alphaStall: () => alphaStall,
+    cl,
+    cd: (a) => 0.008 + 0.3 * (1 - attached(a)),
+    cm: () => 0,
+    attachedFraction: attached,
+  };
+}

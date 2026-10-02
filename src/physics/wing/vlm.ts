@@ -109,7 +109,12 @@ export interface VlmSolverData {
    */
   edgeA: Float64Array;
   edgeB: Float64Array;
-  /** x and z components of (spanTangent × normal) per right panel: d(normal)/d(virtual twist). */
+  /**
+   * x and z components of (twistAxis × normal) per right panel: d(normal)/d(virtual twist). The
+   * axis is the strip's section span tangent (0, cos roll, sin roll), the axis WingSection.twist
+   * rotates about, so a virtual twist is an incidence change exactly like twist: a uniform one on
+   * any wing without dihedral (swept or not) equals the same change of alpha.
+   */
   twistDnX: Float64Array;
   twistDnZ: Float64Array;
   /**
@@ -135,8 +140,12 @@ export interface VlmSolverData {
    */
   twistResponseCos: Float64Array;
   twistResponseSin: Float64Array;
-  /** Unit chord direction (LE -> TE, orthogonal to the span tangent) per right strip, xyz. */
+  /**
+   * Streamwise section axes at each right strip's centre (WingSection chord direction and normal,
+   * xyz), for the geometric angle of attack.
+   */
   stripChordDir: Float64Array;
+  stripSectionNormal: Float64Array;
   /** Right-strip neighbours along the same surface (-1 at a surface end). */
   stripPrev: Int32Array;
   stripNext: Int32Array;
@@ -439,7 +448,7 @@ export function buildVlmModel(geometry: WingGeometry, options?: Partial<VlmOptio
   const twistDnX = new Float64Array(N);
   const twistDnZ = new Float64Array(N);
   for (let p = 0; p < N; p++) {
-    const t = layout.strips[layout.panelStrip[p]!]!.spanTangent;
+    const t = layout.strips[layout.panelStrip[p]!]!.twistAxis;
     const nx = nrm[3 * p]!;
     const ny = nrm[3 * p + 1]!;
     const nz = nrm[3 * p + 2]!;
@@ -499,11 +508,13 @@ export function buildVlmModel(geometry: WingGeometry, options?: Partial<VlmOptio
   }
 
   const stripChordDir = new Float64Array(3 * Ns);
+  const stripSectionNormal = new Float64Array(3 * Ns);
   const stripPrev = new Int32Array(Ns);
   const stripNext = new Int32Array(Ns);
   for (let i = 0; i < Ns; i++) {
     const s = layout.strips[i]!;
-    stripChordDir.set(s.chordDir, 3 * i);
+    stripChordDir.set(s.sectionChordDir, 3 * i);
+    stripSectionNormal.set(s.sectionNormal, 3 * i);
     stripPrev[i] = i > 0 && layout.strips[i - 1]!.surface === s.surface ? i - 1 : -1;
     stripNext[i] = i + 1 < Ns && layout.strips[i + 1]!.surface === s.surface ? i + 1 : -1;
   }
@@ -539,6 +550,7 @@ export function buildVlmModel(geometry: WingGeometry, options?: Partial<VlmOptio
       twistResponseCos,
       twistResponseSin,
       stripChordDir,
+      stripSectionNormal,
       stripPrev,
       stripNext,
       rhs: new Float64Array(N),
@@ -742,9 +754,11 @@ export interface StripPolarProvider {
 export interface CoupledSolution extends VlmSolution {
   /**
    * Viscous section cl per strip (what the strip actually carries): the lattice cl with the
-   * converged virtual twist, so it matches stripCirculation and CL. Within the iteration
-   * tolerance it equals the polar's cl at stripAlphaEffective, except on the one or two strips
-   * at a stall front, where the artificial viscosity smooths the jump (see stripClPolar).
+   * converged virtual twist, so it matches stripCirculation and CL. Before stall it equals the
+   * polar's cl at stripAlphaEffective within the iteration tolerance. Past stall the artificial
+   * viscosity (see CouplingOptions) shifts it on the strips where the virtual twist bends hardest:
+   * typically by 0.1-0.4 at a stall front, up to ~0.9 next to a deep-stall region (flaps down,
+   * far past stall). stripClPolar has the polar's value for comparison.
    */
   stripClViscous: Float64Array;
   stripAlphaEffective: Float64Array;
@@ -756,8 +770,10 @@ export interface CoupledSolution extends VlmSolution {
   converged: boolean;
   /**
    * Geometric angle of attack of each strip's chord line (rad): the angle between the freestream
-   * and the chord in the strip's chord/normal plane. Equals alpha + twist on a flat wing, and the
-   * toe/twist alone on a vertical winglet. Flaps are not included (they act through the polar).
+   * and the streamwise section chord (WingSection axes at the strip centre) in the section's
+   * chord/normal plane. Equals alpha + twist on any flat wing, swept or not, alpha * cos(dihedral)
+   * + twist (small angles) with dihedral, and the toe/twist alone on a vertical winglet. Flaps
+   * are not included (they act through the polar).
    */
   stripAlphaGeometric: Float64Array;
   /** Converged virtual twist per strip (rad). */
@@ -773,8 +789,11 @@ export interface CouplingOptions {
   relaxation: number;
   tolerance: number;
   /**
-   * Artificial viscosity (per rad) smoothing the virtual twist along each surface. Suppresses the
-   * saw-tooth solutions that strip-wise stall models admit past stall; negligible before stall.
+   * Artificial viscosity (cl per rad of second difference) smoothing the virtual twist along each
+   * surface: the converged residual is cl_visc - cl + mu * (delta[j-1] - 2 delta[j] + delta[j+1]).
+   * It suppresses the saw-tooth solutions that strip-wise stall models admit past stall and is
+   * inert before stall. The iteration first converges with SELECTION_VISCOSITY_FACTOR times this
+   * value to select a contiguous stall pattern, then relaxes to it.
    */
   artificialViscosity: number;
 }
@@ -783,8 +802,19 @@ export const DEFAULT_COUPLING_OPTIONS: CouplingOptions = {
   maxIterations: 60,
   relaxation: 0.4,
   tolerance: 1e-4,
-  artificialViscosity: 5,
+  artificialViscosity: 2,
 };
+
+/**
+ * The first coupling stage runs with this multiple of CouplingOptions.artificialViscosity: strong
+ * smoothing reliably selects one contiguous stall region, and the second stage then relaxes to
+ * the requested viscosity. Compared with a single stage at the strong value (the original
+ * design, 5), this cuts the worst cl bias over the aircraft presets (flaps 0 and 30 deg, alpha
+ * -10..25 deg) from 1.4 to 0.9 and the cases that miss the tolerance from 18 to 6 of 792, while
+ * keeping the stall region contiguous (relaxing further, to 1 or 0, brings saw-tooth and split
+ * stall patterns back).
+ */
+export const SELECTION_VISCOSITY_FACTOR = 2.5;
 
 /** Largest virtual-twist change per strip per iteration (rad). */
 const MAX_TWIST_STEP = 0.1;
@@ -853,7 +883,9 @@ function solveSmallDense(a: Float64Array, b: Float64Array, n: number): void {
  * strips only) Newton step on r = cl_visc - cl_lattice + mu * L(delta), where L is the spanwise
  * second difference along each surface (artificial viscosity: it picks the smooth, contiguous
  * stall pattern among the many that strip models admit past stall, and is inert before stall
- * where delta is ~0 or smooth). Negative post-stall polar slopes are clamped to zero in the
+ * where delta is ~0 or smooth). Two stages: mu = SELECTION_VISCOSITY_FACTOR * artificialViscosity
+ * to select the pattern, then mu = artificialViscosity from there; each stage may use up to
+ * maxIterations, and `converged` refers to the final stage. Negative post-stall polar slopes are clamped to zero in the
  * Jacobian, so the iteration walks away from unstable roots and settles only on stable branches.
  * The step starts at `relaxation`, grows by 1.5x per iteration up to a full step, halves when the
  * dominant residual flips sign (oscillation), and is capped at MAX_TWIST_STEP per strip.
@@ -873,7 +905,8 @@ export function solveCoupled(
   const ca = Math.cos(alpha);
   const sa = Math.sin(alpha);
   const twoPi = 2 * Math.PI;
-  const mu = Math.max(0, opts.artificialViscosity);
+  const mu0 = Math.max(0, opts.artificialViscosity);
+  let mu = mu0;
 
   const linear = solveVlm(model, { alpha });
 
@@ -938,46 +971,50 @@ export function solveCoupled(
     return rmax;
   };
 
-  let rmax = evaluate(true);
-  let omega = Math.min(1, Math.max(0.05, opts.relaxation));
   let iterations = 0;
-  let converged = rmax < opts.tolerance;
-  while (!converged && iterations < opts.maxIterations) {
-    iterations++;
-    // Jacobian dr/ddelta with post-stall slopes clamped at zero (stable branches only).
-    for (let i = 0; i < Ns; i++) {
-      const s = Math.max(0, slope[i]!);
-      const row = i * Ns;
-      const fm = s / twoPi - 1;
-      for (let j = 0; j < Ns; j++) jac[row + j] = M[row + j]! * fm;
-      jac[row + i] = jac[row + i]! - s / beta;
-      const prev = sd.stripPrev[i]!;
-      const next = sd.stripNext[i]!;
-      if (prev >= 0) {
-        jac[row + prev] = jac[row + prev]! + mu;
-        jac[row + i] = jac[row + i]! - mu;
-      }
-      if (next >= 0) {
-        jac[row + next] = jac[row + next]! + mu;
-        jac[row + i] = jac[row + i]! - mu;
-      }
-      step[i] = -resid[i]!;
-    }
-    solveSmallDense(jac, step, Ns);
-    let smax = 0;
-    for (let i = 0; i < Ns; i++) smax = Math.max(smax, Math.abs(step[i]!));
-    const scale = smax * omega > MAX_TWIST_STEP ? MAX_TWIST_STEP / smax : omega;
-    for (let i = 0; i < Ns; i++) delta[i] = delta[i]! + scale * step[i]!;
-    // Remember the dominant residual's sign to detect oscillation.
-    let jmax = 0;
-    for (let i = 1; i < Ns; i++) if (Math.abs(resid[i]!) > Math.abs(resid[jmax]!)) jmax = i;
-    const before = resid[jmax]!;
-    rmax = evaluate(true);
-    // Damp only real oscillation (the dominant residual flips sign). A growing residual without a
-    // sign flip means the iteration is leaving an unstable (post-stall) root for a stable one,
-    // which must not be slowed down.
-    omega = before * resid[jmax]! < 0 ? Math.max(0.1, omega * 0.5) : Math.min(1, omega * 1.5);
+  let converged = false;
+  // Stage 1 picks the stall pattern with SELECTION_VISCOSITY_FACTOR x the viscosity, stage 2
+  // relaxes to the requested viscosity from there (see the function doc).
+  for (const stageMu of [SELECTION_VISCOSITY_FACTOR * mu0, mu0]) {
+    mu = stageMu;
+    let rmax = evaluate(true);
+    let omega = Math.min(1, Math.max(0.05, opts.relaxation));
     converged = rmax < opts.tolerance;
+    let it = 0;
+    while (!converged && it < opts.maxIterations) {
+      it++;
+      iterations++;
+      // Jacobian dr/ddelta with post-stall slopes clamped at zero (stable branches only).
+      for (let i = 0; i < Ns; i++) {
+        const s = Math.max(0, slope[i]!);
+        const row = i * Ns;
+        const fm = s / twoPi - 1;
+        for (let j = 0; j < Ns; j++) jac[row + j] = M[row + j]! * fm;
+        jac[row + i] = jac[row + i]! - s / beta;
+        const prev = sd.stripPrev[i]!;
+        const next = sd.stripNext[i]!;
+        if (prev >= 0) {
+          jac[row + prev] = jac[row + prev]! + mu;
+          jac[row + i] = jac[row + i]! - mu;
+        }
+        if (next >= 0) {
+          jac[row + next] = jac[row + next]! + mu;
+          jac[row + i] = jac[row + i]! - mu;
+        }
+        step[i] = -resid[i]!;
+      }
+      solveSmallDense(jac, step, Ns);
+      let smax = 0;
+      for (let i = 0; i < Ns; i++) smax = Math.max(smax, Math.abs(step[i]!));
+      const scale = smax * omega > MAX_TWIST_STEP ? MAX_TWIST_STEP / smax : omega;
+      for (let i = 0; i < Ns; i++) delta[i] = delta[i]! + scale * step[i]!;
+      let jmax = 0;
+      for (let i = 1; i < Ns; i++) if (Math.abs(resid[i]!) > Math.abs(resid[jmax]!)) jmax = i;
+      const before = resid[jmax]!;
+      rmax = evaluate(true);
+      omega = before * resid[jmax]! < 0 ? Math.max(0.1, omega * 0.5) : Math.min(1, omega * 1.5);
+      converged = rmax < opts.tolerance;
+    }
   }
 
   // Final lattice solve with the converged virtual twist (both halves).
@@ -998,14 +1035,13 @@ export function solveCoupled(
   const stripAttachedFraction = new Float64Array(n2);
   const stripAlphaDownwash = Float64Array.from(sol.stripAlphaInduced);
   for (let j = 0; j < Ns; j++) {
-    const strip = model.strips[j]!;
     const pol = polars[j]!;
     const r = re[j]!;
     const ae = clampAlpha(alpha0[j]! + (beta * sol.stripCl[j]!) / twoPi - delta[j]!);
     const cd = sd.stripChordDir;
-    const n = strip.normal;
+    const sn = sd.stripSectionNormal;
     const vc = ca * cd[3 * j]! + sa * cd[3 * j + 2]!;
-    const vn = ca * n[0] + sa * n[2];
+    const vn = ca * sn[3 * j]! + sa * sn[3 * j + 2]!;
     const ag = Math.atan2(vn, vc);
     const as = pol.alphaStall(r);
     const a0 = alpha0[j]!;

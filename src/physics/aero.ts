@@ -138,6 +138,12 @@ export function stableKey(value: unknown): string {
   return `{${parts.join(',')}}`;
 }
 
+/** Prandtl-Glauert lift factor 1/sqrt(1 - M^2), with M clamped to MACH_PG_LIMIT like the VLM. */
+export function prandtlGlauertFactor(mach: number): number {
+  const m = Math.min(Math.max(mach, 0), MACH_PG_LIMIT);
+  return 1 / Math.sqrt(1 - m * m);
+}
+
 /** Mach bucket index: the model is built at `machBucketIndex(m) * MACH_BUCKET`. */
 export function machBucketIndex(mach: number): number {
   return Math.max(0, Math.round(mach / MACH_BUCKET));
@@ -590,7 +596,8 @@ export function computeAero(
 
 /**
  * Whole-wing lift and drag curves for alpha = -6..24 deg (step 1), reusing the cached VLM model,
- * plus the 2D section cl of the root airfoil at the same root angles for comparison.
+ * plus the 2D section cl of the root airfoil at the same root angles for comparison (with the
+ * same Prandtl-Glauert factor as the 3D solve).
  * Independent of flow.alphaDeg, so it is cached by wing + airspeed + altitude.
  */
 export function computePolarSweep(
@@ -608,9 +615,13 @@ export function computePolarSweep(
   const velocity = Math.max(flow.airspeed, MIN_AIRSPEED);
   const mach = velocity / atmosphere.speedOfSound;
   const geometry = getGeometry(wing, wingKey, cache);
-  const entry = getModelEntry(geometry, wingKey, machBucketIndex(mach), cache);
+  const machIndex = machBucketIndex(mach);
+  const entry = getModelEntry(geometry, wingKey, machIndex, cache);
   const { model } = entry;
   const airfoils = stripAirfoils(entry, wing.supercritical);
+  // The VLM applies Prandtl-Glauert at the bucketed Mach (clamped); scale the 2D curve alike so
+  // the finite-vs-infinite wing comparison stays fair at airliner speeds.
+  const pgFactor = prandtlGlauertFactor(machIndex * MACH_BUCKET);
   const reynolds = new Float64Array(model.strips.length);
   for (let i = 0; i < model.strips.length; i++) {
     reynolds[i] = reynoldsNumber(atmosphere, velocity, model.strips[i]!.chord);
@@ -647,7 +658,7 @@ export function computePolarSweep(
       profileDrag(model, sol.stripCd, geometry.referenceArea) +
       sol.CDi +
       lockWaveDrag(mach, comp.machCritical);
-    sectionCl[k] = rootPolar ? rootPolar.cl(a + rootIncidence, rootRe) : NaN;
+    sectionCl[k] = rootPolar ? rootPolar.cl(a + rootIncidence, rootRe) * pgFactor : NaN;
     if (CL[k]! > CL[best]!) best = k;
   }
   cache.stats.polarSweeps++;

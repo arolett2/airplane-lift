@@ -325,6 +325,7 @@ import {
   MACH_BUCKET,
   POLAR_ALPHA_MAX_DEG,
   POLAR_ALPHA_MIN_DEG,
+  prandtlGlauertFactor,
   stableKey,
   stripGeometricAlpha,
 } from './aero';
@@ -652,10 +653,24 @@ describe('computePolarSweep', () => {
   it('adds the root airfoil 2D lift curve at alpha + root incidence', () => {
     const polar = computePolarSweep(wing, DEFAULT_FLOW, 1, createAeroCache());
     const k = polar.alphaDeg.indexOf(4);
-    // Fake polar: cl = 2 pi (alpha + 0.03) below stall.
-    expect(polar.sectionCl[k]).toBeCloseTo(2 * Math.PI * (6 * DEG + 0.03), 5);
+    // Fake polar: cl = 2 pi (alpha + 0.03) below stall, times Prandtl-Glauert at Mach 0.18.
+    const pg = prandtlGlauertFactor(9 * MACH_BUCKET);
+    expect(polar.sectionCl[k]).toBeCloseTo(2 * Math.PI * (6 * DEG + 0.03) * pg, 5);
     // The finite wing makes less lift than its 2D section at the same angle.
     expect(polar.CL[k]).toBeLessThan(polar.sectionCl[k]!);
+  });
+
+  it('applies the clamped Prandtl-Glauert factor to the 2D curve at high Mach', () => {
+    const fast = { alphaDeg: 2, airspeed: 250, altitude: 10668 };
+    const polar = computePolarSweep(wing, fast, 1, createAeroCache());
+    const machModel = (fakes.buildVlmModel.mock.calls[0]![1] as { mach: number }).mach;
+    expect(machModel).toBeGreaterThan(0.8);
+    expect(prandtlGlauertFactor(machModel)).toBeCloseTo(1 / Math.sqrt(1 - machModel ** 2), 12);
+    const k = polar.alphaDeg.indexOf(4);
+    const cl2d = 2 * Math.PI * (6 * DEG + 0.03);
+    expect(polar.sectionCl[k]).toBeCloseTo(cl2d * prandtlGlauertFactor(machModel), 5);
+    expect(prandtlGlauertFactor(0.95)).toBe(prandtlGlauertFactor(0.85));
+    expect(prandtlGlauertFactor(0)).toBe(1);
   });
 
   it('is cached independently of alpha and shares the model with computeAero', () => {

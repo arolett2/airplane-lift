@@ -8,6 +8,7 @@ import {
   solveVlm,
   vlmLatticeToTunnel,
   type StripPolarProvider,
+  vlmLiftSlope,
   type VlmModel,
   type VlmOptions,
 } from './vlm';
@@ -18,6 +19,7 @@ import {
 } from './vlmBiotSavart';
 import { distributeStrips } from './vlmLayout';
 import { makeEllipticWing, makeMockPolar, makeTestWing } from './vlmTestFixtures';
+import type { LiftingSurface, WingSection } from '../types';
 
 const DEG = Math.PI / 180;
 const NACA2412 = { camber: 0.02, camberPos: 0.4, thickness: 0.12 };
@@ -416,6 +418,142 @@ describe('vlm validation against wing theory', () => {
     // Mach is clamped at 0.85.
     const m1 = buildVlmModel(straight, { mach: 0.99 });
     expect(m1.beta).toBeCloseTo(Math.sqrt(1 - 0.85 * 0.85), 12);
+  });
+});
+
+describe('vlm robustness and tip devices', () => {
+  const base = { span: 8 * 0.7, rootChord: 1, taper: 0.4 } as const;
+
+  it('an in-plane tip extension acts like extra span; a split winglet beats a single one', () => {
+    const k0 = dragFactor(buildVlmModel(makeTestWing(base)));
+    const ext = buildVlmModel(
+      makeTestWing({ ...base, devices: [{ heightFrac: 0.1, cantDeg: 90 }] }),
+    );
+    expect(dragFactor(ext) / k0).toBeLessThan(0.9);
+    expect(vlmLiftSlope(ext)).toBeGreaterThan(vlmLiftSlope(buildVlmModel(makeTestWing(base))));
+    const upper = { heightFrac: 0.1, sweepDeg: 40, taper: 0.4 };
+    const lower = { heightFrac: 0.05, sweepDeg: 40, taper: 0.4, cantDeg: 160 };
+    const single = buildVlmModel(makeTestWing({ ...base, devices: [upper] }));
+    const split = buildVlmModel(makeTestWing({ ...base, devices: [upper, lower] }));
+    expect(split.halfStripCount).toBe(24 + 12);
+    expect(dragFactor(split)).toBeLessThan(dragFactor(single));
+    // The lower fin carries positive (outboard-pushing) circulation at positive lift.
+    const sol = solveVlm(split, { alpha: 5 * DEG });
+    for (let j = 30; j < 36; j++) expect(sol.stripCirculation[j]).toBeGreaterThan(0);
+  });
+
+  it('handles a smoothly curving multi-section (blended) winglet', () => {
+    const geo = makeTestWing(base);
+    const right = geo.surfaces[0]!;
+    const tip = right.sections[right.sections.length - 1]!;
+    const h = 0.12 * 0.5 * base.span;
+    const sections: WingSection[] = [];
+    for (let k = 0; k <= 4; k++) {
+      const roll = ((k / 4) * 80 * Math.PI) / 180;
+      const prev = sections[k - 1];
+      const le: Vec3 = prev
+        ? [
+            prev.le[0] + 0.05,
+            prev.le[1] + (h / 4) * Math.cos(roll),
+            prev.le[2] + (h / 4) * Math.sin(roll),
+          ]
+        : [...tip.le];
+      sections.push({ ...tip, le, roll, chord: tip.chord * (1 - 0.15 * k), flap: null });
+    }
+    const winglet: LiftingSurface = {
+      id: 'wl-right',
+      name: 'Right winglet',
+      side: 'right',
+      role: 'tip-device',
+      sections,
+    };
+    const mirrored: LiftingSurface = {
+      ...winglet,
+      id: 'wl-left',
+      side: 'left',
+      sections: sections.map((sec) => ({ ...sec, le: [sec.le[0], -sec.le[1], sec.le[2]] as Vec3 })),
+    };
+    const blended = { ...geo, surfaces: [right, winglet, geo.surfaces[1]!, mirrored] };
+    const m = buildVlmModel(blended);
+    const sol = solveVlm(m, { alpha: 4 * DEG });
+    expect(Number.isFinite(sol.CL) && Number.isFinite(sol.CDi)).toBe(true);
+    expect(dragFactor(m)).toBeLessThan(dragFactor(buildVlmModel(geo)));
+    // Strip normals turn smoothly from up to inboard along the winglet.
+    const wl = m.strips.filter((s) => s.surfaceId === 'wl-right');
+    expect(wl).toHaveLength(6);
+    for (let j = 1; j < wl.length; j++) {
+      expect(wl[j]!.normal[1]).toBeLessThanOrEqual(wl[j - 1]!.normal[1] + 1e-12);
+    }
+    expect(wl[wl.length - 1]!.normal[1]).toBeLessThan(wl[0]!.normal[1] - 0.5);
+    expect(m.strips.find((s) => s.surfaceId === 'wl-left')).toBeDefined();
+  });
+
+  it('survives duplicate sections and more sections than strips', () => {
+    const geo = makeTestWing(base);
+    const right = geo.surfaces[0]!;
+    const secs = right.sections;
+    const many: WingSection[] = [];
+    for (let k = 0; k <= 40; k++) {
+      const f = k / 40;
+      const a = secs[0]!;
+      const b = secs[1]!;
+      many.push({
+        ...a,
+        le: [a.le[0] + f * (b.le[0] - a.le[0]), f * b.le[1], 0],
+        chord: a.chord + f * (b.chord - a.chord),
+      });
+      if (k === 20) many.push({ ...many[many.length - 1]! }); // duplicate section
+    }
+    const r: LiftingSurface = { ...right, sections: many };
+    const l: LiftingSurface = {
+      ...r,
+      id: 'wing-left',
+      side: 'left',
+      sections: many.map((x) => ({ ...x, le: [x.le[0], -x.le[1], x.le[2]] as Vec3 })),
+    };
+    const m = buildVlmModel({ ...geo, surfaces: [r, l] });
+    expect(m.halfStripCount).toBe(40);
+    const a = solveVlm(m, { alpha: 4 * DEG });
+    const b = solveVlm(buildVlmModel(geo), { alpha: 4 * DEG });
+    // 40 section-forced (nearly uniform) strips vs the default cosine mesh.
+    expect(Math.abs(a.CL / b.CL - 1)).toBeLessThan(0.02);
+  });
+
+  it('stalls at large negative angles too, and accepts half-length incidence arrays', () => {
+    const m = buildVlmModel(makeTestWing({ span: 8, rootChord: 1, airfoil: NACA2412 }));
+    const prov: StripPolarProvider = {
+      polar: () => makeMockPolar({ alphaZeroLift: ALPHA0_2412 }),
+      reynolds: () => 1e6,
+    };
+    const deep = solveCoupled(m, -26 * DEG, prov);
+    expect(deep.stripStalled.some((x) => x === 1)).toBe(true);
+    expect(deep.CL).toBeGreaterThan(solveVlm(m, { alpha: -26 * DEG }).CL);
+    const half = new Float64Array(m.halfStripCount).fill(0.01);
+    const full = new Float64Array(m.strips.length).fill(0.01);
+    expect(solveVlm(m, { alpha: 0.1, stripIncidence: half }).CL).toBeCloseTo(
+      solveVlm(m, { alpha: 0.1, stripIncidence: full }).CL,
+      12,
+    );
+  });
+
+  it('stays finite at the Mach clamp and the coupled solve matches the linear one there', () => {
+    const m = buildVlmModel(
+      makeTestWing({ span: 30, rootChord: 4, taper: 0.3, sweepQuarterDeg: 30 }),
+      { mach: 0.85 },
+    );
+    const lin = solveVlm(m, { alpha: 2 * DEG });
+    const c = solveCoupled(m, 2 * DEG, {
+      polar: () => makeMockPolar({ alphaZeroLift: 0 }),
+      reynolds: () => 4e7,
+    });
+    expect(Number.isFinite(lin.CL) && Number.isFinite(lin.CDi) && Number.isFinite(lin.Cm)).toBe(
+      true,
+    );
+    expect(c.CL / lin.CL).toBeCloseTo(1, 4);
+    expect(c.stripClMax[0]).toBeCloseTo(
+      makeMockPolar({ alphaZeroLift: 0 }).clMax(4e7) / m.beta,
+      10,
+    );
   });
 });
 

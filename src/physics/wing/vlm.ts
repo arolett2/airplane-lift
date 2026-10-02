@@ -185,9 +185,17 @@ export interface VlmSolution {
   gamma: Float64Array;
   /** Net strip circulation for V_inf = 1 (m). */
   stripCirculation: Float64Array;
-  /** Local (linear, inviscid) section lift coefficient per strip. */
+  /**
+   * Local (linear, inviscid) section lift coefficient per strip: the normal-force coefficient
+   * 2 * stripCirculation / (V * chord).
+   */
   stripCl: Float64Array;
-  /** Induced angle per strip (rad), positive = downwash. */
+  /**
+   * Induced angle per strip (rad), positive = downwash: half the Trefftz-plane normalwash of the
+   * trailing system (works for non-planar wings). Pointwise values in the last few, very narrow
+   * tip strips are dominated by the neighbouring discrete trailing vortices and should not be
+   * over-interpreted; CDi (the integral) is unaffected.
+   */
   stripAlphaInduced: Float64Array;
   /** Coefficients referenced to geometry.referenceArea / meanAeroChord. */
   CL: number;
@@ -655,9 +663,25 @@ export function solveVlm(model: VlmModel, input: VlmSolveInput): VlmSolution {
 }
 
 /**
+ * Linear (attached-flow) whole-wing lift slope dCL/dalpha (per rad) at `alpha`, by a central
+ * difference of two lattice solves (about 0.1 ms each).
+ */
+export function vlmLiftSlope(model: VlmModel, alpha = 0): number {
+  const h = 0.01;
+  return (
+    (solveVlm(model, { alpha: alpha + h }).CL - solveVlm(model, { alpha: alpha - h }).CL) / (2 * h)
+  );
+}
+
+/**
  * Express the solved lattice in the TUNNEL frame for flow-field evaluation: pitch the panels by
  * alpha about the pivot, scale circulation by vInf, and send trailing legs to +x (freestream).
  * `sources` is left empty and `coreRadius` set to a sensible default; the flow module fills sources.
+ *
+ * The VortexLattice format has one straight leg A -> teA per side, whereas the solver's legs
+ * follow the strip edges along the camber surface; the two differ only on the surface itself
+ * (by at most the flap droop), which is irrelevant for the flow field around the wing.
+ * Orientation follows types.ts (right: A inboard; left: A outboard), so gamma > 0 is lift.
  */
 export function vlmLatticeToTunnel(
   model: VlmModel,

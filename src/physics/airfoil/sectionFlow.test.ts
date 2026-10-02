@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { SectionFlow, Streamline2D } from '../types';
+import type { AirfoilKey } from './index';
 import { getAirfoilModel } from './index';
-import { computeSectionFlow, seedOffsets } from './sectionFlow';
+import type { SectionFlowDetailed } from './sectionFlow';
+import { computeSectionFlow, isSimplePolygon, seedOffsets } from './sectionFlow';
 
 const DEG = Math.PI / 180;
 const RE = 6e6;
@@ -22,6 +24,31 @@ const flowAt = (alphaDeg: number, alphaInducedDeg = 0) =>
 const attached = flowAt(6, 1);
 const stallAlpha = model.polar.alphaStall(RE) / DEG;
 const stalled = flowAt(stallAlpha + 4);
+
+const sectionKey = (
+  camber: number,
+  camberPos: number,
+  thickness: number,
+  flap: AirfoilKey['flap'] = null,
+  slat = false,
+): AirfoilKey => ({ params: { camber, camberPos, thickness }, flap, slat, supercritical: false });
+
+const flowFor = (key: AirfoilKey, alphaDeg: number): SectionFlowDetailed =>
+  computeSectionFlow(getAirfoilModel(key), {
+    eta: 0.5,
+    alphaGeometric: alphaDeg * DEG,
+    alphaInduced: 0,
+    reynolds: RE,
+  });
+
+/** Largest |V|/V_inf on the grid outside the airfoil. */
+function maxSpeed(f: SectionFlow): number {
+  let m = 0;
+  for (let k = 0; k < f.grid.nx * f.grid.ny; k++) {
+    if (!f.grid.inside[k]) m = Math.max(m, Math.hypot(f.grid.uv[2 * k]!, f.grid.uv[2 * k + 1]!));
+  }
+  return m;
+}
 
 function pointInContour(contour: Float32Array, x: number, y: number): boolean {
   let inside = false;
@@ -257,6 +284,71 @@ describe('section flow', () => {
       expect(f.streamlines.length).toBeGreaterThan(20);
       for (let i = 0; i < f.grid.uv.length; i++) expect(Number.isFinite(f.grid.uv[i]!)).toBe(true);
     }
+  });
+
+  it('draws a separated bubble, not an attached 10x-speed flow, for thin and flapped sections', () => {
+    // Thin sections (F-16-like) and full landing flaps at high alpha have inviscid nose suction
+    // peaks of Cp -60 .. -110, which once made every separated body be rejected; the attached
+    // Kutta flow drawn instead carried cl ~6 with speeds of ~10 V_inf.
+    const cases: [AirfoilKey, number][] = [
+      [sectionKey(0, 0.4, 0.04), 25],
+      [sectionKey(0, 0.4, 0.04, { chordFrac: 0.4, deflection: 40 * DEG }), 25],
+      [sectionKey(0.04, 0.4, 0.04, { chordFrac: 0.4, deflection: 40 * DEG }), 30],
+      [sectionKey(0.09, 0.2, 0.04), -15],
+      [sectionKey(0.02, 0.4, 0.12, { chordFrac: 0.25, deflection: 30 * DEG }, true), 22],
+    ];
+    for (const [key, deg] of cases) {
+      const f = flowFor(key, deg);
+      expect(f.stalled).toBe(true);
+      expect(f.separated.reduce((s, v) => s + v, 0)).toBeGreaterThan(50);
+      expect(Math.abs(f.fieldCl - f.cl)).toBeLessThan(0.15);
+      expect(maxSpeed(f)).toBeLessThan(5);
+    }
+  });
+
+  it('carries the polar lift when no separated body can be built', () => {
+    // Beyond 80 deg no bubble is attempted; the Kutta circulation there would be cl ~6.
+    const f = flowFor(sectionKey(0, 0.4, 0.04), 85);
+    expect(f.stalled).toBe(true);
+    expect(f.separated.every((v) => v === 0)).toBe(true);
+    expect(f.fieldCl).toBeCloseTo(f.cl, 9);
+  });
+
+  it('stays well-behaved across the slider extremes', () => {
+    const keys = [
+      sectionKey(0, 0.4, 0.04),
+      sectionKey(0.09, 0.9, 0.04, { chordFrac: 0.1, deflection: 40 * DEG }),
+      sectionKey(0.09, 0.2, 0.24, { chordFrac: 0.4, deflection: 40 * DEG }, true),
+      sectionKey(0.02, 0.4, 0.15, { chordFrac: 0.3, deflection: 20 * DEG }),
+    ];
+    for (const key of keys) {
+      for (const deg of [-15, 0, 12, 18, 30]) {
+        const f = flowFor(key, deg);
+        expect(f.grid.uv.every(Number.isFinite)).toBe(true);
+        expect(maxSpeed(f)).toBeLessThan(8);
+        expect(f.streamlines.length).toBeGreaterThanOrEqual(24);
+        for (const line of f.streamlines) {
+          const n = line.points.length / 2;
+          let ok = true;
+          for (let i = 0; i < n; i++) {
+            if (!Number.isFinite(line.points[2 * i]!) || !Number.isFinite(line.speed[i]!))
+              ok = false;
+            if (pointInContour(f.contour, line.points[2 * i]!, line.points[2 * i + 1]!)) ok = false;
+            if (i > 0 && !(line.time[i]! > line.time[i - 1]!)) ok = false;
+          }
+          expect(ok).toBe(true);
+        }
+        if (f.stalled) expect(Math.abs(f.fieldCl - f.cl)).toBeLessThan(0.3);
+      }
+    }
+  });
+
+  it('detects self-intersecting contours', () => {
+    const square = Float64Array.from([0, 0, 0, 1, 1, 1, 1, 0, 0, 0]);
+    expect(isSimplePolygon(square, 5)).toBe(true);
+    const bowTie = Float64Array.from([0, 0, 1, 1, 1, 0, 0, 1, 0, 0]);
+    expect(isSimplePolygon(bowTie, 5)).toBe(false);
+    expect(isSimplePolygon(model.geometry.coords, model.geometry.nPoints)).toBe(true);
   });
 
   it('spreads seeds densely near the stagnation streamline, never on it', () => {

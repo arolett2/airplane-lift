@@ -17,11 +17,14 @@
  * A gentle recirculation is drawn inside the bubble so particles there drift instead of
  * freezing. The real separated wake does not close and its pressure is not given by
  * Bernoulli; this is a teaching picture, not a viscous solution.
+ * If no valid body can be built (or beyond 80 deg), a stalled section is drawn as the plain
+ * airfoil with the polar's circulation prescribed (Kutta condition relaxed), never with the
+ * much larger attached-flow circulation.
  */
 import type { AirfoilGeometry, PanelSolution, SectionFlow, Streamline2D } from '../types';
 import type { AirfoilModel } from './index';
 import type { PanelSolver } from './panel';
-import { createPanelSolver } from './panel';
+import { createPanelSolver, isLinearVortexSolver } from './panel';
 import type { ViscousSectionPolar } from './polar';
 
 export interface SectionFlowInput {
@@ -277,6 +280,46 @@ function surfaceCrossing(
   return null;
 }
 
+function minOf(values: ArrayLike<number>): number {
+  let m = Infinity;
+  for (let i = 0; i < values.length; i++) if (values[i]! < m) m = values[i]!;
+  return m;
+}
+
+/**
+ * True when no two non-adjacent edges of the closed contour (first point repeated at the end)
+ * cross each other. O(n^2) with a bounding-box prefilter; n is a few hundred here.
+ */
+export function isSimplePolygon(coords: Float64Array, nPoints: number): boolean {
+  const edges = nPoints - 1;
+  for (let i = 0; i < edges; i++) {
+    const ax = coords[2 * i]!;
+    const ay = coords[2 * i + 1]!;
+    const bx = coords[2 * i + 2]!;
+    const by = coords[2 * i + 3]!;
+    const x0 = Math.min(ax, bx);
+    const x1 = Math.max(ax, bx);
+    const y0 = Math.min(ay, by);
+    const y1 = Math.max(ay, by);
+    for (let j = i + 2; j < edges; j++) {
+      if (i === 0 && j === edges - 1) continue; // share the closing point
+      const cx = coords[2 * j]!;
+      const cy = coords[2 * j + 1]!;
+      const dx = coords[2 * j + 2]!;
+      const dy = coords[2 * j + 3]!;
+      if (Math.max(cx, dx) < x0 || Math.min(cx, dx) > x1) continue;
+      if (Math.max(cy, dy) < y0 || Math.min(cy, dy) > y1) continue;
+      const d1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+      const d2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+      if (d1 * d2 >= 0) continue;
+      const d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+      const d4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+      if (d3 * d4 < 0) return false;
+    }
+  }
+  return true;
+}
+
 /** Cosine-clustered samples of [a, b] (dense at both ends), n intervals, endpoints included. */
 function cosineSamples(a: number, b: number, n: number): Float64Array {
   const out = new Float64Array(n + 1);
@@ -469,12 +512,16 @@ function fitBubble(
   const side = suctionUpper ? 1 : -1;
   const target = side * targetCl;
   const xSep = clamp(attachedFraction, 0.03, 0.97);
+  // Suction-peak sanity limit, relative to the attached (Kutta) flow at this angle: thin or
+  // flapped sections legitimately reach Cp of -100 or less around the nose at high alpha, so an
+  // absolute limit would reject good bodies (and fall back to the far worse attached picture).
+  const cpFloor = Math.min(-60, 2 * minOf(model.solver.solve(alpha).cp));
   let best: { bubble: Bubble; solver: PanelSolver; solution: PanelSolution; err: number } | null =
     null;
   /** Lift (suction-side positive) of the body closing at `closure`, or null if unusable. */
   const attempt = (closure: number): number | null => {
     const bubble = buildBubble(model.geometry, alpha, suctionUpper, xSep, closure);
-    if (!bubble) return null;
+    if (!bubble || !isSimplePolygon(bubble.geometry.coords, bubble.geometry.nPoints)) return null;
     let solver: PanelSolver;
     try {
       solver = createPanelSolver(bubble.geometry);
@@ -482,10 +529,8 @@ function fitBubble(
       return null;
     }
     const solution = solver.solve(alpha);
-    // Reject numerically broken bodies (self-intersection, near-singular corners).
-    let minCp = Infinity;
-    for (let i = 0; i < solution.cp.length; i++) minCp = Math.min(minCp, solution.cp[i]!);
-    if (!Number.isFinite(solution.cl) || !(minCp > -60)) return null;
+    // Reject numerically broken bodies (near-singular corners or slivers).
+    if (!Number.isFinite(solution.cl) || !(minOf(solution.cp) > cpFloor)) return null;
     const value = side * solution.cl;
     const err = Math.abs(value - target);
     const plausible = Math.abs(solution.cl) < 3 * Math.abs(targetCl) + 2;
@@ -558,7 +603,15 @@ export function computeSectionFlow(
     const fit = fitBubble(model, alphaE, suctionUpper, attachedFraction, cl);
     if (fit) ({ bubble, solver, solution } = fit);
   }
-  solution ??= solver.solve(alphaE);
+  if (!solution) {
+    // No separated body (attached flow, or none could be built). When stalled, prescribe the
+    // polar's circulation: the Kutta value can be several times the stalled lift (with speeds
+    // of 10 V_inf in the picture), which would show the opposite of a stall.
+    solution =
+      stalled && isLinearVortexSolver(solver)
+        ? solver.solveWithLift(alphaE, cl)
+        : solver.solve(alphaE);
+  }
   const body = new Polygon(model.geometry.coords, model.geometry.nPoints);
   const outer = bubble ? new Polygon(bubble.geometry.coords, bubble.geometry.nPoints) : body;
 

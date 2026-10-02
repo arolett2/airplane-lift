@@ -11,10 +11,12 @@
  * tangentially and turns into the freestream direction; a second line leaves the trailing edge;
  * both run downstream and close in a sharp tail a few bubble-heights behind the TE. The panel
  * method then solves the flow around airfoil + bubble with the Kutta condition at the tail, so
- * the outer streamlines detour around the separated region, the circulation drops, and the
- * air inside the bubble is (nearly) at rest. A gentle recirculation is drawn inside the bubble
- * so particles there drift instead of freezing. The real separated wake does not close and its
- * pressure is not given by Bernoulli; this is a teaching picture, not a viscous solution.
+ * the outer streamlines detour around the separated region and the air inside the bubble is
+ * (nearly) at rest. The height of the closure point is fitted so the drawn flow carries the
+ * polar's viscous lift (see fitBubble), which keeps the picture continuous through stall onset.
+ * A gentle recirculation is drawn inside the bubble so particles there drift instead of
+ * freezing. The real separated wake does not close and its pressure is not given by
+ * Bernoulli; this is a teaching picture, not a viscous solution.
  */
 import type { AirfoilGeometry, PanelSolution, SectionFlow, Streamline2D } from '../types';
 import type { AirfoilModel } from './index';
@@ -37,7 +39,7 @@ export interface SectionFlowOptions {
   streamlines?: number;
 }
 
-/** SectionFlow plus an optional per-node "separated" weight (0 attached .. 1 dead air). */
+/** What computeSectionFlow returns: the SectionFlow contract plus stall-visualisation extras. */
 export interface SectionFlowDetailed extends SectionFlow {
   /**
    * Per grid node (length nx*ny): 1 inside the separated dead-air bubble, else 0. In there the
@@ -243,9 +245,9 @@ interface Bubble {
   ey: number;
   nx: number;
   ny: number;
-  /** Upper (shear-line) and lower (wall / TE wake line) boundary heights eta(xi), sampled. */
-  xiStart: number;
+  /** Along-stream extent of the bubble (closure point). */
   xiEnd: number;
+  /** Height eta(xi) of the bubble's outer boundary (the separated shear layer). */
   upperEta: (xi: number) => number;
   /** Polygon of the dead-air region only (excluding the airfoil). */
   region: Polygon;
@@ -444,7 +446,6 @@ function buildBubble(
     ey,
     nx,
     ny,
-    xiStart: 0,
     xiEnd: xiC,
     upperEta,
     region: new Polygon(Float64Array.from(region), region.length / 2),

@@ -272,6 +272,7 @@ export class ControlsPanel {
       icon,
       open,
       storageKey: `controls.${id}`,
+      level: 2,
       class: 'controls__section',
     });
     c.body.classList.add('stack');

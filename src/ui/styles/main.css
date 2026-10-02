@@ -117,6 +117,8 @@ button {
   inset: 0;
   z-index: 0;
   overflow: hidden;
+  /* A soft pool of light behind the (transparent-capable) canvas. */
+  background: radial-gradient(ellipse at 50% 38%, #0e1a2e 0%, var(--bg) 72%);
 }
 
 /* "Computing" shimmer along the top edge; fades in only if the work takes a moment. */

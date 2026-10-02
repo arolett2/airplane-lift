@@ -47,7 +47,7 @@ function metric(modifier: string, title: string): Metric {
   const el = h(
     'article',
     { class: `metric metric--${modifier}` },
-    h('h4', { class: 'metric__title' }, title),
+    h('h3', { class: 'metric__title' }, title),
     h('div', { class: 'metric__value' }, value, unit),
     sub,
   );
@@ -170,7 +170,7 @@ export class ReadoutPanel {
       ),
     );
     this.gaugeCard.append(
-      h('h4', { class: 'metric__title' }, 'Lift compared with weight'),
+      h('h3', { class: 'metric__title' }, 'Lift compared with weight'),
       h(
         'div',
         { class: 'metric__value' },
@@ -220,7 +220,7 @@ export class ReadoutPanel {
       );
     }
     this.engineer.append(
-      h('h4', { class: 'metric__title' }, 'Engineering numbers'),
+      h('h3', { class: 'metric__title' }, 'Engineering numbers'),
       h('table', { class: 'engineer__table' }, tbody),
       this.warnings,
     );

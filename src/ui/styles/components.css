@@ -262,6 +262,7 @@
 /* ------------------------------------------------------------------------------------------ */
 
 .info-btn {
+  position: relative;
   display: inline-grid;
   place-items: center;
   flex: none;
@@ -273,6 +274,13 @@
   border-radius: 50%;
   color: var(--faint);
   transition: color var(--dur) var(--ease);
+}
+
+/* Enlarge the tap target without changing the layout. */
+.info-btn::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
 }
 
 .info-btn:hover,
@@ -726,5 +734,49 @@
 @media (prefers-reduced-motion: reduce) {
   [data-param].is-highlighted {
     animation: none;
+  }
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* Touch screens: larger targets                                                                */
+/* ------------------------------------------------------------------------------------------ */
+
+@media (pointer: coarse) {
+  .slider__range {
+    --thumb: 26px;
+    --track-h: 8px;
+    height: 38px;
+  }
+
+  .slider__number {
+    padding: 6px 8px;
+  }
+
+  .toggle__row {
+    min-height: 44px;
+  }
+
+  .segmented__text {
+    padding: 11px 4px;
+  }
+
+  .btn {
+    height: 42px;
+  }
+
+  .btn--icon {
+    width: 42px;
+  }
+
+  .btn--sm {
+    height: 40px;
+  }
+
+  .collapsible__button {
+    padding-block: 15px;
+  }
+
+  .select__input {
+    padding-block: 12px;
   }
 }

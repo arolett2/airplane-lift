@@ -63,11 +63,7 @@ export function createCollapsible(options: CollapsibleOptions): CollapsibleContr
   const header = h(headingTag, { class: 'collapsible__header' }, button);
 
   const body = h('div', { class: 'collapsible__body' });
-  const clip = h(
-    'div',
-    { class: 'collapsible__clip', id: bodyId, role: 'region', 'aria-label': options.title },
-    body,
-  );
+  const clip = h('div', { class: 'collapsible__clip', id: bodyId }, body);
   const wrap = h('div', { class: 'collapsible__content' }, clip);
 
   const el = h(

@@ -621,3 +621,111 @@ describe('robustness across the slider range', () => {
     expect(a).toEqual(b);
   });
 });
+
+describe('planform integrals against closed-form results (review)', () => {
+  /** Projected (x-y) planform area of a surface by the trapezoid rule over its sections. */
+  function planformArea(s: LiftingSurface): number {
+    let area = 0;
+    for (let i = 1; i < s.sections.length; i++) {
+      const a = s.sections[i - 1]!;
+      const b = s.sections[i]!;
+      area += ((a.chord + b.chord) / 2) * Math.abs(b.le[1] - a.le[1]);
+    }
+    return area;
+  }
+
+  it('builds sections whose planform is exactly the reference trapezoid', () => {
+    for (const taperRatio of [0.1, 0.25, 1]) {
+      for (const spanFrac of [0.1, 0.55, 0.9]) {
+        const g = buildWingGeometry({
+          ...AIRLINER,
+          taperRatio,
+          flaps: { deflectionDeg: 20, chordFrac: 0.3, spanFrac },
+        });
+        const both = planformArea(surfaceById(g, 'wing-right')) * 2;
+        expect(both).toBeCloseTo(g.referenceArea, 10);
+      }
+    }
+  });
+
+  it('adds exactly the Yehudi triangle (c_r * chordFrac * y_k / 2 per side) to the planform', () => {
+    const plain = buildWingGeometry(AIRLINER);
+    for (const [spanFrac, chordFrac] of [
+      [0.3, 0.4],
+      [0.5, 0.6],
+      [0.1, 0.05],
+    ] as const) {
+      const g = buildWingGeometry({
+        ...AIRLINER,
+        yehudi: { spanFrac, chordFrac },
+        flaps: { deflectionDeg: 15, chordFrac: 0.3, spanFrac: 0.2 },
+      });
+      const triangle = (6 * chordFrac * spanFrac * 17) / 2;
+      const extra =
+        planformArea(surfaceById(g, 'wing-right')) - planformArea(surfaceById(plain, 'wing-right'));
+      expect(extra).toBeCloseTo(triangle, 10);
+      // Wetted area: 2 (1 + 0.25 t/c) per unit planform, along the dihedral span tangent.
+      const wettedPerArea = (2 * (1 + 0.25 * 0.12)) / Math.cos(5 * DEG);
+      expect(g.wettedArea - plain.wettedArea).toBeCloseTo(2 * triangle * wettedPerArea, 8);
+    }
+  });
+
+  it('gives the tapered, dihedral wing a wetted area of 2 (1 + 0.25 t/c) S / cos(dihedral)', () => {
+    const g = buildWingGeometry(AIRLINER);
+    expect(g.wettedArea).toBeCloseTo(
+      (2 * (1 + 0.25 * 0.12) * g.referenceArea) / Math.cos(5 * DEG),
+      8,
+    );
+  });
+
+  it('puts the mean aerodynamic chord at the area-weighted chord of the sections', () => {
+    // MAC = (2/S) * integral of c^2 dy over the semispan, exact for a linear chord.
+    for (const taperRatio of [0.1, 0.3, 1]) {
+      const g = buildWingGeometry({ ...AIRLINER, taperRatio });
+      const [a, b] = surfaceById(g, 'wing-right').sections as [WingSection, WingSection];
+      const dy = b.le[1] - a.le[1];
+      const intC2 = (dy * (a.chord * a.chord + a.chord * b.chord + b.chord * b.chord)) / 3;
+      expect(g.meanAeroChord).toBeCloseTo((2 * intC2) / g.referenceArea, 10);
+    }
+  });
+});
+
+describe('sectionFrame against the WingSection doc (review)', () => {
+  /** +x rotated by `twist` about the right-hand span tangent (Rodrigues), then mirrored for left. */
+  function docChordDir(roll: number, twist: number, side: 'right' | 'left'): number[] {
+    const k = [0, Math.cos(roll), Math.sin(roll)];
+    const c = Math.cos(twist);
+    const s = Math.sin(twist);
+    // k x (1,0,0) = (0, k_z, -k_y); k . (1,0,0) = 0.
+    const d = [c, s * k[2]!, -s * k[1]!];
+    return side === 'right' ? d : [d[0]!, -d[1]!, d[2]!];
+  }
+
+  it('matches the Rodrigues rotation and keeps the leading edge toward the normal', () => {
+    for (const roll of [-Math.PI / 2, -1, -0.2, 0, 0.3, 1.2, Math.PI / 2]) {
+      for (const twist of [-0.3, -0.05, 0, 0.1, 0.4]) {
+        for (const side of ['right', 'left'] as const) {
+          const sec: WingSection = {
+            le: [0, 0, 0],
+            chord: 1,
+            twist,
+            roll,
+            airfoil: AIRLINER.airfoil,
+            flap: null,
+            slat: false,
+          };
+          const f = sectionFrame(sec, side);
+          const d = docChordDir(roll, twist, side);
+          for (let i = 0; i < 3; i++) expect(f.chordDir[i]).toBeCloseTo(d[i]!, 12);
+          // Positive twist = nose up: the LE->TE direction leans away from the normal.
+          const dn =
+            f.chordDir[0] * f.normal[0] + f.chordDir[1] * f.normal[1] + f.chordDir[2] * f.normal[2];
+          expect(dn).toBeCloseTo(-Math.sin(twist), 12);
+          // Right-handed (tangent x normal = +x on the right, -x on the left: mirror flips it).
+          const cx = f.tangent[1] * f.normal[2] - f.tangent[2] * f.normal[1];
+          expect(cx).toBeCloseTo(side === 'right' ? 1 : -1, 12);
+        }
+      }
+    }
+  });
+});

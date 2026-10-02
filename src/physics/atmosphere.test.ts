@@ -106,3 +106,31 @@ describe('reynoldsNumber', () => {
     expect(re).toBeLessThan(7.5e6);
   });
 });
+
+describe('isaAtmosphere physics (review)', () => {
+  const G0 = 9.80665;
+
+  it('is in hydrostatic balance, dp/dh = -rho g0, in both layers', () => {
+    for (const h of [-400, 0, 2500, 7000, 10900, 11100, 14000, 19900]) {
+      const dh = 0.5;
+      const dpdh = (isaAtmosphere(h + dh).pressure - isaAtmosphere(h - dh).pressure) / (2 * dh);
+      expect(dpdh / (-isaAtmosphere(h).density * G0)).toBeCloseTo(1, 6);
+    }
+  });
+
+  it('cools at exactly 6.5 K/km in the troposphere', () => {
+    for (const h of [-500, 0, 4000, 10000]) {
+      const dT = isaAtmosphere(h + 1000).temperature - isaAtmosphere(h).temperature;
+      expect(dT).toBeCloseTo(-6.5, 10);
+    }
+  });
+
+  it('gives a = sqrt(gamma R T) and mu from Sutherland at every height', () => {
+    for (const h of [0, 6000, 11000, 17000]) {
+      const atm = isaAtmosphere(h);
+      expect(atm.speedOfSound).toBeCloseTo(Math.sqrt(1.4 * 287.05287 * atm.temperature), 10);
+      const T = atm.temperature;
+      expect(atm.dynamicViscosity).toBeCloseTo((1.458e-6 * T ** 1.5) / (T + 110.4), 15);
+    }
+  });
+});

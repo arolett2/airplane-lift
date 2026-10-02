@@ -40,8 +40,10 @@ const SUTHERLAND_MU_REF = 1.458e-6; // kg / (m s sqrt(K))
 const SUTHERLAND_S = 110.4; // K
 
 /**
- * ISA state at a geometric altitude (m). Altitudes outside [-500, 20000] m are clamped, and the
- * returned `altitude` is the clamped value.
+ * ISA state at a pressure altitude (m). The layer formulas use geopotential altitude, which is
+ * what pressure altitude and the standard tables are expressed in (geometric altitude differs by
+ * about 0.2 % at 11 km). Altitudes outside [-500, 20000] m are clamped, and the returned
+ * `altitude` is the clamped value.
  */
 export function isaAtmosphere(altitude: number): AtmosphereState {
   const h = Number.isFinite(altitude)

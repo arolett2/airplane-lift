@@ -14,6 +14,8 @@ import type {
   WingGeometry,
   WingSection,
 } from '../../physics/types';
+import { DEFAULT_WING } from '../../state/params';
+import type { AircraftPreset } from '../../state/presets';
 
 export const DEG = Math.PI / 180;
 
@@ -367,5 +369,22 @@ export function makeGeometry(opts: {
     overallSpan: b,
     wettedArea: area * 2.1,
     sweepQuarterChord: Math.atan2(sweep + (c1 - c0) / 4, half),
+  };
+}
+
+/** A preset for comparison tests; override anything. */
+export function makePreset(over: Partial<AircraftPreset> & { id: string }): AircraftPreset {
+  return {
+    name: over.id.toUpperCase(),
+    shortName: over.id.toUpperCase(),
+    category: 'airliner',
+    blurb: 'A test wing.',
+    wing: DEFAULT_WING,
+    cruise: { alphaDeg: 3, airspeed: 230, altitude: 10668 },
+    approach: { alphaDeg: 8, airspeed: 70, altitude: 0 },
+    maxTakeoffMassKg: 80000,
+    typicalCruiseMassKg: 65000,
+    facts: [],
+    ...over,
   };
 }

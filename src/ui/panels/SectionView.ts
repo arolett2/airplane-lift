@@ -63,6 +63,8 @@ interface Rect {
 interface PulseState {
   /** Time since release (chord / V_inf). */
   age: number;
+  /** Time the slowest marker needs to leave the picture. */
+  longest: number;
   /** All markers have left the picture. */
   done: boolean;
   /** Seconds left to show the label after finishing. */
@@ -280,7 +282,9 @@ export class SectionView {
    */
   firePulse(): void {
     if (!this.section || !this.prep || this.prep.lines.length === 0) return;
-    this.pulse = { age: 0, done: false, hold: PULSE_HOLD_SECONDS };
+    let longest = 0;
+    for (const line of this.prep.lines) longest = Math.max(longest, line.total - line.pulseStart);
+    this.pulse = { age: 0, longest, done: false, hold: PULSE_HOLD_SECONDS };
     this.requestDraw();
     this.updateAnimation();
   }
@@ -425,11 +429,7 @@ export class SectionView {
     if (pulse && this.prep) {
       if (!pulse.done) {
         pulse.age += dtChord;
-        let longest = 0;
-        for (const line of this.prep.lines) {
-          longest = Math.max(longest, line.total - line.pulseStart);
-        }
-        if (pulse.age > longest + 0.05) pulse.done = true;
+        if (pulse.age > pulse.longest + 0.05) pulse.done = true;
       } else {
         pulse.hold -= dt;
         if (pulse.hold <= 0) this.pulse = null;

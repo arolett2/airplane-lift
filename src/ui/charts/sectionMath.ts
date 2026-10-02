@@ -412,8 +412,12 @@ export function prepareStreamlines(section: SectionFlow): PreparedStreamlines {
   const a = section.alphaEffective;
   const c = Math.cos(a);
   const s = Math.sin(a);
-  const teX = c; // trailing edge at airfoil x = 1, y = 0
-  const teY = -s;
+  // Trailing edge from the contour itself (it moves when a flap is deflected).
+  const cn = section.contour.length;
+  const teAx = cn >= 4 ? (section.contour[0]! + section.contour[cn - 2]!) / 2 : 1;
+  const teAy = cn >= 4 ? (section.contour[1]! + section.contour[cn - 1]!) / 2 : 0;
+  const teX = displayX(c, s, teAx, teAy);
+  const teY = displayY(c, s, teAx, teAy);
 
   const lines: PreparedStreamline[] = section.streamlines.map((sl) => {
     const n = Math.min(sl.time.length, Math.floor(sl.points.length / 2));

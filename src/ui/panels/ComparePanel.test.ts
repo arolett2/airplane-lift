@@ -268,6 +268,22 @@ describe('ComparePanel computing', () => {
     expect(root.querySelector<HTMLElement>('.viz-compare-table')!.hidden).toBe(true);
   });
 
+  it('offers a retry after an error', async () => {
+    requester.mockRejectedValueOnce(new Error('flaky'));
+    open();
+    await flush();
+    const retry = root.querySelector<HTMLButtonElement>('.viz-compare-status .viz-button')!;
+    expect(retry.hidden).toBe(false);
+    retry.click();
+    await flush();
+    expect(requester).toHaveBeenCalledTimes(2);
+    expect(root.querySelector<HTMLElement>('.viz-compare-table')!.hidden).toBe(false);
+    expect(retry.hidden).toBe(true);
+    expect(root.querySelector('.viz-compare-planform + .viz-caption')!.textContent).toMatch(
+      /same scale/,
+    );
+  });
+
   it('handles a synchronous throw and an incomplete answer', async () => {
     requester.mockImplementationOnce(() => {
       throw new Error('no worker');

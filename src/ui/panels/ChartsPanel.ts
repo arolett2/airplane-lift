@@ -16,6 +16,7 @@ import {
   pressureData,
   pressureNote,
   spanChartData,
+  spanEfficiencyNote,
   spanLoadNote,
 } from '../charts/chartData';
 import { LineChart, type ChartConfig, type ChartSeries } from '../charts/LineChart';
@@ -404,7 +405,7 @@ export class ChartsPanel {
         ariaLabel:
           'Lift per metre of span along the wing, compared with an ideal elliptical sharing',
       },
-      null,
+      spanEfficiencyNote(r.aero),
     );
 
     const stallSeries: ChartSeries[] = [

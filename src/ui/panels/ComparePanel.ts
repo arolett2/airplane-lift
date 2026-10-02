@@ -52,7 +52,10 @@ export class ComparePanel {
   private readonly blurbs: Record<Slot, HTMLElement>;
   private readonly headerCells: Record<Slot, HTMLTableCellElement>;
   private readonly statusEl: HTMLElement;
+  private readonly statusText: HTMLElement;
+  private readonly retryButton: HTMLButtonElement;
   private readonly planformEl: HTMLElement;
+  private readonly planformBox: HTMLElement;
   private readonly table: HTMLTableElement;
   private readonly tbody: HTMLTableSectionElement;
   private readonly why: HTMLElement;
@@ -134,9 +137,24 @@ export class ComparePanel {
     this.blurbs = { a: h('p'), b: h('p') };
     blurbs.append(this.blurbs.a, this.blurbs.b);
 
-    this.statusEl = h('p', 'viz-compare-status');
+    this.statusEl = h('div', 'viz-compare-status');
     this.statusEl.setAttribute('role', 'status');
+    this.statusText = h('span');
+    this.retryButton = h('button', 'viz-button', 'Try again');
+    this.retryButton.type = 'button';
+    this.retryButton.hidden = true;
+    this.retryButton.addEventListener('click', () => {
+      if (this.ids) this.load(this.ids);
+    });
+    this.statusEl.append(this.statusText, doc.createTextNode(' '), this.retryButton);
     this.planformEl = h('div', 'viz-compare-planform');
+    const planformCaption = h(
+      'p',
+      'viz-caption',
+      'Both wings drawn to the same scale and lined up at the root, so you can see the real difference in size.',
+    );
+    this.planformBox = h('div');
+    this.planformBox.append(this.planformEl, planformCaption);
 
     this.table = h('table', 'viz-compare-table');
     const caption = h('caption', undefined, 'How the two wings compare at typical cruise');
@@ -157,7 +175,7 @@ export class ComparePanel {
     this.whyList = h('ul');
     this.why.appendChild(this.whyList);
 
-    this.card.append(head, pickers, blurbs, this.statusEl, this.planformEl, this.table, this.why);
+    this.card.append(head, pickers, blurbs, this.statusEl, this.planformBox, this.table, this.why);
     this.el.append(backdrop, this.card);
     root.appendChild(this.el);
     doc.addEventListener('keydown', this.onKeyDown);
@@ -365,12 +383,13 @@ export class ComparePanel {
   private renderResults(): void {
     const ready = this.status === 'ready' && this.summaries !== null;
     this.statusEl.hidden = ready;
-    this.planformEl.hidden = !ready;
+    this.planformBox.hidden = !ready;
     this.table.hidden = !ready;
     this.why.hidden = !ready;
-    if (this.status === 'loading') this.statusEl.textContent = 'Working out both wings…';
+    this.retryButton.hidden = this.status !== 'error';
+    if (this.status === 'loading') this.statusText.textContent = 'Working out both wings…';
     else if (this.status === 'error') {
-      this.statusEl.textContent = `Could not compare these aircraft: ${this.errorMessage}`;
+      this.statusText.textContent = `Could not compare these aircraft: ${this.errorMessage}`;
     }
     if (!ready || !this.summaries) return;
 

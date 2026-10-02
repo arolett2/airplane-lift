@@ -71,15 +71,25 @@ export function liftCurveNote(data: LiftCurveData): string | null {
   const c = data.current;
   if (!c) return null;
   const a = c.alphaDeg.toFixed(1);
+  let sentence: string;
   if (c.sectionCL === null || !Number.isFinite(c.sectionCL)) {
-    return `At ${a}° your wing makes a lift coefficient of ${c.CL.toFixed(2)}.`;
+    sentence = `At ${a}° your wing makes a lift coefficient of ${c.CL.toFixed(2)}.`;
+  } else {
+    const lost = c.sectionCL > 0.05 ? 1 - c.CL / c.sectionCL : null;
+    const tail =
+      lost !== null && lost > 0.01 && lost < 0.95
+        ? `, about ${Math.round(lost * 100)}% less than an endless wing (${c.sectionCL.toFixed(2)})`
+        : `, versus ${c.sectionCL.toFixed(2)} for an endless wing`;
+    sentence = `At ${a}° your wing makes a lift coefficient of ${c.CL.toFixed(2)}${tail}.`;
   }
-  const lost = c.sectionCL > 0.05 ? 1 - c.CL / c.sectionCL : null;
-  const tail =
-    lost !== null && lost > 0.01 && lost < 0.95
-      ? `, about ${Math.round(lost * 100)}% less than an endless wing (${c.sectionCL.toFixed(2)})`
-      : `, versus ${c.sectionCL.toFixed(2)} for an endless wing`;
-  return `At ${a}° your wing makes a lift coefficient of ${c.CL.toFixed(2)}${tail}.`;
+  if (data.stallAlphaDeg !== null) {
+    const stall = data.stallAlphaDeg.toFixed(0);
+    sentence +=
+      c.alphaDeg > data.stallAlphaDeg
+        ? ` Past the stall angle of about ${stall}° the air has separated and lift falls.`
+        : ` It stalls at about ${stall}°.`;
+  }
+  return sentence;
 }
 
 /* ------------------------------------------------------------------------------------------ */
@@ -206,6 +216,13 @@ export function spanChartData(
     closest,
     anyStalled: right.some((s) => s.stalled),
   };
+}
+
+/** How close the lift sharing is to the ideal ellipse, from the solver's span efficiency. */
+export function spanEfficiencyNote(aero: AeroResult): string | null {
+  const e = aero.spanEfficiency;
+  if (!Number.isFinite(e) || e <= 0) return null;
+  return `Span efficiency ${e.toFixed(2)}: the closer to 1.00, the closer the wing is to the ideal ellipse.`;
 }
 
 export function spanLoadNote(data: SpanChartData): string | null {

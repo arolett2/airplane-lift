@@ -8,6 +8,7 @@ import {
   pressureData,
   pressureNote,
   spanChartData,
+  spanEfficiencyNote,
   spanLoadNote,
 } from './chartData';
 import { DEG, makeAero, makeGeometry, makePolar, makeSection, makeStrip } from './testFixtures';
@@ -40,6 +41,16 @@ describe('liftCurveData', () => {
     expect(note).toContain('endless wing');
     expect(note).toMatch(/\d+% less/);
     expect(liftCurveNote(liftCurveData(polar, 99, null))).toBeNull();
+  });
+
+  it('mentions the stall angle, and what happens beyond it', () => {
+    expect(liftCurveNote(liftCurveData(polar, 6, null))).toContain('stalls at about 14°');
+    const beyond = liftCurveNote(liftCurveData(polar, 18, null))!;
+    expect(beyond).toContain('Past the stall angle of about 14°');
+    expect(beyond).toContain('lift falls');
+    expect(liftCurveNote(liftCurveData({ ...polar, alphaStallDeg: 90 }, 6, null))).not.toContain(
+      'stall',
+    );
   });
 });
 
@@ -124,6 +135,14 @@ describe('spanChartData', () => {
     const data = spanChartData(aero, null)!;
     expect(Number.isNaN(data.wing.ratio[0])).toBe(true);
     expect(data.closest!.eta).toBe(0.6);
+  });
+});
+
+describe('spanEfficiencyNote', () => {
+  it('reports the solver span efficiency in plain words', () => {
+    expect(spanEfficiencyNote(makeAero({ spanEfficiency: 0.913 }))).toContain('0.91');
+    expect(spanEfficiencyNote(makeAero({ spanEfficiency: NaN }))).toBeNull();
+    expect(spanEfficiencyNote(makeAero({ spanEfficiency: 0 }))).toBeNull();
   });
 });
 

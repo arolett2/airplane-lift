@@ -80,6 +80,7 @@ describe('section flow', () => {
     expect(attached.cl).toBeCloseTo(model.polar.cl(5 * DEG, RE), 12);
     expect(attached.stalled).toBe(false);
     expect(attached.attachedFraction).toBe(1);
+    expect(attached.fieldCl).toBeCloseTo(model.solver.clAt(5 * DEG), 9);
     expect(attached.cp.xc.length).toBe(41);
     expect(attached.contour.length).toBe(2 * model.geometry.nPoints);
     // Stagnation point just under the nose at positive alpha.
@@ -202,6 +203,7 @@ describe('section flow', () => {
 
   it('flags stall and draws a separated dead-air region the streamlines avoid', () => {
     expect(stalled.stalled).toBe(true);
+    expect(stalled.streamlines.length).toBe(28);
     expect(stalled.attachedFraction).toBeLessThan(0.7);
     expect(flowAt(stallAlpha - 3).stalled).toBe(false);
     const g = stalled.grid;
@@ -229,15 +231,30 @@ describe('section flow', () => {
       }
     }
     expect(inBubble).toBeLessThan(5);
+    // The drawn flow carries the polar's (reduced) lift, not the attached-flow lift.
+    expect(stalled.fieldCl).toBeGreaterThan(stalled.cl - 0.15);
+    expect(stalled.fieldCl).toBeLessThan(stalled.cl + 0.15);
+    expect(stalled.fieldCl).toBeLessThan(model.solver.clAt(stalled.alphaEffective) - 0.5);
+  });
+
+  it('keeps the flow continuous through the onset of stall', () => {
+    // Just past stall the separated bubble is small and the circulation barely changes.
+    const before = flowAt(stallAlpha - 0.3);
+    const after = flowAt(stallAlpha + 0.3);
+    expect(after.stalled).toBe(true);
+    expect(Math.abs(after.fieldCl - before.fieldCl)).toBeLessThan(0.25);
+    const dx = after.stagnation[0] - before.stagnation[0];
+    const dy = after.stagnation[1] - before.stagnation[1];
+    expect(Math.hypot(dx, dy)).toBeLessThan(0.01);
   });
 
   it('handles negative stall and extreme angles without breaking', () => {
     const neg = flowAt(model.polar.alphaStallNegative(RE) / DEG - 4);
     expect(neg.stalled).toBe(true);
     expect(neg.cl).toBeLessThan(0);
-    for (const a of [-60, 45, 89, 135, 180]) {
+    for (const a of [-60, 30, 45, 89, 135, 180]) {
       const f = flowAt(a);
-      expect(f.streamlines.length).toBeGreaterThan(0);
+      expect(f.streamlines.length).toBeGreaterThan(20);
       for (let i = 0; i < f.grid.uv.length; i++) expect(Number.isFinite(f.grid.uv[i]!)).toBe(true);
     }
   });

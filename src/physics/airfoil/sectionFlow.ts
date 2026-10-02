@@ -9,8 +9,8 @@
  * "dead-air" region is modelled as a displacement body, the classic free-streamline picture of
  * stall. From the separation point x_sep (= attachedFraction) a shear line leaves the surface
  * tangentially and turns into the freestream direction; a second line leaves the trailing edge;
- * both run downstream and close in a cusp about a bubble-height or two behind the TE. The panel
- * method then solves the flow around airfoil + bubble with the Kutta condition at the cusp, so
+ * both run downstream and close in a sharp tail a few bubble-heights behind the TE. The panel
+ * method then solves the flow around airfoil + bubble with the Kutta condition at the tail, so
  * the outer streamlines detour around the separated region, the circulation drops, and the
  * air inside the bubble is (nearly) at rest. A gentle recirculation is drawn inside the bubble
  * so particles there drift instead of freezing. The real separated wake does not close and its
@@ -44,6 +44,8 @@ export interface SectionFlowDetailed extends SectionFlow {
    * pressure is roughly the (low) base pressure, NOT 1 - |V|^2, so colour it accordingly.
    */
   separated: Uint8Array;
+  /** Lift coefficient carried by the drawn flow field (circulation), close to `cl`. */
+  fieldCl: number;
 }
 
 /** Window of the section view in the airfoil frame (chords). */
@@ -158,6 +160,77 @@ class Polygon {
 }
 
 /* ------------------------------------------------------------------------------------------ */
+/* Grid rasterisation                                                                          */
+/* ------------------------------------------------------------------------------------------ */
+
+interface GridSpec {
+  xMin: number;
+  yMin: number;
+  dx: number;
+  dy: number;
+  nx: number;
+  ny: number;
+}
+
+/**
+ * Distance from each grid node to the polygon boundary, capped at `cap`. Each edge only visits
+ * the nodes within `cap` of its bounding box, so this is far cheaper than per-node queries.
+ */
+function distanceField(poly: Polygon, g: GridSpec, cap: number, out: Float32Array): void {
+  out.fill(cap);
+  const { xs, ys } = poly;
+  for (let e = 0; e < poly.count; e++) {
+    const ax = xs[e]!;
+    const ay = ys[e]!;
+    const bx = xs[e + 1]!;
+    const by = ys[e + 1]!;
+    const ex = bx - ax;
+    const ey = by - ay;
+    const l2 = ex * ex + ey * ey;
+    const i0 = Math.max(0, Math.floor((Math.min(ax, bx) - cap - g.xMin) / g.dx));
+    const i1 = Math.min(g.nx - 1, Math.ceil((Math.max(ax, bx) + cap - g.xMin) / g.dx));
+    const j0 = Math.max(0, Math.floor((Math.min(ay, by) - cap - g.yMin) / g.dy));
+    const j1 = Math.min(g.ny - 1, Math.ceil((Math.max(ay, by) + cap - g.yMin) / g.dy));
+    for (let j = j0; j <= j1; j++) {
+      const y = g.yMin + j * g.dy;
+      for (let i = i0; i <= i1; i++) {
+        const x = g.xMin + i * g.dx;
+        const t = l2 > 0 ? clamp(((x - ax) * ex + (y - ay) * ey) / l2, 0, 1) : 0;
+        const d = Math.hypot(x - ax - t * ex, y - ay - t * ey);
+        const k = i + g.nx * j;
+        if (d < out[k]!) out[k] = d;
+      }
+    }
+  }
+}
+
+/** Scanline fill: out[k] = 1 for grid nodes inside the polygon (same rule as contains()). */
+function rasterizeInside(poly: Polygon, g: GridSpec, out: Uint8Array): void {
+  const { xs, ys } = poly;
+  const crossings: number[] = [];
+  for (let j = 0; j < g.ny; j++) {
+    const y = g.yMin + j * g.dy;
+    if (y < poly.minY || y > poly.maxY) continue;
+    crossings.length = 0;
+    for (let e = 0; e < poly.count; e++) {
+      const y0 = ys[e]!;
+      const y1 = ys[e + 1]!;
+      if (y0 > y !== y1 > y)
+        crossings.push(xs[e]! + ((y - y0) * (xs[e + 1]! - xs[e]!)) / (y1 - y0));
+    }
+    if (crossings.length < 2) continue;
+    crossings.sort((a, b) => a - b);
+    // Inside iff an odd number of crossings lie strictly to the right of the node.
+    let c = 0;
+    for (let i = 0; i < g.nx; i++) {
+      const x = g.xMin + i * g.dx;
+      while (c < crossings.length && crossings[c]! <= x) c++;
+      if ((crossings.length - c) % 2 === 1) out[i + g.nx * j] = 1;
+    }
+  }
+}
+
+/* ------------------------------------------------------------------------------------------ */
 /* Separated-flow displacement body                                                           */
 /* ------------------------------------------------------------------------------------------ */
 
@@ -212,12 +285,15 @@ function cosineSamples(a: number, b: number, n: number): Float64Array {
 /**
  * Build the airfoil + dead-air displacement body, or null when the separated region is too
  * thin to matter (or the geometry is degenerate).
+ * @param closure where the bubble closes, as a fraction of its height above the TE wake line:
+ *   0.5 = midway, 0 = on the TE line, < 0 below it (turns the flow down more => more lift).
  */
 function buildBubble(
   base: AirfoilGeometry,
   alpha: number,
   suctionUpper: boolean,
   xSep: number,
+  closure: number,
 ): Bubble | null {
   const coords = base.coords;
   const last = base.nPoints - 1;
@@ -256,27 +332,48 @@ function buildBubble(
 
   // Boundary heights: leave tangentially, relax to the freestream direction over xiB.
   const xiB = 0.05;
-  const u0 = (xi: number) => slopeS * xiB * (1 - Math.exp(-xi / xiB));
+  const tangent = (xi: number) => slopeS * xiB * (1 - Math.exp(-xi / xiB));
+  // Keep the shear line clear of the wall: on strongly cambered (or flapped) sections the
+  // surface aft of S can rise above the separation tangent. Lift the line by a smooth ramp.
+  let lift = 0;
+  let liftAt = Infinity;
+  for (let i = sep.next; i !== (suctionUpper ? last + 1 : -1); i += suctionUpper ? 1 : -1) {
+    const x = coords[2 * i]!;
+    const y = coords[2 * i + 1]!;
+    const xi = xiOf(x, y);
+    const need = etaOf(x, y) + 0.006 - tangent(xi);
+    if (xi > 0 && need > 0) {
+      lift = Math.max(lift, need);
+      liftAt = Math.min(liftAt, xi);
+    }
+  }
+  const ramp = Math.max(0.02, Number.isFinite(liftAt) ? liftAt : 0.02);
+  const u0 = (xi: number) => {
+    const t = clamp(xi / ramp, 0, 1);
+    return tangent(xi) + lift * t * t * (3 - 2 * t);
+  };
   const l0 = (xi: number) => etaT + slopeT * xiB * (1 - Math.exp(-(xi - xiT) / xiB));
   const height = u0(xiT) - etaT;
   if (!(height > MIN_BUBBLE)) return null;
   const xiHold = xiT + clamp(1.5 * height, 0.08, 0.5);
-  const tail = clamp(2.5 * height, 0.12, 0.9);
+  const tail = clamp(4 * height, 0.15, 1.2);
   const xiC = xiHold + tail;
-  const etaMid = 0.5 * (u0(xiHold) + l0(xiHold));
+  const etaMid = l0(xiHold) + closure * (u0(xiHold) - l0(xiHold));
+  // Quarter-cosine taper: smooth where the tail starts, finite wedge angle at the closure point
+  // (a cusp would leave a long sliver thinner than its panels, which conditions badly).
   const taper = (xi: number) =>
-    xi <= xiHold ? 1 : 0.5 * (1 + Math.cos((Math.PI * Math.min(xi - xiHold, tail)) / tail));
+    xi <= xiHold ? 1 : Math.cos((0.5 * Math.PI * Math.min(xi - xiHold, tail)) / tail);
   const upperEta = (xi: number) => etaMid + (u0(xi) - etaMid) * taper(xi);
   const lowerEta = (xi: number) => etaMid + (l0(xi) - etaMid) * taper(xi);
   const toX = (xi: number, eta: number) => sx + xi * ex + eta * nx;
   const toY = (xi: number, eta: number) => sy + xi * ey + eta * ny;
 
-  const nShear = clamp(Math.ceil(xiC / 0.022) + 6, 14, 90);
-  const nWake = clamp(Math.ceil((xiC - xiT) / 0.022) + 6, 10, 90);
+  const nShear = clamp(Math.ceil(xiC / 0.03) + 6, 14, 70);
+  const nWake = clamp(Math.ceil((xiC - xiT) / 0.03) + 6, 10, 60);
   const shear = cosineSamples(0, xiC, nShear); // S .. C
   const wake = cosineSamples(xiT, xiC, nWake); // TE .. C
 
-  // Assemble the clockwise contour starting and ending at the cusp C.
+  // Assemble the clockwise contour starting and ending at the closure point C.
   const pts: number[] = [];
   const push = (x: number, y: number) => {
     const n = pts.length;
@@ -354,6 +451,86 @@ function buildBubble(
   };
 }
 
+/**
+ * Build the separated displacement body and pick its closure height so that the flow it
+ * produces carries roughly the polar's (viscous) lift: a bubble that closes on the freestream
+ * line through the separation point lifts much less than the polar says, a lower closure turns
+ * the flow down more. Secant iteration, at most three panel builds; returns the best fit, or
+ * null if no valid body could be built (the caller then shows the attached flow).
+ */
+function fitBubble(
+  model: AirfoilModel,
+  alpha: number,
+  suctionUpper: boolean,
+  attachedFraction: number,
+  targetCl: number,
+): { bubble: Bubble; solver: PanelSolver; solution: PanelSolution } | null {
+  const side = suctionUpper ? 1 : -1;
+  const target = side * targetCl;
+  const xSep = clamp(attachedFraction, 0.03, 0.97);
+  let best: { bubble: Bubble; solver: PanelSolver; solution: PanelSolution; err: number } | null =
+    null;
+  /** Lift (suction-side positive) of the body closing at `closure`, or null if unusable. */
+  const attempt = (closure: number): number | null => {
+    const bubble = buildBubble(model.geometry, alpha, suctionUpper, xSep, closure);
+    if (!bubble) return null;
+    let solver: PanelSolver;
+    try {
+      solver = createPanelSolver(bubble.geometry);
+    } catch {
+      return null;
+    }
+    const solution = solver.solve(alpha);
+    // Reject numerically broken bodies (self-intersection, near-singular corners).
+    let minCp = Infinity;
+    for (let i = 0; i < solution.cp.length; i++) minCp = Math.min(minCp, solution.cp[i]!);
+    if (!Number.isFinite(solution.cl) || !(minCp > -60)) return null;
+    const value = side * solution.cl;
+    const err = Math.abs(value - target);
+    const plausible = Math.abs(solution.cl) < 3 * Math.abs(targetCl) + 2;
+    if (plausible && (!best || err < best.err)) best = { bubble, solver, solution, err };
+    return value;
+  };
+  // Lift rises as the closure point moves towards (and below) the TE wake line. Bracketed
+  // secant (regula falsi) on the closure height, at most four panel builds.
+  const tolerance = 0.04 + 0.04 * Math.abs(target);
+  let la = 0.5;
+  let ca = attempt(la);
+  if (ca === null) return null;
+  let lb = ca < target ? 0 : 0.95;
+  let cb = attempt(lb);
+  if (cb === null) {
+    lb = 0.5 * (la + lb);
+    cb = attempt(lb);
+  }
+  for (let it = 0; it < 2 && cb !== null && Math.abs(cb - target) > tolerance; it++) {
+    let next: number;
+    if ((ca - target) * (cb - target) < 0 || Math.abs(cb - ca) > 1e-9) {
+      next = lb + ((target - cb) * (lb - la)) / (cb - ca);
+    } else {
+      break;
+    }
+    // Keep steps modest: lift is very sensitive to the closure height.
+    next = clamp(next, Math.min(la, lb) - 0.6, Math.max(la, lb) + 0.6);
+    next = clamp(next, -2, 1);
+    const cn = attempt(next);
+    if (cn === null) break;
+    // Keep the pair that brackets the target (or the latest two).
+    if ((ca - target) * (cn - target) < 0) {
+      lb = next;
+      cb = cn;
+    } else {
+      la = lb;
+      ca = cb!;
+      lb = next;
+      cb = cn;
+    }
+  }
+  if (!best) return null;
+  const { bubble, solver, solution } = best;
+  return { bubble, solver, solution };
+}
+
 /* ------------------------------------------------------------------------------------------ */
 /* Main entry                                                                                  */
 /* ------------------------------------------------------------------------------------------ */
@@ -375,37 +552,32 @@ export function computeSectionFlow(
   // ---- Flow model: airfoil alone, or airfoil + separated displacement bubble ------------
   let solver: PanelSolver = model.solver;
   let bubble: Bubble | null = null;
+  let solution: PanelSolution | null = null;
   if (severity > 0 && Math.abs(alphaE) < (80 * Math.PI) / 180) {
-    bubble = buildBubble(model.geometry, alphaE, suctionUpper, clamp(attachedFraction, 0.03, 0.97));
-    if (bubble) {
-      try {
-        solver = createPanelSolver(bubble.geometry);
-      } catch {
-        bubble = null;
-        solver = model.solver;
-      }
-    }
+    const fit = fitBubble(model, alphaE, suctionUpper, attachedFraction, cl);
+    if (fit) ({ bubble, solver, solution } = fit);
   }
-  const solution: PanelSolution = solver.solve(alphaE);
+  solution ??= solver.solve(alphaE);
   const body = new Polygon(model.geometry.coords, model.geometry.nPoints);
   const outer = bubble ? new Polygon(bubble.geometry.coords, bubble.geometry.nPoints) : body;
 
   const vel: [number, number] = [0, 0];
-  /** Exact flow velocity (V_inf = 1) at a point, including the bubble recirculation. */
+  /** Exact potential-flow velocity (V_inf = 1) outside the (outer) body. */
   const velocity = (x: number, y: number, out: [number, number]) => {
     solver.velocityAt(solution, x, y, out);
-    if (bubble && bubble.region.contains(x, y)) {
-      // Illustrative recirculation: forward under the shear layer, reversed along the wall.
-      const xi = (x - bubble.ox) * bubble.ex + (y - bubble.oy) * bubble.ey;
-      const eta = (x - bubble.ox) * bubble.nx + (y - bubble.oy) * bubble.ny;
-      const top = bubble.upperEta(xi);
-      const depth = clamp((top - eta) / 0.12, 0, 1); // 0 at the shear layer, 1 deep inside
-      const along = clamp(xi / Math.max(1e-6, bubble.xiEnd), 0, 1);
-      const envelope = Math.sin(Math.PI * along);
-      const u = RECIRCULATION * envelope * (1 - 2 * depth) * severity;
-      out[0] = 0.25 * out[0] + u * bubble.ex;
-      out[1] = 0.25 * out[1] + u * bubble.ey;
-    }
+  };
+  /**
+   * Illustrative recirculation inside the dead-air bubble: forward just under the shear layer,
+   * reversed along the wall, fading out at both ends of the bubble.
+   */
+  const recirculation = (b: Bubble, x: number, y: number, out: [number, number]) => {
+    const xi = (x - b.ox) * b.ex + (y - b.oy) * b.ey;
+    const eta = (x - b.ox) * b.nx + (y - b.oy) * b.ny;
+    const depth = clamp((b.upperEta(xi) - eta) / 0.12, 0, 1); // 0 at the shear layer
+    const envelope = Math.sin(Math.PI * clamp(xi / Math.max(1e-6, b.xiEnd), 0, 1));
+    const u = RECIRCULATION * envelope * (1 - 2 * depth) * severity;
+    out[0] = u * b.ex;
+    out[1] = u * b.ey;
   };
 
   // ---- Grid --------------------------------------------------------------------------
@@ -417,31 +589,28 @@ export function computeSectionFlow(
   const uv = new Float32Array(2 * nx * ny);
   const inside = new Uint8Array(nx * ny);
   const separated = new Uint8Array(nx * ny);
-  /** Distance to the outer (airfoil or airfoil + bubble) body, capped at NEAR_BODY * 2. */
+  /** Distance to the outer (airfoil or airfoil + bubble) body, capped at 2 * NEAR_BODY. */
   const dist = new Float32Array(nx * ny);
   const near = new Float64Array(4);
-  const cap = 2 * NEAR_BODY;
+  const raster: GridSpec = { xMin: W.xMin, yMin: W.yMin, dx, dy, nx, ny };
+  distanceField(outer, raster, 2 * NEAR_BODY, dist);
+  rasterizeInside(body, raster, inside);
+  if (bubble) rasterizeInside(bubble.region, raster, separated);
   for (let j = 0; j < ny; j++) {
     const y = W.yMin + j * dy;
     for (let i = 0; i < nx; i++) {
-      const x = W.xMin + i * dx;
       const k = i + nx * j;
-      const inBox =
-        x > outer.minX - cap &&
-        x < outer.maxX + cap &&
-        y > outer.minY - cap &&
-        y < outer.maxY + cap;
-      dist[k] = inBox ? Math.min(cap, outer.nearest(x, y, near)) : cap;
-      if (body.contains(x, y)) {
-        inside[k] = 1;
+      if (inside[k]) {
         dist[k] = 0;
         continue; // uv stays 0 inside the airfoil
       }
-      if (bubble && bubble.region.contains(x, y)) {
-        separated[k] = 1;
+      const x = W.xMin + i * dx;
+      if (separated[k]) {
         dist[k] = 0;
+        recirculation(bubble!, x, y, vel);
+      } else {
+        velocity(x, y, vel);
       }
-      velocity(x, y, vel);
       uv[2 * k] = vel[0];
       uv[2 * k + 1] = vel[1];
     }
@@ -652,8 +821,15 @@ export function computeSectionFlow(
   const total = Math.max(0, Math.floor(options.streamlines ?? DEFAULT_STREAMLINES));
   const offsets = seedOffsets(total, nLo, nHi, clamp(nStag, nLo, nHi));
   const streamlines: Streamline2D[] = [];
-  for (const n of offsets) {
-    const line = trace(qx + n * nrmX, qy + n * nrmY);
+  const stagLane = clamp(nStag, nLo, nHi);
+  for (const n0 of offsets) {
+    // A lane near the window's corner can be swept past it by the flow; nudge it inwards.
+    let n = n0;
+    let line = trace(qx + n * nrmX, qy + n * nrmY);
+    for (let retry = 0; !line && retry < 3; retry++) {
+      n = stagLane + 0.75 * (n - stagLane);
+      line = trace(qx + n * nrmX, qy + n * nrmY);
+    }
     if (line) streamlines.push(line);
   }
 
@@ -671,6 +847,7 @@ export function computeSectionFlow(
     grid: { xMin: W.xMin, xMax: W.xMax, yMin: W.yMin, yMax: W.yMax, nx, ny, uv, inside },
     streamlines,
     separated,
+    fieldCl: solution.cl,
   };
 }
 

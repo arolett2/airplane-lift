@@ -167,6 +167,13 @@ function buildStationTable(geometry: AirfoilGeometry, nStations: number): Statio
   return t;
 }
 
+/** Identity above Cp = -6, then a smooth knee that never goes below -12. */
+function softSuctionLimit(cp: number): number {
+  const knee = -6;
+  if (cp >= knee) return cp;
+  return knee - 6 * Math.tanh((knee - cp) / 6);
+}
+
 function buildAirfoilModel(key: AirfoilKey): AirfoilModelInternal {
   const geometry = generateAirfoil(key.params, MODEL_PANELS, key.flap);
   const solver = createPanelSolver(geometry);
@@ -212,6 +219,13 @@ function buildAirfoilModel(key: AirfoilKey): AirfoilModelInternal {
       upper[k] = (1 - wu) * values[table.upperA[k]!]! + wu * values[table.upperB[k]!]!;
       const wl = table.lowerW[k]!;
       lower[k] = (1 - wl) * values[table.lowerA[k]!]! + wl * values[table.lowerB[k]!]!;
+    }
+
+    // Real boundary layers never sustain the enormous inviscid suction peaks of very thin or
+    // sharply cambered/flapped sections; soften anything beyond Cp = -6 towards -12.
+    for (let k = 0; k < ns; k++) {
+      upper[k] = softSuctionLimit(upper[k]!);
+      lower[k] = softSuctionLimit(lower[k]!);
     }
 
     // Separation: flatten the suction side aft of x_sep and soften its leading-edge peak.

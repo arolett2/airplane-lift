@@ -149,20 +149,77 @@ export function makeAero(over: Partial<AeroResult> = {}, withDevice = false): Ae
   return aero;
 }
 
-/** Uniform stream plus a doublet, in the airfoil frame (freestream at angle `alpha`). */
-function velocityAt(x: number, y: number, alpha: number, r2: number): [number, number] {
-  const ux = Math.cos(alpha);
-  const uy = Math.sin(alpha);
-  const dx = x - 0.5;
-  const dy = y;
-  const d2 = Math.max(dx * dx + dy * dy, r2 * 0.25);
-  // Doublet aligned with the freestream so the circle of radius sqrt(r2) is a streamline.
-  const ex = dx * ux + dy * uy;
-  const ey = -dx * uy + dy * ux;
-  const k = r2 / (d2 * d2);
-  const vu = 1 - k * (ex * ex - ey * ey);
-  const vv = -2 * k * ex * ey;
-  return [vu * ux - vv * uy, vu * uy + vv * ux];
+/** Ellipse semi-axes used by the section fixture (a 12% thick "airfoil" centred at x = 0.5). */
+const ELLIPSE_A = 0.5;
+const ELLIPSE_B = 0.06;
+
+/**
+ * Exact potential flow around the fixture ellipse with circulation (Joukowski map of a circle),
+ * in the airfoil frame with the freestream at angle `alpha`. Returns the velocity (u, v) at
+ * (x, y) normalised by the freestream speed. Meaningless inside the ellipse (callers mask it).
+ */
+export function ellipseVelocity(x: number, y: number, alpha: number): [number, number] {
+  const R = (ELLIPSE_A + ELLIPSE_B) / 2;
+  const c2 = R * ((ELLIPSE_A - ELLIPSE_B) / 2);
+  // z measured from the ellipse centre; invert z = zeta + c2 / zeta (outer branch).
+  const zr = x - 0.5;
+  const zi = y;
+  // sqrt(z^2 - 4 c2) with the branch that keeps |zeta| >= R.
+  const dr = zr * zr - zi * zi - 4 * c2;
+  const di = 2 * zr * zi;
+  const mag = Math.hypot(dr, di);
+  let sr = Math.sqrt(Math.max(0, (mag + dr) / 2));
+  let si = Math.sqrt(Math.max(0, (mag - dr) / 2)) * (di < 0 ? -1 : 1);
+  if (sr * zr + si * zi < 0) {
+    sr = -sr;
+    si = -si;
+  }
+  const zetaR = (zr + sr) / 2;
+  const zetaI = (zi + si) / 2;
+  // 1/zeta and 1/zeta^2.
+  const m2 = zetaR * zetaR + zetaI * zetaI;
+  const invR = zetaR / m2;
+  const invI = -zetaI / m2;
+  const inv2R = invR * invR - invI * invI;
+  const inv2I = 2 * invR * invI;
+  const ca = Math.cos(alpha);
+  const sa = Math.sin(alpha);
+  const gamma = 4 * Math.PI * R * sa;
+  // W'(zeta) = e^{-i a} - R^2 e^{i a} / zeta^2 + i gamma / (2 pi zeta)
+  const wr = ca - R * R * (ca * inv2R - sa * inv2I) - (gamma / (2 * Math.PI)) * invI;
+  const wi = -sa - R * R * (ca * inv2I + sa * inv2R) + (gamma / (2 * Math.PI)) * invR;
+  // dz/dzeta = 1 - c2 / zeta^2
+  const dzr = 1 - c2 * inv2R;
+  const dzi = -c2 * inv2I;
+  const dm = dzr * dzr + dzi * dzi;
+  // (u - i v) = W' / (dz/dzeta)
+  const ur = (wr * dzr + wi * dzi) / dm;
+  const ui = (wi * dzr - wr * dzi) / dm;
+  return [ur, -ui];
+}
+
+/** Surface Cp from the analytic flow (suction spike at the nose clamped to [-6, 1]). */
+export function ellipseCp(alpha: number, n = 21): ChordwiseCp {
+  const xc = new Float32Array(n);
+  const upper = new Float32Array(n);
+  const lower = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (1 - Math.cos((i / (n - 1)) * Math.PI)) / 2;
+    xc[i] = x;
+    const t = ELLIPSE_B * Math.sqrt(Math.max(0, 1 - ((x - 0.5) / ELLIPSE_A) ** 2));
+    for (const [arr, sign] of [
+      [upper, 1],
+      [lower, -1],
+    ] as const) {
+      const [u, v] = ellipseVelocity(x, sign * (t + 0.004), alpha);
+      arr[i] = Math.max(-6, Math.min(1, 1 - (u * u + v * v)));
+    }
+  }
+  return { xc, upper, lower };
+}
+
+function velocityAt(x: number, y: number, alpha: number): [number, number] {
+  return ellipseVelocity(x, y, alpha);
 }
 
 export function makeSection(over: Partial<SectionFlow> = {}): SectionFlow {
@@ -175,13 +232,12 @@ export function makeSection(over: Partial<SectionFlow> = {}): SectionFlow {
   const yMax = 0.6;
   const uv = new Float32Array(2 * nx * ny);
   const inside = new Uint8Array(nx * ny);
-  const r2 = 0.2 * 0.2;
   for (let j = 0; j < ny; j++) {
     for (let i = 0; i < nx; i++) {
       const x = xMin + ((xMax - xMin) * i) / (nx - 1);
       const y = yMin + ((yMax - yMin) * j) / (ny - 1);
       const k = i + nx * j;
-      const [u, v] = velocityAt(x, y, alpha, r2);
+      const [u, v] = velocityAt(x, y, alpha);
       uv[2 * k] = u;
       uv[2 * k + 1] = v;
       const ex = (x - 0.5) / 0.5;
@@ -209,7 +265,7 @@ export function makeSection(over: Partial<SectionFlow> = {}): SectionFlow {
     let y = y0;
     let t = 0;
     for (let step = 0; step < 150 && x < 1.8; step++) {
-      const [u, v] = velocityAt(x, y, alpha, r2);
+      const [u, v] = velocityAt(x, y, alpha);
       const sp = Math.hypot(u, v);
       pts.push(x, y);
       speed.push(sp);

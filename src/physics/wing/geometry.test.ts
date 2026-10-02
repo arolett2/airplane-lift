@@ -595,6 +595,23 @@ describe('robustness across the slider range', () => {
     expectValid(g);
   });
 
+  it('handles a stubby wing at the largest root chord', () => {
+    for (const kind of kinds) {
+      const g = buildWingGeometry({
+        ...DEFAULT_WING,
+        span: 4,
+        rootChord: 20,
+        taperRatio: 0.1,
+        sweepDeg: 60,
+        yehudi: { spanFrac: 0.5, chordFrac: 0.6 },
+        flaps: { deflectionDeg: 40, chordFrac: 0.4, spanFrac: 0.5 },
+        tipDevice: kind === 'none' ? NO_TIP_DEVICE : { ...TIP_DEVICE_DEFAULTS[kind], size: 0.2 },
+      });
+      expectValid(g);
+      expectMirrorSymmetric(g);
+    }
+  });
+
   it('is deterministic and does not mutate the config', () => {
     const cfg: WingConfig = { ...AIRLINER, tipDevice: TIP_DEVICE_DEFAULTS['canted-winglet'] };
     const snapshot = JSON.stringify(cfg);

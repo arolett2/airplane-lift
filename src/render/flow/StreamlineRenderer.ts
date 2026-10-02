@@ -31,7 +31,7 @@ import { pathDuration, pathLength, sampleLineAtTime } from './pathSampling';
 import { bindSpriteViewport, createSpriteMaterial } from './sprites';
 
 /** Puffs released per freestream transit of the tunnel (sets the puff spacing in still air). */
-export const PUFFS_PER_TRANSIT = 56;
+export const PUFFS_PER_TRANSIT = 40;
 /** Hard cap on puffs per line (very slow lines, e.g. near a stagnation point). */
 const MAX_PUFFS_PER_LINE = 4 * PUFFS_PER_TRANSIT;
 /** Timelines that may exist at once; firing more drops the oldest. */
@@ -293,7 +293,7 @@ export class StreamlineRenderer {
 
   private refresh(simTime: number): void {
     if (this.infos.length === 0) return;
-    if (!this.dirty && simTime === this.lastDrawnTime && this.pulses.length === 0) return;
+    if (!this.dirty && simTime === this.lastDrawnTime) return;
     this.lastDrawnTime = simTime;
     this.dirty = false;
     this.updatePuffs(simTime);
@@ -373,8 +373,8 @@ export class StreamlineRenderer {
     this.puffPoints.geometry = this.puffGeometry;
     // Sprite sizes are in metres, relative to the tunnel length the lines span.
     const lengthMeters = this.transit * this.vInf;
-    this.puffMaterial.uniforms['uWorldSize']!.value = 0.014 * lengthMeters;
-    this.pulseMaterial.uniforms['uWorldSize']!.value = 0.026 * lengthMeters;
+    this.puffMaterial.uniforms['uWorldSize']!.value = 0.012 * lengthMeters;
+    this.pulseMaterial.uniforms['uWorldSize']!.value = 0.024 * lengthMeters;
 
     this.pulseGeometry.dispose();
     const pulse = makeSpriteBuffers(this.infos.length * MAX_PULSES);

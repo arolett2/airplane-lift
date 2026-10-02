@@ -240,4 +240,47 @@ describe('ParticleSim', () => {
     for (let i = 100; i < 400; i++) if (sim.pos[i * 3]! > domain.min[0] + 3) spread++;
     expect(spread).toBeGreaterThan(200);
   });
+
+  it('carries particles through regions the grid does not cover with the freestream', () => {
+    // Grid covers only the front half of the tunnel; the spawn region covers all of it.
+    const grid = uniformGrid(30);
+    grid.dims = [20, 20, 16];
+    grid.velocity = grid.velocity.subarray(0, 20 * 20 * 16 * 3);
+    grid.solid = grid.solid.subarray(0, 20 * 20 * 16);
+    const sim = makeSim(grid, 400);
+    const before = Float32Array.from(sim.pos.subarray(0, 1200));
+    sim.update(0.004);
+    let moved = 0;
+    for (let i = 0; i < sim.count; i++) {
+      const dx = sim.pos[i * 3]! - before[i * 3]!;
+      if (dx > 0) {
+        expect(dx).toBeCloseTo(30 * 0.004, 3);
+        moved++;
+      }
+    }
+    expect(moved).toBeGreaterThan(380);
+  });
+
+  it('keeps particles when the spawn region changes slightly, re-places them when it changes a lot', () => {
+    const sim = makeSim(uniformGrid(30), 300);
+    const before = Float32Array.from(sim.pos.subarray(0, 900));
+    sim.setSpawnRegion(makeSpawnRegion(tunnelDomain(span * 1.05, 1.5), (span * 1.05) / 2));
+    for (let i = 0; i < 900; i++) expect(sim.pos[i]!).toBe(before[i]!);
+    sim.setSpawnRegion(makeSpawnRegion(tunnelDomain(span * 3, 1.5), (span * 3) / 2));
+    let same = 0;
+    for (let i = 0; i < 900; i++) if (sim.pos[i]! === before[i]!) same++;
+    expect(same).toBeLessThan(50);
+  });
+
+  it('derives a spawn region from the grid when none was given', () => {
+    const sim = new ParticleSim(500, 3);
+    sim.setField(uniformGrid(30));
+    sim.setCount(200);
+    expect(sim.spawnRegion).not.toBeNull();
+    sim.update(0.002);
+    for (let i = 0; i < sim.count; i++) {
+      expect(sim.pos[i * 3]!).toBeGreaterThanOrEqual(domain.min[0]);
+      expect(sim.pos[i * 3]!).toBeLessThanOrEqual(domain.max[0]);
+    }
+  });
 });

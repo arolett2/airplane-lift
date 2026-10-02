@@ -17,7 +17,7 @@ import type { TunnelDomain } from '../../physics/domain';
 import type { FlowFieldGrid, WingGeometry } from '../../physics/types';
 import type { ColorBy } from '../../state/params';
 import { MAX_PARTICLES, ParticleSim, particleCountFor } from './particleSim';
-import { makeSpawnRegion } from './spawn';
+import { makeSpawnRegion, type SpawnRegion } from './spawn';
 import { bindSpriteViewport, createSpriteMaterial, createTrailMaterial } from './sprites';
 
 /** Particle sprite diameter relative to the tunnel length. */
@@ -119,6 +119,11 @@ export class ParticleSystem {
 
     this.sim.setCount(particleCountFor(this.density));
     this.applyVisibility();
+  }
+
+  /** The current spawn region (null before a field or domain has been set). */
+  get spawnRegion(): SpawnRegion | null {
+    return this.sim.spawnRegion;
   }
 
   /** Number of live particles. */

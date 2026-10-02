@@ -9,7 +9,7 @@
 import type { FlowFieldGrid, Vec3 } from '../../physics/types';
 import type { ColorBy } from '../../state/params';
 import { getColorLut, lutIndex } from './flowColors';
-import { FlowSampler, SAMPLE_OK } from './gridSampler';
+import { FlowSampler, SAMPLE_SOLID } from './gridSampler';
 import { makeRng, makeSpawnRegion, spawnAnywhere, spawnOnInlet } from './spawn';
 import type { SpawnRegion } from './spawn';
 
@@ -98,14 +98,18 @@ export class ParticleSim {
   }
 
   /**
-   * Install the spawn region (null = derive one from the grid). Re-places every particle
-   * because the old positions no longer match the region.
+   * Install the spawn region (null = derive one from the grid). A large change (a different
+   * aircraft, hence a different tunnel) re-places every particle; small changes while a slider
+   * is dragged keep them flowing, and any that fall outside simply respawn.
    */
   setSpawnRegion(region: SpawnRegion | null): void {
+    const previous = this.region;
     this.explicitRegion = region !== null;
     this.region = region;
     this.refreshDerived();
-    this.reseed(0, this.count);
+    if (!previous || !this.region || regionsDiffer(previous, this.region)) {
+      this.reseed(0, this.count);
+    }
   }
 
   /** Swap the velocity field. Particles keep their positions and simply follow the new field. */
@@ -200,15 +204,17 @@ export class ParticleSim {
 
       if (alive) {
         for (let s = 0; s < nSub; s++) {
-          if (sampler.sample(x, y, z) !== SAMPLE_OK) {
+          // Points the grid does not cover are carried by the freestream (the sampler writes it)
+          // until they leave the spawn region; only wing-interior nodes kill a particle.
+          if (sampler.sample(x, y, z) === SAMPLE_SOLID) {
             alive = false;
             break;
           }
           let ux = sampler.vx;
           let uy = sampler.vy;
           let uz = sampler.vz;
-          // Midpoint (RK2): re-sample half a step ahead; fall back to Euler if that point is unusable.
-          if (sampler.sample(x + hHalf * ux, y + hHalf * uy, z + hHalf * uz) === SAMPLE_OK) {
+          // Midpoint (RK2): re-sample half a step ahead; fall back to Euler inside the wing.
+          if (sampler.sample(x + hHalf * ux, y + hHalf * uy, z + hHalf * uz) !== SAMPLE_SOLID) {
             ux = sampler.vx;
             uy = sampler.vy;
             uz = sampler.vz;
@@ -275,8 +281,25 @@ export class ParticleSim {
     this.invVInf = grid.vInf > 0 ? 1 / grid.vInf : 0;
     this.transit = (region.max[0] - region.min[0]) / Math.max(grid.vInf, 1e-3);
     const minCell = Math.min(grid.spacing[0], grid.spacing[1], grid.spacing[2]);
-    this.dtMax = (MAX_STEP_CELLS * minCell) / (PLAN_SPEED_RATIO * Math.max(grid.vInf, 1e-3));
+    this.dtMax = Math.max(
+      1e-6,
+      (MAX_STEP_CELLS * minCell) / (PLAN_SPEED_RATIO * Math.max(grid.vInf, 1e-3)),
+    );
   }
+}
+
+/** True when the tunnel bounds moved by more than `tolerance` of their extent on any axis. */
+export function regionsDiffer(a: SpawnRegion, b: SpawnRegion, tolerance = 0.2): boolean {
+  for (let k = 0; k < 3; k++) {
+    const extent = Math.max(a.max[k]! - a.min[k]!, 1e-9);
+    if (
+      Math.abs(a.min[k]! - b.min[k]!) > tolerance * extent ||
+      Math.abs(a.max[k]! - b.max[k]!) > tolerance * extent
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Fallback spawn region covering the whole grid, sized assuming the standard tunnel proportions. */

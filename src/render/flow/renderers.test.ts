@@ -15,7 +15,7 @@ import {
 } from './fixtures';
 import { tunnelDomain } from '../../physics/domain';
 import { pathDuration } from './pathSampling';
-import type { Streamline3D } from '../../physics/types';
+import type { Streamline3D, WingGeometry } from '../../physics/types';
 
 const vInf = 50;
 const domain = tunnelDomain(10, 1.5);
@@ -279,6 +279,18 @@ describe('ParticleSystem', () => {
     for (let i = 0; i < 14000 * 3; i++) expect(Number.isFinite(pos[i]!)).toBe(true);
     ps.setField(null);
     expect(ps.object.visible).toBe(false);
+    ps.dispose();
+  });
+
+  it('sizes the spawn band from the wing geometry and falls back to the tunnel proportions', () => {
+    const ps = new ParticleSystem();
+    ps.setDomain(domain, { overallSpan: 12, pivot: [0.3, 0, 0.1] } as unknown as WingGeometry);
+    const region = ps.spawnRegion!;
+    expect(region.bandHalfY).toBeCloseTo(1.15 * 6, 6);
+    expect(region.bandHalfZ).toBeCloseTo(0.2 * 6, 6);
+    expect(region.bandCenterZ).toBeCloseTo(0.1, 6);
+    ps.setDomain(domain, null); // tunnelDomain(10, 1.5): half-width 7.5 = 1.5 semispans of 5
+    expect(ps.spawnRegion!.bandHalfY).toBeCloseTo(1.15 * 5, 2);
     ps.dispose();
   });
 

@@ -32,6 +32,10 @@ export class FlowSampler {
   private nx = 0;
   private ny = 0;
   private nz = 0;
+  /** Cells per axis (>= 1) and a per-cell flag: 1 when any of the cell's 8 corner nodes is solid. */
+  private cx = 1;
+  private cy = 1;
+  private cellSolid: Uint8Array = new Uint8Array(0);
   private vInf = 0;
   private valid = false;
 
@@ -64,6 +68,41 @@ export class FlowSampler {
       this.iz > 0 &&
       grid.velocity.length >= 3 * n &&
       grid.solid.length >= n;
+    if (this.valid) this.buildCellMask();
+  }
+
+  /**
+   * Flag the cells that touch a solid node so the common all-fluid cells can skip the per-corner
+   * solid tests. Walks only the solid nodes (a thin wing has few).
+   */
+  private buildCellMask(): void {
+    const { nx, ny, nz, solid } = this;
+    const cx = nx > 1 ? nx - 1 : 1;
+    const cy = ny > 1 ? ny - 1 : 1;
+    const cz = nz > 1 ? nz - 1 : 1;
+    this.cx = cx;
+    this.cy = cy;
+    const cells = cx * cy * cz;
+    if (this.cellSolid.length !== cells) this.cellSolid = new Uint8Array(cells);
+    else this.cellSolid.fill(0);
+    const mask = this.cellSolid;
+    const n = nx * ny * nz;
+    for (let idx = 0; idx < n; idx++) {
+      if (solid[idx] === 0) continue;
+      const i = idx % nx;
+      const j = ((idx / nx) | 0) % ny;
+      const k = (idx / (nx * ny)) | 0;
+      for (let dk = k > 0 ? -1 : 0; dk <= 0; dk++) {
+        const ck = k + dk < cz ? k + dk : cz - 1;
+        for (let dj = j > 0 ? -1 : 0; dj <= 0; dj++) {
+          const cj = j + dj < cy ? j + dj : cy - 1;
+          for (let di = i > 0 ? -1 : 0; di <= 0; di++) {
+            const ci = i + di < cx ? i + di : cx - 1;
+            mask[ci + cx * (cj + cy * ck)] = 1;
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -109,15 +148,42 @@ export class FlowSampler {
     const r01 = nx * (j0 + ny * k1);
     const r11 = nx * (j1 + ny * k1);
 
+    const vel = this.vel;
+    const gx0 = 1 - fx;
+    const gy0 = 1 - fy;
+    const gz0 = 1 - fz;
+
+    if (this.cellSolid[i0 + this.cx * (j0 + this.cy * k0)] === 0) {
+      // Fast path: every corner is fluid, plain trilinear interpolation.
+      const w00 = gx0 * gy0;
+      const w10 = fx * gy0;
+      const w01 = gx0 * fy;
+      const w11 = fx * fy;
+      const a = (r00 + i0) * 3;
+      const b = (r00 + i1) * 3;
+      const c = (r10 + i0) * 3;
+      const d = (r10 + i1) * 3;
+      const e = (r01 + i0) * 3;
+      const f = (r01 + i1) * 3;
+      const g = (r11 + i0) * 3;
+      const h = (r11 + i1) * 3;
+      this.vx =
+        gz0 * (w00 * vel[a]! + w10 * vel[b]! + w01 * vel[c]! + w11 * vel[d]!) +
+        fz * (w00 * vel[e]! + w10 * vel[f]! + w01 * vel[g]! + w11 * vel[h]!);
+      this.vy =
+        gz0 * (w00 * vel[a + 1]! + w10 * vel[b + 1]! + w01 * vel[c + 1]! + w11 * vel[d + 1]!) +
+        fz * (w00 * vel[e + 1]! + w10 * vel[f + 1]! + w01 * vel[g + 1]! + w11 * vel[h + 1]!);
+      this.vz =
+        gz0 * (w00 * vel[a + 2]! + w10 * vel[b + 2]! + w01 * vel[c + 2]! + w11 * vel[d + 2]!) +
+        fz * (w00 * vel[e + 2]! + w10 * vel[f + 2]! + w01 * vel[g + 2]! + w11 * vel[h + 2]!);
+      return SAMPLE_OK;
+    }
+
     // Nearest node decides whether the particle is "inside" the wing.
     const nearest =
       (fz < 0.5 ? (fy < 0.5 ? r00 : r10) : fy < 0.5 ? r01 : r11) + (fx < 0.5 ? i0 : i1);
     if (solid[nearest] !== 0) return SAMPLE_SOLID;
 
-    const gx0 = 1 - fx;
-    const gy0 = 1 - fy;
-    const gz0 = 1 - fz;
-    const vel = this.vel;
     let sw = 0;
     let ax = 0;
     let ay = 0;

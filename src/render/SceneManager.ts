@@ -16,6 +16,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import type { CameraShot } from '../state/params';
 import type { TunnelDomain } from '../physics/domain';
 import { tunnelDomain } from '../physics/domain';
+import type { Vec3 } from '../physics/types';
 import { CameraTween, DEFAULT_TWEEN_SECONDS } from './util/cameraTween';
 import { FpsMeter } from './util/fpsMeter';
 import { getFrameTick } from './util/frameTick';
@@ -95,6 +96,8 @@ export class SceneManager implements SceneManagerApi {
 
   private frameCallbacks: FrameCallback[] = [];
   private extents: SceneExtents;
+  private domain: TunnelDomain = tunnelDomain(10, 1.5);
+  private focus: { pivot: Vec3; semispan: number } | null = null;
   private currentShot: CameraShot = 'overview';
   /** True once the user orbited/zoomed since the last programmatic camera move. */
   private userMoved = false;
@@ -181,7 +184,7 @@ export class SceneManager implements SceneManagerApi {
     this.controls.addEventListener('start', this.onControlStart);
 
     // Domain defaults to a plain teaching wing until the app calls setDomain().
-    this.extents = extentsFromDomain(tunnelDomain(10, 1.5));
+    this.extents = extentsFromDomain(this.domain);
     this.applyExtents();
 
     // Resize handling.
@@ -210,10 +213,18 @@ export class SceneManager implements SceneManagerApi {
   }
 
   setDomain(domain: TunnelDomain): void {
-    this.extents = extentsFromDomain(domain);
-    this.applyExtents();
-    // Re-frame the current shot unless the user has taken over the camera.
-    if (!this.userMoved) this.placeCamera(this.hasPlacedCamera);
+    this.domain = domain;
+    this.refreshExtents();
+  }
+
+  /**
+   * Optional: tell the camera shots where the wing is. Without it the pivot is assumed to be the
+   * physics origin and the semispan is inferred from the domain width (tunnelDomain() makes the
+   * width 1.5 x the span). Both are physics meters.
+   */
+  setFocus(pivot: Vec3, semispan: number): void {
+    this.focus = { pivot: [pivot[0], pivot[1], pivot[2]], semispan };
+    this.refreshExtents();
   }
 
   flyTo(shot: CameraShot): void {
@@ -255,6 +266,18 @@ export class SceneManager implements SceneManagerApi {
   /* ---------------------------------------------------------------------------------------- */
   /* Internals                                                                                 */
   /* ---------------------------------------------------------------------------------------- */
+
+  /** Recompute display extents and re-frame the current shot unless the user took over. */
+  private refreshExtents(): void {
+    this.extents = extentsFromDomain(
+      this.domain,
+      this.focus?.pivot ?? [0, 0, 0],
+      undefined,
+      this.focus?.semispan,
+    );
+    this.applyExtents();
+    if (!this.userMoved) this.placeCamera(this.hasPlacedCamera);
+  }
 
   /** Scale and centre `modelRoot` so the domain length maps to the fixed display length. */
   private applyExtents(): void {

@@ -36,6 +36,18 @@ describe('extentsFromDomain', () => {
   });
 });
 
+describe('extentsFromDomain focus overrides', () => {
+  it('uses the given pivot and semispan instead of the inferred ones', () => {
+    const d = tunnelDomain(40, 4);
+    const inferred = extentsFromDomain(d);
+    const focused = extentsFromDomain(d, [2, 0, 0.5], undefined, 15);
+    expect(focused.semispan / focused.scale).toBeCloseTo(15, 9);
+    expect(inferred.semispan / inferred.scale).toBeCloseTo(20, 9);
+    expect(focused.pivot[0]).toBeCloseTo(inferred.pivot[0] + 2 * focused.scale, 9);
+    expect(focused.pivot[2]).toBeCloseTo(inferred.pivot[2] + 0.5 * focused.scale, 9);
+  });
+});
+
 describe('fitDistance', () => {
   it('grows with the object size and shrinks for wide viewports', () => {
     const near = fitDistance(4, 2, 0, 40, 1.6);

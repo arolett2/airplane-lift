@@ -250,6 +250,21 @@ describe('SceneManager', () => {
     expect(sm.camera.position.distanceTo(held)).toBeLessThan(1e-6);
   });
 
+  it('setFocus moves the wing-centred shots to the given pivot and span', () => {
+    const domain = tunnelDomain(40, 4);
+    sm.setDomain(domain);
+    sm.flyTo('tip');
+    for (let i = 0; i < 80; i++) frame(sm, 16);
+    const defaultPose = sm.camera.position.clone();
+    sm.setFocus([1, 0, 0], 16); // a shorter semispan than the 20 m the domain implies
+    for (let i = 0; i < 80; i++) frame(sm, 16);
+    const ext = extentsFromDomain(domain, [1, 0, 0], undefined, 16);
+    const pose = computeShot('tip', ext, sm.camera.fov, sm.camera.aspect);
+    expect(sm.camera.position.x).toBeCloseTo(pose.position[0], 3);
+    expect(sm.camera.position.y).toBeCloseTo(pose.position[1], 3);
+    expect(sm.camera.position.distanceTo(defaultPose)).toBeGreaterThan(0.05);
+  });
+
   it('dispose stops the loop, releases GL and removes its DOM; it is idempotent', () => {
     const r = fakeRenderer(sm);
     sm.dispose();

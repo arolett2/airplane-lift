@@ -37,12 +37,14 @@ export interface CameraPose {
 
 /**
  * Derive display extents from a tunnel domain.
- * @param pivotPhysics wing pivot in physics meters (the physics frame has it at the origin)
+ * @param pivotPhysics wing pivot in physics meters (default: the physics origin)
+ * @param semispanPhysics wing semispan in meters; inferred from the domain width when omitted
  */
 export function extentsFromDomain(
   domain: TunnelDomain,
   pivotPhysics: Vec3 = [0, 0, 0],
   displayLength = DISPLAY_LENGTH,
+  semispanPhysics?: number,
 ): SceneExtents {
   const lx = Math.max(1e-6, domain.max[0] - domain.min[0]);
   const ly = Math.max(1e-6, domain.max[1] - domain.min[1]);
@@ -63,7 +65,10 @@ export function extentsFromDomain(
       (pivotPhysics[2] - centerPhysics[2]) * scale,
     ],
     // tunnelDomain(): halfWidth = 0.75 * overallSpan  =>  span = width / 1.5.
-    semispan: (0.5 * ly * scale) / 1.5,
+    semispan:
+      semispanPhysics !== undefined && semispanPhysics > 0
+        ? semispanPhysics * scale
+        : (0.5 * ly * scale) / 1.5,
   };
 }
 

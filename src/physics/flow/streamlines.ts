@@ -392,6 +392,8 @@ export function traceStreamlines(
   geometry: WingGeometry,
   alpha: number,
 ): Streamline3D[] {
+  // Without airflow there are no streamlines (and no meaningful travel time).
+  if (!(vInf > 0)) return [];
   const compiled = getCompiledLattice(withThicknessSources(lattice, geometry, alpha, vInf));
   const solid = getWingSolid(geometry, alpha);
   // Short-span, long-chord wings (e.g. a fighter) need the chord to set the far step too.

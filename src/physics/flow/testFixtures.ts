@@ -12,6 +12,7 @@ import type {
   WingSection,
 } from '../types';
 import { bodyToTunnel } from '../math/frames';
+import { camberLine } from '../airfoil/naca';
 import { interpolateSegment, sectionPoint } from './wingFrames';
 
 export interface TestWingOptions {
@@ -110,7 +111,7 @@ export function ellipticGamma(
 }
 
 /**
- * Horseshoe lattice on the chord surface of every surface, TUNNEL frame, following the
+ * Horseshoe lattice on the mean camber surface of every surface, TUNNEL frame, following the
  * VortexLattice orientation rule (right: A inboard; left: A outboard).
  */
 export function makeTestLattice(
@@ -134,16 +135,19 @@ export function makeTestLattice(
   for (const surface of geometry.surfaces) {
     const ns = surface.role === 'wing' ? (o.nSpanWing ?? 24) : (o.nSpanDevice ?? 6);
     for (let j = 0; j < ns; j++) {
-      const inner = interpolateSegment(surface, 0, j / ns).axes;
-      const outer = interpolateSegment(surface, 0, (j + 1) / ns).axes;
+      const inner = interpolateSegment(surface, 0, j / ns);
+      const outer = interpolateSegment(surface, 0, (j + 1) / ns);
+      // Points on the mean camber surface at chord fraction x.
+      const onCamber = (sec: typeof inner, x: number) =>
+        T(sectionPoint(sec.axes, x, camberLine(sec.airfoil, sec.flap, x).yc));
       const g = gammaOf(surface, (j + 0.5) / ns);
       const right = surface.side === 'right';
-      const tIn = T(sectionPoint(inner, 1, 0));
-      const tOut = T(sectionPoint(outer, 1, 0));
+      const tIn = onCamber(inner, 1);
+      const tOut = onCamber(outer, 1);
       for (let k = 0; k < nc; k++) {
         const xq = (k + 0.25) / nc;
-        const pIn = T(sectionPoint(inner, xq, 0));
-        const pOut = T(sectionPoint(outer, xq, 0));
+        const pIn = onCamber(inner, xq);
+        const pOut = onCamber(outer, xq);
         a.push(...(right ? pIn : pOut));
         b.push(...(right ? pOut : pIn));
         teA.push(...(right ? tIn : tOut));

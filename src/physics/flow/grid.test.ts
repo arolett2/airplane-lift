@@ -7,11 +7,15 @@ import {
   addInducedLumped,
   distanceToWing,
   getCompiledLattice,
+  SMOOTH_CHORDS,
 } from './lattice';
+import { camberLine, nacaHalfThickness } from '../airfoil/naca';
+import { bodyToTunnel } from '../math/frames';
 import { getWingSolid } from './solid';
 import { ellipticGamma, makeTestLattice, makeTestWing } from './testFixtures';
 
 const deg = Math.PI / 180;
+const NACA2412 = { camber: 0.02, camberPos: 0.4, thickness: 0.12 };
 
 /** Deterministic pseudo-random numbers in [0, 1). */
 function rng(seed: number): () => number {
@@ -67,15 +71,17 @@ describe('lumped far-field model', () => {
     expect(worst).toBeLessThan(0.03);
   });
 
-  it('near/far evaluator stays close to exact everywhere outside the wing', () => {
+  it('near/far evaluator matches exact outside the chordwise-smoothing zone', () => {
     const rand = rng(11);
-    const solid = getWingSolid(wing, alpha);
     let worst = 0;
-    for (let i = 0; i < 600; i++) {
+    let tested = 0;
+    while (tested < 600) {
       const x = -2 + rand() * 6;
       const y = -6 + rand() * 12;
       const z = -1.5 + rand() * 3;
-      if (solid.contains(x, y, z)) continue;
+      distanceToWing(c, x, y, z, d);
+      if (d[0]! < SMOOTH_CHORDS * d[1]!) continue;
+      tested++;
       e.fill(0);
       l.fill(0);
       addInducedExact(c, x, y, z, e);
@@ -83,6 +89,34 @@ describe('lumped far-field model', () => {
       worst = Math.max(worst, Math.hypot(e[0]! - l[0]!, e[1]! - l[1]!, e[2]! - l[2]!) / vInf);
     }
     expect(worst).toBeLessThan(0.03);
+  });
+
+  it('smooths the chordwise ripple next to the surface without changing the mean', () => {
+    // Speed along a line 0.02 chords below the lower surface at 40% semispan (pitched frame).
+    const chordAt = 1.8 - 0.9 * 0.4;
+    const leX = 2 * Math.tan(15 * deg);
+    const leZ = 2 * Math.tan(4 * deg);
+    const tv = { exact: 0, fast: 0 };
+    const mean = { exact: 0, fast: 0 };
+    const prev = { exact: Number.NaN, fast: Number.NaN };
+    const n = 60;
+    for (let i = 0; i < n; i++) {
+      const xc = 0.1 + (0.6 * i) / (n - 1);
+      const zc = camberLine(NACA2412, null, xc).yc - nacaHalfThickness(0.12, xc) - 0.02;
+      const p = bodyToTunnel([leX + xc * chordAt, 2, leZ + zc * chordAt], wing.pivot, alpha);
+      for (const mode of ['exact', 'fast'] as const) {
+        const v = mode === 'exact' ? e : l;
+        v.fill(0);
+        v[0] = vInf;
+        (mode === 'exact' ? addInducedExact : addInducedFast)(c, p[0], p[1], p[2], v);
+        const sp = Math.hypot(v[0]!, v[1]!, v[2]!) / vInf;
+        if (!Number.isNaN(prev[mode])) tv[mode] += Math.abs(sp - prev[mode]);
+        prev[mode] = sp;
+        mean[mode] += sp / n;
+      }
+    }
+    expect(tv.fast).toBeLessThan(0.6 * tv.exact);
+    expect(Math.abs(mean.fast - mean.exact)).toBeLessThan(0.02);
   });
 });
 
@@ -170,19 +204,20 @@ describe('buildFlowFieldGrid', () => {
     const [nx, ny] = grid.dims;
     const v = new Float64Array(3);
     let worst = 0;
+    const c = getCompiledLattice(lattice);
+    const d = new Float64Array(2);
     for (let n = 0; n < grid.solid.length; n += 5) {
       if (grid.solid[n]) continue;
       const i = n % nx;
       const j = Math.floor(n / nx) % ny;
       const k = Math.floor(n / (nx * ny));
-      velocityAt(
-        lattice,
-        vInf,
-        grid.origin[0] + i * grid.spacing[0],
-        grid.origin[1] + j * grid.spacing[1],
-        grid.origin[2] + k * grid.spacing[2],
-        v,
-      );
+      const x = grid.origin[0] + i * grid.spacing[0];
+      const y = grid.origin[1] + j * grid.spacing[1];
+      const z = grid.origin[2] + k * grid.spacing[2];
+      // Right next to the surface the grid uses the chordwise-smoothed vortices on purpose.
+      distanceToWing(c, x, y, z, d);
+      if (d[0]! < SMOOTH_CHORDS * d[1]!) continue;
+      velocityAt(lattice, vInf, x, y, z, v);
       const e = Math.hypot(
         v[0]! - grid.velocity[3 * n]!,
         v[1]! - grid.velocity[3 * n + 1]!,

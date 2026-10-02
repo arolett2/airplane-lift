@@ -246,3 +246,25 @@ describe('traceStreamlines', () => {
     expect(checked).toBeGreaterThan(2);
   });
 });
+
+describe('edge cases', () => {
+  const empty = makeTestLattice(wing, alpha, { nSpanWing: 0, nSpanDevice: 0 });
+
+  it('handles an empty lattice and zero airspeed', () => {
+    expect(empty.count).toBe(0);
+    const seeds = seedStreamlines(wing, alpha, rake('vertical', 8), domain);
+    const lines = traceStreamlines(empty, vInf, seeds, domain, wing, alpha);
+    expect(lines.length).toBe(8);
+    for (const l of lines) expect(l.points[l.points.length - 3]).toBeCloseTo(domain.max[0], 3);
+    expect(traceStreamlines(lattice, 0, seeds, domain, wing, alpha)).toEqual([]);
+  });
+
+  it('handles a geometry without surfaces', () => {
+    const bare = { ...wing, surfaces: [] };
+    const seeds = seedStreamlines(bare, alpha, rake('tip-vortex', 8), domain);
+    expect(seeds[0]!.points.length).toBe(3 * 8);
+    for (const v of seeds[0]!.points) expect(Number.isFinite(v)).toBe(true);
+    const lines = traceStreamlines(empty, vInf, seeds, domain, bare, alpha);
+    expect(lines.length).toBe(8);
+  });
+});

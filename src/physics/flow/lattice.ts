@@ -4,10 +4,13 @@
  * - Panels sharing the same trailing-edge points form a STRIP (one chordwise column).
  * - Semi-infinite trailing legs are merged per trailing-edge node, so neighbouring strips only
  *   shed their circulation difference (the classic trailing-vortex sheet). They are always exact.
- * - Each strip keeps two representations of its finite filaments: EXACT (every panel's bound
- *   segment and on-surface legs) and LUMPED (one bound segment at the circulation-weighted
- *   quarter-chord line plus two legs). The fast evaluator uses the lumped one when the point is
- *   further than NEAR_CHORDS local chords from the strip.
+ * - Each strip keeps three representations of its finite filaments: EXACT (every panel's bound
+ *   segment and on-surface legs, literally as in the lattice), LUMPED (one bound segment at the
+ *   circulation-weighted quarter-chord line plus two legs) and SMOOTHED (each bound vortex split
+ *   into two half-strength vortices at the panel's leading edge and mid-point, with the legs run
+ *   as chains along the strip edges). The fast evaluator uses SMOOTHED within SMOOTH_CHORDS of the
+ *   strip (it cancels the speed ripple the discrete chordwise vortices cause right at the
+ *   surface), EXACT within NEAR_CHORDS, and LUMPED beyond.
  * - Line sources are grouped (per strip when built by buildThicknessSources). Far from a group
  *   the group becomes one source + one sink line (same total strengths and first moments), and
  *   very far away it is dropped (a closed body's thickness decays like a doublet).
@@ -27,10 +30,15 @@ import {
 
 /** Distance (in local chords, from the strip's capsule) inside which strips are evaluated exactly. */
 export const NEAR_CHORDS = 1.5;
+/** Distance (in local chords) inside which the chordwise-smoothed representation is used. */
+export const SMOOTH_CHORDS = 0.5;
 /** Source groups beyond this many chords are ignored (thickness doublet decays like 1/r^2 .. 1/r^3). */
 export const SOURCE_CUTOFF_CHORDS = 5;
 
-/** Capsule stride: [ax, ay, az, abx, aby, abz, 1/|ab|^2, radius, chord, near^2, far^2]. */
+/**
+ * Capsule stride: [ax, ay, az, abx, aby, abz, 1/|ab|^2, radius, chord, near^2, far^2].
+ * For strips "far" holds the (smaller) smoothing radius; for source groups the cutoff radius.
+ */
 const CAP_STRIDE = 11;
 
 /** Extra per-source data attached by buildThicknessSources (lost on structured clone). */
@@ -57,11 +65,12 @@ export interface CompiledLattice {
   /** Merged semi-infinite legs. */
   semi: Float64Array;
   semiCount: number;
-  /** Finite vortex segments: exact ones first (by strip), then 3 lumped ones per strip. */
+  /** Finite vortex segments: exact (by strip), then 3 lumped per strip, then smoothed (by strip). */
   seg: Float64Array;
   stripCount: number;
   stripExactStart: Int32Array; // length stripCount + 1
   lumpedStart: number; // strip j lumped segments: lumpedStart + 3j .. +3
+  stripSmoothStart: Int32Array; // length stripCount + 1
   stripCap: Float64Array;
   /** Line sources: exact ones first (by group), then 2 lumped ones per group. */
   src: Float64Array;
@@ -161,7 +170,14 @@ function compileVortices(
   quantum: number,
 ): Pick<
   CompiledLattice,
-  'semi' | 'semiCount' | 'seg' | 'stripCount' | 'stripExactStart' | 'lumpedStart' | 'stripCap'
+  | 'semi'
+  | 'semiCount'
+  | 'seg'
+  | 'stripCount'
+  | 'stripExactStart'
+  | 'lumpedStart'
+  | 'stripSmoothStart'
+  | 'stripCap'
 > {
   const n = l.count;
   const { a, b, teA, teB, gamma } = l;
@@ -213,12 +229,14 @@ function compileVortices(
     packSemi(semi, j, nodeXyz[3 * k]!, nodeXyz[3 * k + 1]!, nodeXyz[3 * k + 2]!, nodeG[k]!),
   );
 
-  // Finite segments: exact (3 per panel) then lumped (3 per strip).
-  const seg = new Float64Array((3 * n + 3 * stripCount) * SEG_STRIDE);
+  // Finite segments: exact (3 per panel), lumped (3 per strip), smoothed (6 per panel).
+  const seg = new Float64Array((9 * n + 3 * stripCount) * SEG_STRIDE);
   const stripExactStart = new Int32Array(stripCount + 1);
+  const stripSmoothStart = new Int32Array(stripCount + 1);
   const stripCap = new Float64Array(stripCount * CAP_STRIDE);
   const lumpedStart = 3 * n;
   let si = 0;
+  let smoothIndex = lumpedStart + 3 * stripCount;
   for (let s = 0; s < stripCount; s++) {
     stripExactStart[s] = si;
     const panels = stripPanels[s]!;
@@ -316,9 +334,26 @@ function compileVortices(
       distToSegment(tax, tay, taz, lex, ley, lez, tmx, tmy, tmz),
       distToSegment(tbx, tby, tbz, lex, ley, lez, tmx, tmy, tmz),
     );
-    packCapsule(stripCap, s, lex, ley, lez, tmx, tmy, tmz, radius, chord, NEAR_CHORDS, 0);
+    packCapsule(
+      stripCap,
+      s,
+      lex,
+      ley,
+      lez,
+      tmx,
+      tmy,
+      tmz,
+      radius,
+      chord,
+      NEAR_CHORDS,
+      SMOOTH_CHORDS,
+    );
+
+    stripSmoothStart[s] = smoothIndex;
+    smoothIndex = packSmoothedStrip(seg, smoothIndex, l, panels, core, tmx, tmy, tmz);
   }
   stripExactStart[stripCount] = si;
+  stripSmoothStart[stripCount] = smoothIndex;
   return {
     semi,
     semiCount: keep.length,
@@ -326,8 +361,104 @@ function compileVortices(
     stripCount,
     stripExactStart,
     lumpedStart,
+    stripSmoothStart,
     stripCap,
   };
+}
+
+/**
+ * Chordwise-smoothed strip: each panel's bound vortex (at its quarter chord) becomes two
+ * half-strength vortices at the panel's leading edge and mid-point (same first moment). With
+ * equal panels these sit half a panel apart, which cancels the fundamental of the surface speed
+ * ripple. Panel edges are recovered backwards from the trailing edge (bound vortex at 1/4 of
+ * each panel). Legs run as chains A_{m+1} -> A_m and B_m -> B_{m+1} carrying the cumulative
+ * circulation of all sub-vortices upstream. Returns the next free segment index.
+ */
+function packSmoothedStrip(
+  seg: Float64Array,
+  start: number,
+  l: VortexLattice,
+  panels: number[],
+  core: number,
+  tmx: number,
+  tmy: number,
+  tmz: number,
+): number {
+  const { a, b, teA, teB, gamma } = l;
+  const distTe = (i: number) =>
+    Math.hypot(
+      0.5 * (a[3 * i]! + b[3 * i]!) - tmx,
+      0.5 * (a[3 * i + 1]! + b[3 * i + 1]!) - tmy,
+      0.5 * (a[3 * i + 2]! + b[3 * i + 2]!) - tmz,
+    );
+  const order = panels.slice().sort((p, q) => distTe(q) - distTe(p)); // upstream first
+  const m = 2 * order.length;
+  const ptsA = new Float64Array(3 * (m + 1));
+  const ptsB = new Float64Array(3 * (m + 1));
+  const g = new Float64Array(m);
+  const i0 = panels[0]!;
+  for (const [pts, bound, te] of [
+    [ptsA, a, teA],
+    [ptsB, b, teB],
+  ] as const) {
+    for (let c = 0; c < 3; c++) pts[3 * m + c] = te[3 * i0 + c]!;
+    for (let k = order.length - 1; k >= 0; k--) {
+      const i = order[k]!;
+      for (let c = 0; c < 3; c++) {
+        const p = bound[3 * i + c]!;
+        const third = (pts[3 * (2 * k + 2) + c]! - p) / 3;
+        pts[3 * (2 * k) + c] = p - third;
+        pts[3 * (2 * k + 1) + c] = p + third;
+      }
+    }
+  }
+  order.forEach((i, k) => {
+    g[2 * k] = 0.5 * gamma[i]!;
+    g[2 * k + 1] = 0.5 * gamma[i]!;
+  });
+  let si = start;
+  let cumulative = 0;
+  for (let j = 0; j < m; j++) {
+    const o = 3 * j;
+    packSegment(
+      seg,
+      si++,
+      ptsA[o]!,
+      ptsA[o + 1]!,
+      ptsA[o + 2]!,
+      ptsB[o]!,
+      ptsB[o + 1]!,
+      ptsB[o + 2]!,
+      g[j]!,
+      core,
+    );
+    cumulative += g[j]!;
+    packSegment(
+      seg,
+      si++,
+      ptsA[o + 3]!,
+      ptsA[o + 4]!,
+      ptsA[o + 5]!,
+      ptsA[o]!,
+      ptsA[o + 1]!,
+      ptsA[o + 2]!,
+      cumulative,
+      core,
+    );
+    packSegment(
+      seg,
+      si++,
+      ptsB[o]!,
+      ptsB[o + 1]!,
+      ptsB[o + 2]!,
+      ptsB[o + 3]!,
+      ptsB[o + 4]!,
+      ptsB[o + 5]!,
+      cumulative,
+      core,
+    );
+  }
+  return si;
 }
 
 function compileSources(
@@ -567,8 +698,9 @@ export function addInducedLumped(
 }
 
 /**
- * Adds the induced velocity using exact filaments near each strip and the lumped model further
- * than NEAR_CHORDS local chords away (error well under 3% of V_inf there).
+ * Adds the induced velocity using the chordwise-smoothed filaments very close to each strip, the
+ * exact filaments near it and the lumped model further than NEAR_CHORDS local chords away (error
+ * well under 3% of V_inf there).
  */
 export function addInducedFast(
   c: CompiledLattice,
@@ -583,13 +715,18 @@ export function addInducedFast(
   // Runs of consecutive lumped strips are evaluated in one call.
   let runStart = -1;
   for (let s = 0; s < c.stripCount; s++) {
-    const near = capsuleDist2(cap, s, px, py, pz) < cap[s * CAP_STRIDE + 9]!;
-    if (near) {
+    const d2 = capsuleDist2(cap, s, px, py, pz);
+    const o = s * CAP_STRIDE;
+    if (d2 < cap[o + 9]!) {
       if (runStart >= 0) {
         addSegments(c.seg, ls + 3 * runStart, ls + 3 * s, px, py, pz, acc);
         runStart = -1;
       }
-      addSegments(c.seg, c.stripExactStart[s]!, c.stripExactStart[s + 1]!, px, py, pz, acc);
+      if (d2 < cap[o + 10]!) {
+        addSegments(c.seg, c.stripSmoothStart[s]!, c.stripSmoothStart[s + 1]!, px, py, pz, acc);
+      } else {
+        addSegments(c.seg, c.stripExactStart[s]!, c.stripExactStart[s + 1]!, px, py, pz, acc);
+      }
     } else if (runStart < 0) {
       runStart = s;
     }

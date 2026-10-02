@@ -408,7 +408,6 @@ export class ComparePanel {
       const hint = doc.createElement('small');
       hint.className = 'viz-compare-hint';
       hint.textContent = row.hint;
-      hint.style.display = 'block';
       th.appendChild(hint);
       tr.appendChild(th);
       for (const [slot, value, frac] of [

@@ -449,7 +449,7 @@ export function buildPlanformSvg(inputs: readonly PlanformInput[], units: UnitSy
   );
   // Centre line.
   parts.push(
-    `<line class="viz-plan-dim" x1="${cx}" y1="${top - 6}" x2="${cx}" y2="${planformBottom + 6}" stroke-dasharray="2 4"/>`,
+    `<line class="viz-plan-dim" stroke="#8a97a8" stroke-opacity="0.6" x1="${cx}" y1="${top - 6}" x2="${cx}" y2="${planformBottom + 6}" stroke-dasharray="2 4"/>`,
   );
 
   for (const input of inputs) {
@@ -492,9 +492,9 @@ export function buildPlanformSvg(inputs: readonly PlanformInput[], units: UnitSy
   const barPx = (barLength / unitPerMeter) * scale;
   const bx = margin;
   parts.push(
-    `<g class="viz-plan-scalebar"><line class="viz-plan-dim" x1="${bx}" y1="${barY}" x2="${(bx + barPx).toFixed(1)}" y2="${barY}" stroke-width="2"/>` +
-      `<line class="viz-plan-dim" x1="${bx}" y1="${barY - 4}" x2="${bx}" y2="${barY + 4}"/>` +
-      `<line class="viz-plan-dim" x1="${(bx + barPx).toFixed(1)}" y1="${barY - 4}" x2="${(bx + barPx).toFixed(1)}" y2="${barY + 4}"/>` +
+    `<g class="viz-plan-scalebar"><line class="viz-plan-dim" stroke="#8a97a8" stroke-width="2" x1="${bx}" y1="${barY}" x2="${(bx + barPx).toFixed(1)}" y2="${barY}"/>` +
+      `<line class="viz-plan-dim" stroke="#8a97a8" x1="${bx}" y1="${barY - 4}" x2="${bx}" y2="${barY + 4}"/>` +
+      `<line class="viz-plan-dim" stroke="#8a97a8" x1="${(bx + barPx).toFixed(1)}" y1="${barY - 4}" x2="${(bx + barPx).toFixed(1)}" y2="${barY + 4}"/>` +
       `<text class="viz-plan-muted" x="${(bx + barPx + 8).toFixed(1)}" y="${barY + 4}">${barLength} ${unitName}</text></g>`,
   );
   parts.push('</svg>');

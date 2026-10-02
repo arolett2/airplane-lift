@@ -433,14 +433,15 @@ export class ChartsPanel {
         y: {
           label: 'Closeness to stall',
           short: 'Of stall limit',
-          includeZero: true,
+          min: 0,
+          // Room for the 100% line and for any strip that is past it.
+          max: Math.max(1.1, Math.ceil((data.closest?.ratio ?? 1) * 10 + 0.5) / 10),
           format: (v: number) => percentTick(v),
           tooltipFormat: percentTip,
         },
         series: stallSeries,
         vlines: tipLine,
         xInclude: [1],
-        yInclude: [1.05],
         hlines: [{ y: 1, label: 'Stall limit', color: 'var(--drag)', dash: [] }],
         ariaLabel: 'Local lift as a fraction of the stall limit along the wing',
       },

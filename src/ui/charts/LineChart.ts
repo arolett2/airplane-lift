@@ -313,7 +313,7 @@ export class LineChart {
     ctx.font = font(TICK_FONT_PX);
     ctx.textBaseline = 'middle';
 
-    const layout = this.computeLayout(cfg, ctx, theme, font);
+    const layout = this.computeLayout(cfg, ctx, font);
     this.layout = layout;
     const plotW = layout.right - layout.left;
     const plotH = layout.bottom - layout.top;
@@ -340,7 +340,6 @@ export class LineChart {
   private computeLayout(
     cfg: ChartConfig,
     ctx: CanvasRenderingContext2D,
-    theme: ChartTheme,
     font: (px: number, weight?: string) => string,
   ): Layout {
     const xs: ArrayLike<number>[] = [];
@@ -370,8 +369,8 @@ export class LineChart {
     const xFmt = cfg.x.format ?? formatTick;
     const yFmt = cfg.y.format ?? formatTick;
 
-    // Header: y-axis title + legend, wrapped into rows above the plot.
-    const headerRows = this.layoutHeader(cfg, ctx, theme, font);
+    // Header: the legend, wrapped into rows above the plot.
+    const headerRows = this.layoutHeader(cfg, ctx, font);
     const header = headerRows.length ? headerRows.length * ROW_HEIGHT + 2 : 0;
 
     ctx.font = font(TICK_FONT_PX);
@@ -381,7 +380,8 @@ export class LineChart {
     const lastX = xr.ticks.length ? xFmt(xr.ticks[xr.ticks.length - 1]!, xr.step) : '';
     const lastXHalf = ctx.measureText(lastX).width / 2;
 
-    const left = Math.round(8 + yLabelWidth + 6);
+    const yTitleWidth = cfg.y.label ? 16 : 0;
+    const left = Math.round(6 + yTitleWidth + yLabelWidth + 6);
     const right = Math.round(this.cssWidth - Math.max(10, lastXHalf + 2));
     const top = 4 + header;
     const bottom = Math.round(this.cssHeight - (cfg.x.label ? 34 : 20));
@@ -404,40 +404,26 @@ export class LineChart {
     };
   }
 
-  /** Header items (axis title then legend entries) flowed into rows. */
+  /** Legend entries flowed into rows above the plot. */
   private layoutHeader(
     cfg: ChartConfig,
     ctx: CanvasRenderingContext2D,
-    _theme: ChartTheme,
     font: (px: number, weight?: string) => string,
   ): HeaderItem[][] {
-    const items: HeaderItem[] = [];
-    ctx.font = font(TICK_FONT_PX, '600');
-    if (cfg.y.label) {
-      items.push({
-        kind: 'title',
-        text: cfg.y.label,
-        width: ctx.measureText(cfg.y.label).width + 14,
-      });
-    }
-    ctx.font = font(TICK_FONT_PX);
     const labelled = cfg.series.filter((s) => s.legend !== false && s.label);
     const showLegend = cfg.legend ?? labelled.length >= 2;
-    if (showLegend) {
-      for (const s of labelled) {
-        items.push({
-          kind: 'series',
-          series: s,
-          text: s.label,
-          width: 22 + ctx.measureText(s.label).width + 14,
-        });
-      }
-    }
+    if (!showLegend) return [];
+    ctx.font = font(TICK_FONT_PX);
     const rows: HeaderItem[][] = [];
     let row: HeaderItem[] = [];
     let x = 8;
     const maxX = this.cssWidth - 8;
-    for (const item of items) {
+    for (const s of labelled) {
+      const item: HeaderItem = {
+        series: s,
+        text: s.label,
+        width: 22 + ctx.measureText(s.label).width + 12,
+      };
       if (row.length && x + item.width > maxX) {
         rows.push(row);
         row = [];
@@ -456,40 +442,34 @@ export class LineChart {
     theme: ChartTheme,
     font: (px: number, weight?: string) => string,
   ): void {
-    const rows = this.layoutHeader(cfg, ctx, theme, font);
+    const rows = this.layoutHeader(cfg, ctx, font);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     rows.forEach((row, r) => {
       const y = 4 + r * ROW_HEIGHT + ROW_HEIGHT / 2;
       let x = 8;
       for (const item of row) {
-        if (item.kind === 'title') {
-          ctx.font = font(TICK_FONT_PX, '600');
-          ctx.fillStyle = theme.text;
-          ctx.fillText(item.text, x, y);
-        } else if (item.series) {
-          const s = item.series;
-          const color = resolveColor(s.color, theme);
-          ctx.strokeStyle = color;
-          ctx.fillStyle = color;
-          ctx.lineWidth = s.width ?? 2;
-          ctx.setLineDash(s.dash ?? []);
-          if (s.style !== 'scatter') {
-            ctx.beginPath();
-            ctx.moveTo(x, y);
-            ctx.lineTo(x + 16, y);
-            ctx.stroke();
-          }
-          ctx.setLineDash([]);
-          if (s.style === 'scatter' || s.style === 'line+points') {
-            ctx.beginPath();
-            ctx.arc(x + 8, y, s.pointRadius ?? 3, 0, Math.PI * 2);
-            ctx.fill();
-          }
-          ctx.font = font(TICK_FONT_PX);
-          ctx.fillStyle = theme.text;
-          ctx.fillText(item.text, x + 22, y);
+        const s = item.series;
+        const color = resolveColor(s.color, theme);
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = s.width ?? 2;
+        ctx.setLineDash(s.dash ?? []);
+        if (s.style !== 'scatter') {
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + 16, y);
+          ctx.stroke();
         }
+        ctx.setLineDash([]);
+        if (s.style === 'scatter' || s.style === 'line+points') {
+          ctx.beginPath();
+          ctx.arc(x + 8, y, s.pointRadius ?? 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.font = font(TICK_FONT_PX);
+        ctx.fillStyle = theme.text;
+        ctx.fillText(item.text, x + 22, y);
         x += item.width;
       }
     });
@@ -547,6 +527,24 @@ export class LineChart {
       ctx.textBaseline = 'alphabetic';
       ctx.fillText(cfg.x.label, right, this.cssHeight - 5);
     }
+    if (cfg.y.label) {
+      // Rotated title along the y axis; shrunk or shortened to fit the plot height.
+      const available = bottom - top;
+      let size = TICK_FONT_PX;
+      ctx.font = font(size, '600');
+      while (size > 9.5 && ctx.measureText(cfg.y.label).width > available) {
+        size -= 0.5;
+        ctx.font = font(size, '600');
+      }
+      ctx.save();
+      ctx.translate(12, (top + bottom) / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillStyle = theme.text;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(fitText(ctx, cfg.y.label, available), 0, 0);
+      ctx.restore();
+    }
   }
 
   private drawBands(
@@ -601,8 +599,7 @@ export class LineChart {
         const w = ctx.measureText(v.label).width;
         const rightSide = x + 4 + w <= layout.right;
         ctx.textAlign = rightSide ? 'left' : 'right';
-        ctx.fillStyle = color;
-        ctx.fillText(v.label, rightSide ? x + 4 : x - 4, layout.top + 3);
+        haloText(ctx, theme, v.label, rightSide ? x + 4 : x - 4, layout.top + 3, color);
       }
     }
     for (const h of cfg.hlines ?? []) {
@@ -619,11 +616,10 @@ export class LineChart {
       ctx.setLineDash([]);
       if (h.label) {
         ctx.textAlign = 'right';
-        ctx.fillStyle = color;
         // Sit just above the line (or below if it would leave the plot).
         const above = y - 12 > layout.top;
         ctx.textBaseline = above ? 'bottom' : 'top';
-        ctx.fillText(h.label, layout.right - 4, above ? y - 2 : y + 3);
+        haloText(ctx, theme, h.label, layout.right - 4, above ? y - 2 : y + 3, color);
         ctx.textBaseline = 'top';
       }
     }
@@ -716,14 +712,17 @@ export class LineChart {
         ctx.font = font(10.5, '600');
         ctx.textBaseline = 'middle';
         const w = ctx.measureText(m.label).width;
-        const right = px + r + 6 + w <= layout.right;
-        ctx.textAlign = right ? 'left' : 'right';
-        ctx.fillStyle = theme.text;
-        ctx.fillText(
-          m.label,
-          right ? px + r + 6 : px - r - 6,
-          py - (py - 12 < layout.top ? -10 : 10),
-        );
+        // Prefer the upper left, where rising curves leave room; flip if that leaves the plot.
+        let tx = px - r - 6;
+        let align: CanvasTextAlign = 'right';
+        if (tx - w < layout.left) {
+          tx = px + r + 6;
+          align = 'left';
+        }
+        let ty = py - r - 9;
+        if (ty < layout.top + 6) ty = py + r + 9;
+        ctx.textAlign = align;
+        haloText(ctx, theme, m.label, tx, ty, theme.text);
       }
     }
   }
@@ -817,10 +816,34 @@ export class LineChart {
 }
 
 interface HeaderItem {
-  kind: 'title' | 'series';
   text: string;
   width: number;
-  series?: ChartSeries;
+  series: ChartSeries;
+}
+
+/** Shorten `text` with an ellipsis so it fits `maxWidth` in the context's current font. */
+function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let cut = text.length;
+  while (cut > 1 && ctx.measureText(`${text.slice(0, cut)}…`).width > maxWidth) cut--;
+  return `${text.slice(0, cut)}…`;
+}
+
+/** Text with a thin halo in the panel colour so it stays legible over lines. */
+function haloText(
+  ctx: CanvasRenderingContext2D,
+  theme: ChartTheme,
+  text: string,
+  x: number,
+  y: number,
+  color: string,
+): void {
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = theme.halo;
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
 }
 
 function roundRect(

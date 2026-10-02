@@ -16,8 +16,8 @@ import { interpolateSegment, sectionPoint, segmentSpanLength } from './wingFrame
 /** Spanwise strips per base-wing semispan and per tip-device surface. */
 export const SOURCE_STRIPS_WING = 24;
 export const SOURCE_STRIPS_DEVICE = 6;
-/** Chordwise intervals per strip. */
-export const SOURCE_CHORDWISE = 10;
+/** Chordwise intervals per strip (16: speed ripple ~1% of V_inf at 1% chord off the skin). */
+export const SOURCE_CHORDWISE = 16;
 
 /** Chordwise interval edges (cosine-spaced, clustered at LE and TE). */
 function chordStations(n: number): Float64Array {
@@ -79,8 +79,9 @@ export function buildThicknessSources(
           p0.push(a[0], a[1], a[2]);
           p1.push(b[0], b[1], b[2]);
           sigma.push(vInf * dT);
-          // Smooth over roughly the chordwise interval so the discrete sources do not ripple.
-          core.push(Math.max(0.2 * (xb - xa) * chord, 0.005 * chord));
+          // A core of half the chordwise interval blends the discrete lines into a smooth sheet:
+          // the speed ripple next to the skin stays ~2% of V_inf (vs ~10% with 0.2 intervals).
+          core.push(Math.max(0.5 * (xb - xa) * chord, 0.005 * chord));
         }
       }
     }

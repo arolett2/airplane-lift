@@ -8,6 +8,12 @@
  * traceStreamlines then build them from the geometry automatically (without mutating the
  * lattice). velocityAt uses exactly the sources the lattice carries; assign
  * `lattice.sources = buildThicknessSources(geometry, alpha, vInf)` to include thickness there.
+ *
+ * Regularisation: `lattice.coreRadius` is used for the trailing legs in the wake; bound vortices
+ * and on-surface legs use at most 2% of their strip's chord, so a wake-sized core cannot smear
+ * the flow next to a slender wing. Mirror-image root-edge points of the two wing halves (apart
+ * in y when dihedral rolls the camber or a flap's drop sideways) are joined at y = 0, so the
+ * symmetric wing sheds no vortex pair along its centreline. See lattice.ts.
  */
 import type { VortexLattice, WingGeometry } from '../types';
 import { addInducedExact, getCompiledLattice } from './lattice';

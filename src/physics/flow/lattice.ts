@@ -11,9 +11,18 @@
  *   as chains along the strip edges). The fast evaluator uses SMOOTHED within SMOOTH_CHORDS of the
  *   strip (it cancels the speed ripple the discrete chordwise vortices cause right at the
  *   surface), EXACT within NEAR_CHORDS, and LUMPED beyond.
- * - Line sources are grouped (per strip when built by buildThicknessSources). Far from a group
- *   the group becomes one source + one sink line (same total strengths and first moments), and
- *   very far away it is dropped (a closed body's thickness decays like a doublet).
+ * - Bound vortices and on-surface legs use a core of at most SURFACE_CORE_CHORDS of the strip's
+ *   chord: a lattice core sized for the wake (e.g. 1% of the span) would otherwise smear out the
+ *   whole flow next to a slender wing. The trailing legs in the wake keep the lattice core.
+ * - Root strips: on a wing with dihedral the camber offset (and a flap's drop) follows the rolled
+ *   section normal, so the right and left root edges are mirror images a little apart in y. Their
+ *   trailing legs would form a vortex pair with a strong jet along the plane of symmetry, which no
+ *   symmetric wing has. Such mirror-image root-edge points are moved onto y = 0 so the two sides
+ *   meet and their legs cancel.
+ * - Line sources are grouped (per strip when built by buildThicknessSources). Beyond
+ *   SOURCE_NEAR_CHORDS a group becomes one source + one sink line (same total strengths and first
+ *   moments), and beyond SOURCE_CUTOFF_CHORDS a closed group is dropped (its thickness decays
+ *   like a doublet).
  */
 import type { VortexLattice } from '../types';
 import {
@@ -32,8 +41,16 @@ import {
 export const NEAR_CHORDS = 1.5;
 /** Distance (in local chords) inside which the chordwise-smoothed representation is used. */
 export const SMOOTH_CHORDS = 0.5;
+/**
+ * Distance (in chords, from the sphere around a strip's sources) inside which its sources are
+ * evaluated line by line. The lumped source + sink pair keeps the same total strengths and first
+ * moments, so it is already within ~0.3% of V_inf there, even for 24% thick sections.
+ */
+export const SOURCE_NEAR_CHORDS = 0.75;
 /** Source groups beyond this many chords are ignored (thickness doublet decays like 1/r^2 .. 1/r^3). */
 export const SOURCE_CUTOFF_CHORDS = 5;
+/** Largest core (in local chords) for a strip's bound vortices and on-surface legs. */
+export const SURFACE_CORE_CHORDS = 0.02;
 
 /**
  * Capsule stride: [ax, ay, az, abx, aby, abz, 1/|ab|^2, radius, chord, near^2, far^2].
@@ -164,6 +181,74 @@ function distToSegment(
   return Math.hypot(px - ax - t * abx, py - ay - t * aby, pz - az - t * abz);
 }
 
+/** Lattice points in double precision (each 3 * count, interleaved xyz). */
+interface LatticePoints {
+  a: Float64Array;
+  b: Float64Array;
+  teA: Float64Array;
+  teB: Float64Array;
+}
+
+/**
+ * Copies the lattice points and moves mirror-image root-edge points onto the plane y = 0 (see the
+ * header). A panel is a root panel when its inboard trailing-edge point is the one closest to the
+ * plane on its side of the wing, lies much closer to the plane than the strip's outboard edge,
+ * and has an exact mirror image on the other side. Its inboard trailing-edge and bound-vortex
+ * points are then snapped to y = 0 (each only when its mirror image exists).
+ */
+export function rootSnappedPoints(l: VortexLattice, quantum: number): LatticePoints {
+  const n = l.count;
+  const pts: LatticePoints = {
+    a: Float64Array.from(l.a.subarray(0, 3 * n)),
+    b: Float64Array.from(l.b.subarray(0, 3 * n)),
+    teA: Float64Array.from(l.teA.subarray(0, 3 * n)),
+    teB: Float64Array.from(l.teB.subarray(0, 3 * n)),
+  };
+  const key = (x: number, y: number, z: number) =>
+    `${Math.round(x / quantum)},${Math.round(y / quantum)},${Math.round(z / quantum)}`;
+  const inboardIsA = new Uint8Array(n);
+  const sideOf = new Int8Array(n); // +1 right, -1 left, 0 straddles the plane
+  const minY = [Infinity, Infinity];
+  const teKeys = new Set<string>();
+  const boundKeys = new Set<string>();
+  for (let i = 0; i < n; i++) {
+    const yA = pts.teA[3 * i + 1]!;
+    const yB = pts.teB[3 * i + 1]!;
+    const aIn = Math.abs(yA) <= Math.abs(yB);
+    const yIn = aIn ? yA : yB;
+    const yOut = aIn ? yB : yA;
+    inboardIsA[i] = aIn ? 1 : 0;
+    sideOf[i] = yIn * yOut < 0 ? 0 : yOut > 0 ? 1 : -1;
+    const te = aIn ? pts.teA : pts.teB;
+    teKeys.add(key(te[3 * i]!, te[3 * i + 1]!, te[3 * i + 2]!));
+    for (const arr of [pts.a, pts.b])
+      boundKeys.add(key(arr[3 * i]!, arr[3 * i + 1]!, arr[3 * i + 2]!));
+    if (sideOf[i] !== 0) {
+      const k = sideOf[i]! > 0 ? 0 : 1;
+      minY[k] = Math.min(minY[k]!, Math.abs(yIn));
+    }
+  }
+  const snap = (arr: Float64Array, i: number, out: Float64Array, keys: Set<string>) => {
+    const x = arr[3 * i]!;
+    const y = arr[3 * i + 1]!;
+    const z = arr[3 * i + 2]!;
+    const yOut = out[3 * i + 1]!;
+    if (y === 0 || Math.abs(y) >= 0.5 * Math.abs(yOut) || !keys.has(key(x, -y, z))) return;
+    arr[3 * i + 1] = 0;
+  };
+  for (let i = 0; i < n; i++) {
+    if (sideOf[i] === 0) continue;
+    const aIn = inboardIsA[i] === 1;
+    const teIn = aIn ? pts.teA : pts.teB;
+    const teOut = aIn ? pts.teB : pts.teA;
+    if (Math.abs(teIn[3 * i + 1]!) > minY[sideOf[i]! > 0 ? 0 : 1]! + quantum) continue;
+    // Bound point first: the check uses the trailing-edge points before they move.
+    snap(aIn ? pts.a : pts.b, i, aIn ? pts.b : pts.a, boundKeys);
+    snap(teIn, i, teOut, teKeys);
+  }
+  return pts;
+}
+
 function compileVortices(
   l: VortexLattice,
   core: number,
@@ -180,9 +265,11 @@ function compileVortices(
   | 'stripCap'
 > {
   const n = l.count;
-  const { a, b, teA, teB, gamma } = l;
+  const { gamma } = l;
+  const pts = rootSnappedPoints(l, quantum);
+  const { a, b, teA, teB } = pts;
   const q = (v: number) => Math.round(v / quantum);
-  const pointKey = (arr: Float32Array, i: number) =>
+  const pointKey = (arr: Float64Array, i: number) =>
     `${q(arr[3 * i]!)},${q(arr[3 * i + 1]!)},${q(arr[3 * i + 2]!)}`;
 
   // Strips: panels sharing both trailing-edge points.
@@ -204,7 +291,7 @@ function compileVortices(
   const nodeOf = new Map<string, number>();
   const nodeXyz: number[] = [];
   const nodeG: number[] = [];
-  const addNode = (arr: Float32Array, i: number, g: number) => {
+  const addNode = (arr: Float64Array, i: number, g: number) => {
     const key = pointKey(arr, i);
     let k = nodeOf.get(key);
     if (k === undefined) {
@@ -247,43 +334,8 @@ function compileVortices(
     const tbx = teB[3 * i0]!;
     const tby = teB[3 * i0 + 1]!;
     const tbz = teB[3 * i0 + 2]!;
-    let wSum = 0;
-    let total = 0;
-    for (const i of panels) {
-      wSum += Math.abs(gamma[i]!);
-      total += gamma[i]!;
-    }
-    let qax = 0;
-    let qay = 0;
-    let qaz = 0;
-    let qbx = 0;
-    let qby = 0;
-    let qbz = 0;
-    for (const i of panels) {
-      const g = gamma[i]!;
-      const ax = a[3 * i]!;
-      const ay = a[3 * i + 1]!;
-      const az = a[3 * i + 2]!;
-      const bx = b[3 * i]!;
-      const by = b[3 * i + 1]!;
-      const bz = b[3 * i + 2]!;
-      packSegment(seg, si++, tax, tay, taz, ax, ay, az, g, core);
-      packSegment(seg, si++, ax, ay, az, bx, by, bz, g, core);
-      packSegment(seg, si++, bx, by, bz, tbx, tby, tbz, g, core);
-      const w = wSum > 0 ? Math.abs(g) / wSum : 1 / panels.length;
-      qax += w * ax;
-      qay += w * ay;
-      qaz += w * az;
-      qbx += w * bx;
-      qby += w * by;
-      qbz += w * bz;
-    }
-    const lo = lumpedStart + 3 * s;
-    packSegment(seg, lo, tax, tay, taz, qax, qay, qaz, total, core);
-    packSegment(seg, lo + 1, qax, qay, qaz, qbx, qby, qbz, total, core);
-    packSegment(seg, lo + 2, qbx, qby, qbz, tbx, tby, tbz, total, core);
-
-    // Capsule along the strip's mid-chord line, from the (extrapolated) LE to the TE.
+    // Chord estimate and capsule along the strip's mid-chord line, from the (extrapolated) LE to
+    // the TE.
     const tmx = 0.5 * (tax + tbx);
     const tmy = 0.5 * (tay + tby);
     const tmz = 0.5 * (taz + tbz);
@@ -310,6 +362,43 @@ function compileVortices(
     const lex = fx + (fx - tmx) * ext;
     const ley = fy + (fy - tmy) * ext;
     const lez = fz + (fz - tmz) * ext;
+    const sc = Math.min(core, SURFACE_CORE_CHORDS * chord);
+    let wSum = 0;
+    let total = 0;
+    for (const i of panels) {
+      wSum += Math.abs(gamma[i]!);
+      total += gamma[i]!;
+    }
+    let qax = 0;
+    let qay = 0;
+    let qaz = 0;
+    let qbx = 0;
+    let qby = 0;
+    let qbz = 0;
+    for (const i of panels) {
+      const g = gamma[i]!;
+      const ax = a[3 * i]!;
+      const ay = a[3 * i + 1]!;
+      const az = a[3 * i + 2]!;
+      const bx = b[3 * i]!;
+      const by = b[3 * i + 1]!;
+      const bz = b[3 * i + 2]!;
+      packSegment(seg, si++, tax, tay, taz, ax, ay, az, g, sc);
+      packSegment(seg, si++, ax, ay, az, bx, by, bz, g, sc);
+      packSegment(seg, si++, bx, by, bz, tbx, tby, tbz, g, sc);
+      const w = wSum > 0 ? Math.abs(g) / wSum : 1 / panels.length;
+      qax += w * ax;
+      qay += w * ay;
+      qaz += w * az;
+      qbx += w * bx;
+      qby += w * by;
+      qbz += w * bz;
+    }
+    const lo = lumpedStart + 3 * s;
+    packSegment(seg, lo, tax, tay, taz, qax, qay, qaz, total, sc);
+    packSegment(seg, lo + 1, qax, qay, qaz, qbx, qby, qbz, total, sc);
+    packSegment(seg, lo + 2, qbx, qby, qbz, tbx, tby, tbz, total, sc);
+
     let radius = 0;
     for (const i of panels) {
       for (const arr of [a, b]) {
@@ -350,7 +439,7 @@ function compileVortices(
     );
 
     stripSmoothStart[s] = smoothIndex;
-    smoothIndex = packSmoothedStrip(seg, smoothIndex, l, panels, core, tmx, tmy, tmz);
+    smoothIndex = packSmoothedStrip(seg, smoothIndex, pts, gamma, panels, sc, tmx, tmy, tmz);
   }
   stripExactStart[stripCount] = si;
   stripSmoothStart[stripCount] = smoothIndex;
@@ -377,14 +466,15 @@ function compileVortices(
 function packSmoothedStrip(
   seg: Float64Array,
   start: number,
-  l: VortexLattice,
+  pts: LatticePoints,
+  gamma: Float32Array,
   panels: number[],
   core: number,
   tmx: number,
   tmy: number,
   tmz: number,
 ): number {
-  const { a, b, teA, teB, gamma } = l;
+  const { a, b, teA, teB } = pts;
   const distTe = (i: number) =>
     Math.hypot(
       0.5 * (a[3 * i]! + b[3 * i]!) - tmx,
@@ -473,29 +563,30 @@ function compileSources(
     groupStart = meta.groupStart;
     groupChord = meta.groupChord;
   } else {
-    // Greedy: consecutive sources whose midpoints stay within 2 segment lengths of the first.
+    // Greedy (e.g. after a structured clone dropped the metadata): consecutive, nearly parallel
+    // lines whose midpoints lie within the first line's spanwise extent, measured across the
+    // stream (y-z plane, so sweep and pitch do not matter): the chordwise stations of one strip.
     const starts: number[] = [];
     let first = -1;
-    let reach = 0;
+    let ey = 0;
+    let ez = 0;
+    let span0 = 0;
     for (let k = 0; k < count; k++) {
-      const mx = 0.5 * (p0[3 * k]! + p1[3 * k]!);
-      const my = 0.5 * (p0[3 * k + 1]! + p1[3 * k + 1]!);
-      const mz = 0.5 * (p0[3 * k + 2]! + p1[3 * k + 2]!);
-      if (first >= 0) {
-        const fx = 0.5 * (p0[3 * first]! + p1[3 * first]!);
-        const fy = 0.5 * (p0[3 * first + 1]! + p1[3 * first + 1]!);
-        const fz = 0.5 * (p0[3 * first + 2]! + p1[3 * first + 2]!);
-        if (Math.hypot(mx - fx, my - fy, mz - fz) <= reach) continue;
+      const dy = p1[3 * k + 1]! - p0[3 * k + 1]!;
+      const dz = p1[3 * k + 2]! - p0[3 * k + 2]!;
+      const span = Math.hypot(dy, dz);
+      if (first >= 0 && span > 0 && span0 > 0) {
+        const along =
+          (0.5 * (p0[3 * k + 1]! + p1[3 * k + 1]!) - p0[3 * first + 1]!) * ey +
+          (0.5 * (p0[3 * k + 2]! + p1[3 * k + 2]!) - p0[3 * first + 2]!) * ez;
+        const parallel = Math.abs(dy * ey + dz * ez) / span;
+        if (along > 0 && along < span0 && parallel > 0.9 && k - first < 64) continue;
       }
       first = k;
       starts.push(k);
-      reach =
-        2 *
-        Math.hypot(
-          p1[3 * k]! - p0[3 * k]!,
-          p1[3 * k + 1]! - p0[3 * k + 1]!,
-          p1[3 * k + 2]! - p0[3 * k + 2]!,
-        );
+      span0 = span;
+      ey = span > 0 ? dy / span : 0;
+      ez = span > 0 ? dz / span : 0;
     }
     starts.push(count);
     groupStart = Int32Array.from(starts);
@@ -503,6 +594,8 @@ function compileSources(
   const groupCount = groupStart.length - 1;
   const src = new Float64Array(Math.max(1, count + 2 * groupCount) * SRC_STRIDE);
   const groupCap = new Float64Array(Math.max(1, groupCount) * CAP_STRIDE);
+  // Sources built by buildThicknessSources carry cores sized to their chordwise spacing; the
+  // lattice core (often sized for the wake) would smear the thickness of a slender wing away.
   for (let k = 0; k < count; k++) {
     const rc = meta && groupChord ? meta.coreRadius[k]! : core;
     packSource(
@@ -515,7 +608,7 @@ function compileSources(
       p1[3 * k + 1]!,
       p1[3 * k + 2]!,
       sigma[k]!,
-      Math.max(rc, core),
+      rc,
     );
   }
   const lumpedSrcStart = count;
@@ -554,6 +647,18 @@ function compileSources(
       );
     }
     const chord = groupChord ? groupChord[gi]! : Math.max(2 * midSpread, 1e-6);
+    // Only a closed group (zero net outflow) decays fast enough to be dropped far away.
+    let net = 0;
+    let gross = 0;
+    for (let k = s0; k < s1; k++) {
+      const len = Math.hypot(
+        p1[3 * k]! - p0[3 * k]!,
+        p1[3 * k + 1]! - p0[3 * k + 1]!,
+        p1[3 * k + 2]! - p0[3 * k + 2]!,
+      );
+      net += sigma[k]! * len;
+      gross += Math.abs(sigma[k]! * len);
+    }
     packCapsule(
       groupCap,
       gi,
@@ -565,14 +670,14 @@ function compileSources(
       cz,
       radius,
       chord,
-      NEAR_CHORDS,
-      SOURCE_CUTOFF_CHORDS,
+      SOURCE_NEAR_CHORDS,
+      Math.abs(net) <= 1e-3 * gross ? SOURCE_CUTOFF_CHORDS : Infinity,
     );
 
     // Lumped: one positive and one negative line with the same total strength and centroid.
     for (let sign = 1, slot = 0; slot < 2; sign = -1, slot++) {
       let wq = 0;
-      let rcMax = core;
+      let rcMax = meta && groupChord ? 0 : core;
       const e0 = [0, 0, 0];
       const e1 = [0, 0, 0];
       for (let k = s0; k < s1; k++) {

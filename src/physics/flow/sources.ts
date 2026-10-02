@@ -121,7 +121,18 @@ export function withThicknessSources(
 ): VortexLattice {
   if (lattice.sources.count > 0) return lattice;
   const e = withSourcesCache.get(lattice);
-  if (e && e.geometry === geometry && e.alpha === alpha && e.vInf === vInf) return e.lattice;
+  if (
+    e &&
+    e.geometry === geometry &&
+    e.alpha === alpha &&
+    e.vInf === vInf &&
+    e.lattice.gamma === lattice.gamma &&
+    e.lattice.a === lattice.a &&
+    e.lattice.count === lattice.count &&
+    e.lattice.coreRadius === lattice.coreRadius
+  ) {
+    return e.lattice;
+  }
   const out: VortexLattice = {
     ...lattice,
     sources: buildThicknessSources(geometry, alpha, vInf),

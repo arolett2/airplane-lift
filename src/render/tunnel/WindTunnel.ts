@@ -114,6 +114,10 @@ export class WindTunnel {
   private readonly strutGeometry: THREE.CylinderGeometry;
   private readonly baseGeometry: THREE.CylinderGeometry;
 
+  /** Painted once and reused across rebuilds (the shell is rebuilt on every domain change). */
+  private airflowTexture: THREE.CanvasTexture | null = null;
+  private airflowMaterial: THREE.MeshBasicMaterial | null = null;
+
   private domain: TunnelDomain | null = null;
   private mount: Vec3 = [0, 0, 0];
   private readonly reducedMotion = prefersReducedMotion();
@@ -145,7 +149,10 @@ export class WindTunnel {
   }
 
   dispose(): void {
+    this.detachAirflowTexture();
     clearGroup(this.shell);
+    this.airflowTexture?.dispose();
+    this.airflowTexture = null;
     this.strutGeometry.dispose();
     this.baseGeometry.dispose();
     this.stingMaterial.dispose();
@@ -180,7 +187,14 @@ export class WindTunnel {
     this.stingBase!.scale.set(6 * r, 6 * r, 0.7 * r);
   }
 
+  /** Unhook the shared texture so disposing the old shell does not free it. */
+  private detachAirflowTexture(): void {
+    if (this.airflowMaterial) this.airflowMaterial.map = null;
+    this.airflowMaterial = null;
+  }
+
   private buildShell(domain: TunnelDomain): void {
+    this.detachAirflowTexture();
     clearGroup(this.shell);
     const d = tunnelDims(domain);
     const { lx, ly, lz, span } = d;
@@ -449,7 +463,8 @@ export class WindTunnel {
 
   /** "AIRFLOW ->" painted on the floor beside the wing's path, reading in the flow direction. */
   private buildAirflowMarking(domain: TunnelDomain): void {
-    const tex = createAirflowTexture();
+    this.airflowTexture ??= createAirflowTexture();
+    const tex = this.airflowTexture;
     if (!tex) return;
     const { lx, ly } = tunnelDims(domain);
     const w = 0.3 * lx;
@@ -461,6 +476,7 @@ export class WindTunnel {
       toneMapped: false,
       side: THREE.DoubleSide,
     });
+    this.airflowMaterial = mat;
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
     mesh.name = 'AirflowMarking';
     mesh.position.set(

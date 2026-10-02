@@ -21,11 +21,10 @@ import {
   computePolarSweep,
   computeSection,
   createAeroCache,
-  geometryMaxChord,
   stableKey,
 } from '../physics/aero';
 import { buildFlowFieldGrid, seedStreamlines, traceStreamlines } from '../physics/flow/index';
-import { tunnelDomain } from '../physics/domain';
+import { domainForGeometry } from '../physics/domain';
 
 /** Flow-field grid node budget at fieldQuality = 1 (the flow module's default). */
 export const DEFAULT_FIELD_NODES = 120_000;
@@ -183,7 +182,7 @@ function runStage(
     }
     case 'streamlines': {
       const { geometry, aero } = ensureSolved();
-      const domain = tunnelDomain(geometry.overallSpan, geometryMaxChord(geometry));
+      const domain = domainForGeometry(geometry);
       const seeds = seedStreamlines(geometry, aero.alpha, req.rake, domain);
       const streamlines = traceStreamlines(
         aero.lattice,
@@ -201,7 +200,7 @@ function runStage(
     }
     case 'field': {
       const { geometry, aero } = ensureSolved();
-      const domain = tunnelDomain(geometry.overallSpan, geometryMaxChord(geometry));
+      const domain = domainForGeometry(geometry);
       const field = buildFlowFieldGrid(
         aero.lattice,
         aero.velocity,

@@ -397,13 +397,6 @@ export function summarizeStall(
   };
 }
 
-/** Longest section chord over all surfaces (m): sizes the tunnel fore and aft. */
-export function geometryMaxChord(geometry: WingGeometry): number {
-  let c = 0;
-  for (const s of geometry.surfaces) for (const sec of s.sections) c = Math.max(c, sec.chord);
-  return c;
-}
-
 /**
  * Lift-weighted centre of the strip quarter-chord points (weights = vertical force per strip),
  * clamped to their bounding box so it stays on the wing when the net lift is nearly zero. Falls

@@ -319,7 +319,6 @@ import {
   computePolarSweep,
   computeSection,
   createAeroCache,
-  geometryMaxChord,
   machBucketIndex,
   MACH_BUCKET,
   POLAR_ALPHA_MAX_DEG,
@@ -717,11 +716,5 @@ describe('computeSection', () => {
     expect(rootIn.eta).toBe(0);
     expect(tipIn.alphaInduced).toBeCloseTo(alpha - sol.stripAlphaEffective[3]!, 12);
     expect(rootIn.alphaInduced).toBeCloseTo(alpha - sol.stripAlphaEffective[0]!, 12);
-  });
-});
-
-describe('geometryMaxChord', () => {
-  it('returns the longest section chord', () => {
-    expect(geometryMaxChord(fakes.buildWingGeometry(tapered))).toBe(1.5);
   });
 });

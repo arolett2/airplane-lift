@@ -195,7 +195,8 @@ const fakes = vi.hoisted(() => {
       controlPoints: z(),
       normals: z(),
       panelAreas: new Float64Array(panelCount),
-    };
+      // Cast: the real VlmModel may carry extra solver fields the fake does not need.
+    } as unknown as VlmModel;
   }
 
   function solveCoupled(
@@ -250,7 +251,8 @@ const fakes = vi.hoisted(() => {
     sol.CL = liftSum / g.referenceArea;
     sol.CDi = (sol.CL * sol.CL) / (Math.PI * g.aspectRatio * 0.9);
     void areaSum;
-    return sol;
+    // Cast: the real CoupledSolution may carry extra fields the fake does not need.
+    return sol as unknown as CoupledSolution;
   }
 
   return {

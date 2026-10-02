@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Naca4Params, PanelSolution } from '../types';
-import { generateAirfoil } from './naca';
+import type { AirfoilGeometry, Naca4Params, PanelSolution } from '../types';
+import { camberLine, generateAirfoil } from './naca';
 import { createPanelSolver, directVelocity } from './panel';
 
 const DEG = Math.PI / 180;
@@ -9,6 +9,91 @@ const naca2412: Naca4Params = { camber: 0.02, camberPos: 0.4, thickness: 0.12 };
 
 const solver0012 = createPanelSolver(generateAirfoil(naca0012, 140));
 const solver2412 = createPanelSolver(generateAirfoil(naca2412, 140));
+
+type Complex = [number, number];
+const cmul = (p: Complex, q: Complex): Complex => [
+  p[0] * q[0] - p[1] * q[1],
+  p[0] * q[1] + p[1] * q[0],
+];
+const cdiv = (p: Complex, q: Complex): Complex => {
+  const d = q[0] * q[0] + q[1] * q[1];
+  return [(p[0] * q[0] + p[1] * q[1]) / d, (p[1] * q[0] - p[0] * q[1]) / d];
+};
+const cpow = (p: Complex, e: number): Complex => {
+  const r = Math.hypot(p[0], p[1]) ** e;
+  const th = e * Math.atan2(p[1], p[0]);
+  return [r * Math.cos(th), r * Math.sin(th)];
+};
+
+/**
+ * Karman-Trefftz airfoil: the conformal image of a circle (centre (-eps, mu), through zeta = 1)
+ * under z = k [(zeta+1)^k + (zeta-1)^k] / [(zeta+1)^k - (zeta-1)^k], k = 2 - tau/pi, which has a
+ * finite trailing-edge angle tau. Its potential flow is known exactly, so it validates the panel
+ * method independently of any tabulated data. The contour is rotated and scaled to unit chord.
+ */
+function karmanTrefftz(eps: number, mu: number, tau: number, n: number) {
+  const cx = -eps;
+  const cy = mu;
+  const a = Math.hypot(1 - cx, cy);
+  const thetaTE = Math.atan2(-cy, 1 - cx);
+  const k = 2 - tau / Math.PI;
+  const circle = (th: number): Complex => [cx + a * Math.cos(th), cy + a * Math.sin(th)];
+  const map = (z: Complex): Complex => {
+    const p = cpow([z[0] + 1, z[1]], k);
+    const m = cpow([z[0] - 1, z[1]], k);
+    const r = cdiv([p[0] + m[0], p[1] + m[1]], [p[0] - m[0], p[1] - m[1]]);
+    return [k * r[0], k * r[1]];
+  };
+  const mapDerivative = (z: Complex): number => {
+    const p = cpow([z[0] + 1, z[1]], k);
+    const m = cpow([z[0] - 1, z[1]], k);
+    const d: Complex = [p[0] - m[0], p[1] - m[1]];
+    const num = cmul(cpow([z[0] - 1, z[1]], k - 1), cpow([z[0] + 1, z[1]], k - 1));
+    const r = cdiv(num, cmul(d, d));
+    return 4 * k * k * Math.hypot(r[0], r[1]);
+  };
+  // Clockwise contour: from the TE (theta = thetaTE) with decreasing angle = lower surface first.
+  const theta = (i: number) => thetaTE - (2 * Math.PI * i) / n;
+  const raw: Complex[] = [];
+  for (let i = 0; i <= n; i++) raw.push(i === 0 || i === n ? map([1, 0]) : map(circle(theta(i))));
+  let le = 0;
+  let chord = 0;
+  for (let i = 0; i <= n; i++) {
+    const d = Math.hypot(raw[i]![0] - raw[0]![0], raw[i]![1] - raw[0]![1]);
+    if (d > chord) {
+      chord = d;
+      le = i;
+    }
+  }
+  const [lx, ly] = raw[le]!;
+  const rot = Math.atan2(raw[0]![1] - ly, raw[0]![0] - lx); // chord-line angle
+  const coords = new Float64Array(2 * (n + 1));
+  for (let i = 0; i <= n; i++) {
+    const x = raw[i]![0] - lx;
+    const y = raw[i]![1] - ly;
+    coords[2 * i] = (x * Math.cos(rot) + y * Math.sin(rot)) / chord;
+    coords[2 * i + 1] = (-x * Math.sin(rot) + y * Math.cos(rot)) / chord;
+  }
+  const geometry: AirfoilGeometry = {
+    coords,
+    nPoints: n + 1,
+    leIndex: le,
+    params: { camber: 0, camberPos: 0.4, thickness: 0.12 },
+    flap: null,
+  };
+  // Kutta circulation in the circle plane (V_inf = 1; the map tends to identity far away).
+  const circulation = (alpha: number) => 4 * Math.PI * a * Math.sin(alpha + rot - thetaTE);
+  return {
+    geometry,
+    exactCl: (alpha: number) => (2 * circulation(alpha)) / chord,
+    /** Exact Cp at contour node i (speeds are unchanged by the rotation and scaling). */
+    exactCp(alpha: number, i: number) {
+      const th = theta(i);
+      const q = -2 * Math.sin(th - alpha - rot) - circulation(alpha) / (2 * Math.PI * a);
+      return 1 - (q / mapDerivative(circle(th))) ** 2;
+    },
+  };
+}
 
 /** Lift from integrating the surface pressure (independent of the circulation). */
 function pressureCl(coords: Float64Array, sol: PanelSolution): number {
@@ -29,6 +114,50 @@ describe('linear-vortex panel method', () => {
     expect(Math.abs(sol.cl)).toBeLessThan(1e-4);
     const n = sol.cp.length;
     for (let i = 0; i < n / 2; i++) expect(sol.cp[i]).toBeCloseTo(sol.cp[n - 1 - i]!, 6);
+  });
+
+  it('reproduces the exact Karman-Trefftz potential flow (lift and surface pressure)', () => {
+    for (const [eps, mu, tauDeg] of [
+      [0.1, 0.06, 10], // cambered, ~12% thick
+      [0.08, 0, 12], // symmetric
+    ] as const) {
+      const kt = karmanTrefftz(eps, mu, tauDeg * DEG, 140);
+      const solver = createPanelSolver(kt.geometry);
+      for (const deg of [0, 4, 8]) {
+        const sol = solver.solve(deg * DEG);
+        const exact = kt.exactCl(deg * DEG);
+        expect(Math.abs(sol.cl - exact)).toBeLessThan(2e-3 * Math.max(1, Math.abs(exact)));
+        // Node Cp (mean of the two neighbouring control points) against the exact value.
+        let sumSq = 0;
+        let count = 0;
+        for (let i = 3; i <= 137; i++) {
+          const err = 0.5 * (sol.cp[i - 1]! + sol.cp[i]!) - kt.exactCp(deg * DEG, i);
+          sumSq += err * err;
+          count++;
+          // Away from the leading-edge suction peak (where averaging two control points is
+          // itself the main error) the agreement is tight.
+          if (kt.geometry.coords[2 * i]! > 0.1) expect(Math.abs(err)).toBeLessThan(0.02);
+        }
+        expect(Math.sqrt(sumSq / count)).toBeLessThan(0.06);
+      }
+    }
+  });
+
+  it('matches the thin-airfoil pitching moment of NACA 2412', () => {
+    // cm_c/4 = (pi/4)(A2 - A1), A_n = (2/pi) int (dz/dx) cos(n th) dth.
+    let a1 = 0;
+    let a2 = 0;
+    const steps = 2000;
+    for (let i = 0; i < steps; i++) {
+      const th = ((i + 0.5) * Math.PI) / steps;
+      const slope = camberLine(naca2412, null, 0.5 * (1 - Math.cos(th))).slope;
+      a1 += (2 / steps) * slope * Math.cos(th);
+      a2 += (2 / steps) * slope * Math.cos(2 * th);
+    }
+    const cmTheory = (Math.PI / 4) * (a2 - a1);
+    expect(cmTheory).toBeCloseTo(-0.053, 3);
+    const cm = solver2412.solve(solver2412.alphaZeroLift).cmQuarter;
+    expect(Math.abs(cm / cmTheory - 1)).toBeLessThan(0.1);
   });
 
   it('matches the known NACA 0012 lift at 5 deg', () => {

@@ -95,6 +95,61 @@ describe('section polar', () => {
     }
   });
 
+  it('stays finite, C1 and peaked at clMax across the slider extremes', () => {
+    const cases: [Naca4Params, FlapState | null, boolean][] = [
+      [naca(0, 0.04), null, false],
+      [{ camber: 0.09, camberPos: 0.1, thickness: 0.04 }, null, false],
+      [
+        { camber: 0.09, camberPos: 0.9, thickness: 0.04 },
+        { chordFrac: 0.4, deflection: 40 * DEG },
+        true,
+      ],
+      [
+        { camber: 0.09, camberPos: 0.2, thickness: 0.24 },
+        { chordFrac: 0.1, deflection: 40 * DEG },
+        false,
+      ],
+      [naca(0, 0.24), { chordFrac: 0.4, deflection: 40 * DEG }, true],
+      [naca(0.04, 0.15), { chordFrac: 0.25, deflection: 15 * DEG }, false],
+    ];
+    for (const [params, flap, slat] of cases) {
+      const polar = polarFor(params, flap, slat);
+      for (const re of [1e4, 3e7]) {
+        const h = 1e-6;
+        let prevSlope = NaN;
+        let bad = 0; // non-finite values, non-positive drag, attachedFraction out of range
+        let worstJump = 0;
+        for (let a = -40 * DEG; a < 60 * DEG; a += 0.02 * DEG) {
+          const cl = polar.cl(a, re);
+          const cd = polar.cd(a, re);
+          const cm = polar.cm(a, re);
+          const f = polar.attachedFraction(a, re);
+          if (![cl, cd, cm, f].every(Number.isFinite) || !(cd > 0) || f < 0.1 - 1e-9 || f > 1) {
+            bad++;
+          }
+          const slope = (polar.cl(a + h, re) - polar.cl(a - h, re)) / (2 * h);
+          if (!Number.isNaN(prevSlope))
+            worstJump = Math.max(worstJump, Math.abs(slope - prevSlope));
+          prevSlope = slope;
+        }
+        expect(bad).toBe(0);
+        expect(worstJump).toBeLessThan(1);
+        // The stall angle is the (first) peak of the lift curve, followed by a visible drop.
+        // (Deep in stall thin sections climb back towards the flat-plate cl = sin 2a, which
+        // can exceed their clMax beyond ~20 deg: clMax is the attached-flow peak.)
+        const as = polar.alphaStall(re);
+        const clMax = polar.clMax(re);
+        expect(polar.cl(as, re)).toBeCloseTo(clMax, 9);
+        for (let a = polar.alphaZeroLift; a < as + 5 * DEG; a += 0.1 * DEG) {
+          expect(polar.cl(a, re)).toBeLessThanOrEqual(clMax + 1e-9);
+        }
+        expect(polar.cl(as + 4 * DEG, re)).toBeLessThan(clMax - 0.1);
+        expect(polar.clMin(re)).toBeLessThan(0);
+        expect(polar.alphaStallNegative(re)).toBeLessThan(polar.alphaZeroLift);
+      }
+    }
+  });
+
   it('gives an odd lift curve for a symmetric section', () => {
     for (const deg of [3, 10, 15, 20, 35, 70, 120]) {
       expect(p0012.cl(-deg * DEG, RE)).toBeCloseTo(-p0012.cl(deg * DEG, RE), 6);

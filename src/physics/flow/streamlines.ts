@@ -10,13 +10,13 @@
 import type { Streamline3D, Vec3, VortexLattice, WingGeometry } from '../types';
 import type { TunnelDomain } from '../domain';
 import type { RakeConfig } from '../../state/params';
-import { bodyToTunnel } from '../math/frames';
+import { bodyDirToTunnel, bodyToTunnel } from '../math/frames';
 import { addInducedFast, distanceToWing, getCompiledLattice } from './lattice';
 import type { CompiledLattice } from './lattice';
 import { getWingSolid } from './solid';
 import type { WingSolid } from './solid';
 import { withThicknessSources } from './sources';
-import { interpolateSegment, sectionPoint, semispan } from './wingFrames';
+import { interpolateSegment, maxChord, sectionPoint, semispan } from './wingFrames';
 
 export interface StreamlineSeeds {
   /** Interleaved xyz seed points. */
@@ -28,8 +28,9 @@ export interface StreamlineSeeds {
 export const MAX_STREAMLINE_POINTS = 1500;
 /** Fine step near the wing, in local chords. */
 const STEP_NEAR_CHORDS = 0.02;
-/** Coarse step far from the wing, in semispans. */
+/** Coarse step far from the wing, in semispans (or in chords, whichever is larger). */
 const STEP_FAR_SEMISPANS = 0.03;
+const STEP_FAR_CHORDS = 0.08;
 /** Step growth with distance from the wing (m of step per m of distance). */
 const STEP_GROWTH = 0.08;
 /** Maximum direction change per step before the step is halved (cos 12 deg). */
@@ -76,26 +77,55 @@ export function wingStationAt(geometry: WingGeometry, alpha: number, y: number):
   return { le, chord: sec.axes.chord };
 }
 
-/** Quarter-chord point (tunnel frame) and chord of the outermost tip section on one side. */
-function tipStation(geometry: WingGeometry, alpha: number, side: 'right' | 'left'): Station {
-  let best: Station | null = null;
+interface TipFrame {
+  /** Quarter-chord point of the tip section, tunnel frame. */
+  qc: Vec3;
+  /** Section "up" (suction side) and outboard span direction, tunnel frame. */
+  normal: Vec3;
+  span: Vec3;
+}
+
+/** The outermost tip section on one side (a winglet's top when there is one). */
+function tipFrame(geometry: WingGeometry, alpha: number, side: 'right' | 'left'): TipFrame {
+  let best: TipFrame | null = null;
   let bestY = -Infinity;
   let bestZ = -Infinity;
   for (const surface of geometry.surfaces) {
     if (surface.side !== side || surface.sections.length < 2) continue;
     const n = surface.sections.length;
-    const sec = interpolateSegment(surface, n - 2, 1);
-    const qc = bodyToTunnel(sectionPoint(sec.axes, 0.25, 0), geometry.pivot, alpha);
+    const { axes } = interpolateSegment(surface, n - 2, 1);
+    const qc = bodyToTunnel(sectionPoint(axes, 0.25, 0), geometry.pivot, alpha);
     const ay = Math.abs(qc[1]);
     const dz = Math.abs(qc[2] - geometry.pivot[2]);
     if (ay > bestY + 1e-6 || (Math.abs(ay - bestY) <= 1e-6 && dz > bestZ)) {
       bestY = ay;
       bestZ = dz;
-      best = { le: qc, chord: sec.axes.chord };
+      best = {
+        qc,
+        normal: bodyDirToTunnel(axes.normalDir, alpha),
+        span: bodyDirToTunnel(axes.spanDir, alpha),
+      };
     }
   }
   const S = semispan(geometry);
-  return best ?? { le: [0, side === 'left' ? -S : S, 0], chord: geometry.meanAeroChord };
+  return (
+    best ?? {
+      qc: [0, side === 'left' ? -S : S, 0],
+      normal: [0, 0, 1],
+      span: [0, side === 'left' ? -1 : 1, 0],
+    }
+  );
+}
+
+/** Splits n items over weights (largest remainder). */
+function allocate(n: number, weights: readonly number[]): number[] {
+  const total = weights.reduce((a, b) => a + b, 0);
+  const raw = weights.map((w) => (n * w) / total);
+  const out = raw.map(Math.floor);
+  let left = n - out.reduce((a, b) => a + b, 0);
+  const order = raw.map((r, i) => [r - Math.floor(r), i] as const).sort((a, b) => b[0] - a[0]);
+  for (let k = 0; left > 0; k = (k + 1) % order.length, left--) out[order[k]![1]]!++;
+  return out;
 }
 
 function clampToDomain(domain: TunnelDomain, pts: number[]): Float32Array {
@@ -145,27 +175,28 @@ export function seedStreamlines(
   }
 
   // Tip vortex: rings round each tip's upstream projection plus a few over the outer upper wing.
+  // The rings are centred a little inboard of the tip and on its pressure side: those lines pass
+  // round the tip edge and get wound up most by the trailing vortex.
   const perSide = Math.max(4, Math.floor(n / 2));
-  const nInboard = Math.max(1, Math.round(0.25 * perSide));
-  const nRing = perSide - nInboard;
-  const radii = [0.03, 0.08, 0.15];
-  const radiusSum = radii.reduce((a, b) => a + b, 0);
+  const nInboard = Math.max(1, Math.round(0.2 * perSide));
+  const radii = [0.025, 0.05, 0.09, 0.15];
+  const ringCounts = allocate(perSide - nInboard, [0.35, 0.3, 0.2, 0.15]);
   for (const side of ['right', 'left'] as const) {
-    const tip = tipStation(geometry, alpha, side);
-    const sgn = side === 'right' ? 1 : -1;
-    let placed = 0;
+    const tip = tipFrame(geometry, alpha, side);
+    const cy = tip.qc[1] - (0.03 * tip.normal[1] + 0.025 * tip.span[1]) * S;
+    const cz = tip.qc[2] - (0.03 * tip.normal[2] + 0.025 * tip.span[2]) * S;
     radii.forEach((r, ri) => {
-      const count =
-        ri === radii.length - 1 ? nRing - placed : Math.max(1, Math.round((nRing * r) / radiusSum));
+      const count = ringCounts[ri]!;
       for (let k = 0; k < count; k++) {
-        const th = (2 * Math.PI * (k + 0.5 * ri)) / count;
-        pts.push(x0, tip.le[1] + r * S * Math.cos(th), tip.le[2] + r * S * Math.sin(th));
+        const th = (2 * Math.PI * (k + 0.5 * (ri % 2))) / count;
+        pts.push(x0, cy + r * S * Math.cos(th), cz + r * S * Math.sin(th));
       }
-      placed += count;
     });
+    const sgn = side === 'right' ? 1 : -1;
+    const yTip = Math.min(Math.abs(tip.qc[1]), S);
     for (let k = 0; k < nInboard; k++) {
-      const y = tip.le[1] - sgn * (0.04 + (0.12 * k) / Math.max(1, nInboard)) * S;
-      const st = wingStationAt(geometry, alpha, Math.max(-S, Math.min(S, y)));
+      const y = sgn * (yTip - (0.04 + (0.12 * k) / nInboard) * S);
+      const st = wingStationAt(geometry, alpha, y);
       pts.push(x0, y, st.le[2] + 0.04 * st.chord);
     }
   }
@@ -363,7 +394,11 @@ export function traceStreamlines(
 ): Streamline3D[] {
   const compiled = getCompiledLattice(withThicknessSources(lattice, geometry, alpha, vInf));
   const solid = getWingSolid(geometry, alpha);
-  const hFar = STEP_FAR_SEMISPANS * semispan(geometry);
+  // Short-span, long-chord wings (e.g. a fighter) need the chord to set the far step too.
+  const hFar = Math.max(
+    STEP_FAR_SEMISPANS * semispan(geometry),
+    STEP_FAR_CHORDS * maxChord(geometry),
+  );
   const lines: Streamline3D[] = [];
   for (const set of seeds) {
     const p = set.points;

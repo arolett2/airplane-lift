@@ -166,6 +166,33 @@ describe('buildFlowFieldGrid', () => {
     expect(worst).toBeLessThan(0.03);
   });
 
+  it('matches the exact field at every node, including interpolated ones', () => {
+    const [nx, ny] = grid.dims;
+    const v = new Float64Array(3);
+    let worst = 0;
+    for (let n = 0; n < grid.solid.length; n += 5) {
+      if (grid.solid[n]) continue;
+      const i = n % nx;
+      const j = Math.floor(n / nx) % ny;
+      const k = Math.floor(n / (nx * ny));
+      velocityAt(
+        lattice,
+        vInf,
+        grid.origin[0] + i * grid.spacing[0],
+        grid.origin[1] + j * grid.spacing[1],
+        grid.origin[2] + k * grid.spacing[2],
+        v,
+      );
+      const e = Math.hypot(
+        v[0]! - grid.velocity[3 * n]!,
+        v[1]! - grid.velocity[3 * n + 1]!,
+        v[2]! - grid.velocity[3 * n + 2]!,
+      );
+      worst = Math.max(worst, e / vInf);
+    }
+    expect(worst).toBeLessThan(0.02);
+  });
+
   it('returns freestream and false outside the grid', () => {
     const out = [0, 0, 0];
     expect(sampleGrid(grid, domain.max[0] + 1, 0, 0, out)).toBe(false);

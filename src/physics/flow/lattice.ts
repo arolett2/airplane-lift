@@ -633,3 +633,18 @@ export function distanceToWing(
   out[0] = best > 0 ? best : 0;
   out[1] = chord;
 }
+
+/** Distance (m) from P to the nearest trailing filament (a ray from its TE node along +x). */
+export function distanceToWake(c: CompiledLattice, px: number, py: number, pz: number): number {
+  const semi = c.semi;
+  let best2 = Infinity;
+  for (let i = 0; i < c.semiCount; i++) {
+    const o = i * SEMI_STRIDE;
+    const dx = px - semi[o]!;
+    const dy = py - semi[o + 1]!;
+    const dz = pz - semi[o + 2]!;
+    const d2 = dx > 0 ? dy * dy + dz * dz : dx * dx + dy * dy + dz * dz;
+    if (d2 < best2) best2 = d2;
+  }
+  return Math.sqrt(best2);
+}

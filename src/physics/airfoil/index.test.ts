@@ -46,6 +46,13 @@ describe('airfoil model cache', () => {
     expect(again).not.toBe(first);
   });
 
+  it('survives a zero-thickness section instead of throwing', () => {
+    const flat = getAirfoilModel({ ...key2412, params: { ...key2412.params, thickness: 0 } });
+    // Thin-airfoil theory: 2 pi lift slope and the 2412 camber-line zero-lift angle.
+    expect(flat.solver.liftSlope / (2 * Math.PI)).toBeCloseTo(1, 2);
+    expect(flat.polar.alphaZeroLift / DEG).toBeCloseTo(-2.08, 1);
+  });
+
   it('keeps a whole spanwise-varying wing cached between updates', () => {
     // 24 strips per semispan with a root-to-tip thickness change, flapped inboard, plus tip
     // device strips, the section view and the polar sweep: every update must hit the cache.

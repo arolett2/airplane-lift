@@ -56,6 +56,9 @@ export const MODEL_PANELS = 140;
  */
 export const LRU_CAPACITY = 128;
 
+/** Thinnest section actually modelled (the contract range starts at 0.03). */
+const MIN_THICKNESS = 0.005;
+
 const round5 = (v: number) => Math.round(v * 1e5) / 1e5;
 
 /** Canonical cache key: numbers rounded to 1e-5, irrelevant fields normalised away. */
@@ -181,9 +184,12 @@ function softSuctionLimit(cp: number): number {
 }
 
 function buildAirfoilModel(key: AirfoilKey): AirfoilModelInternal {
-  const geometry = generateAirfoil(key.params, MODEL_PANELS, key.flap);
+  // A zero-thickness contour makes the panel matrix singular (luFactor throws, which would take
+  // the whole aero update down); keep a sliver of thickness for out-of-contract inputs.
+  const params = { ...key.params, thickness: Math.max(MIN_THICKNESS, key.params.thickness) };
+  const geometry = generateAirfoil(params, MODEL_PANELS, key.flap);
   const solver = createPanelSolver(geometry);
-  const polar = createSectionPolar(key.params, solver, {
+  const polar = createSectionPolar(params, solver, {
     flap: key.flap,
     slat: key.slat,
     supercritical: key.supercritical,

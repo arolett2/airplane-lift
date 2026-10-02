@@ -124,7 +124,8 @@ function buildBaseWingSections(config: WingConfig): WingSection[] {
   const tanDihedral = Math.tan(dihedral);
   const rootIncidence = config.rootIncidenceDeg * DEG;
   const washout = config.washoutDeg * DEG;
-  const tol = 1e-6 * semispan;
+  // Stations closer than 0.1 % of the semispan merge, so no spanwise segment is a sliver.
+  const tol = 1e-3 * semispan;
 
   // Reference trapezoid chord and leading edge at spanwise station y.
   const trapezoidChord = (y: number): number => rootChord + (tipChord - rootChord) * (y / semispan);

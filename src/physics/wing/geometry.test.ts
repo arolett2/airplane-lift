@@ -370,6 +370,19 @@ describe('flaps and slats', () => {
     expect(secs[2]!.flap).toBeNull();
   });
 
+  it('merges a flap end that nearly meets the Yehudi kink instead of making a sliver', () => {
+    const g = buildWingGeometry({
+      ...flapped,
+      yehudi: { spanFrac: 0.3, chordFrac: 0.3 },
+      flaps: { ...flapped.flaps, spanFrac: 0.30001 },
+    });
+    const secs = surfaceById(g, 'wing-right').sections;
+    expect(secs).toHaveLength(3);
+    expect(secs[1]!.le[1]).toBeCloseTo(0.3 * 17, 12);
+    expect(secs[1]!.flap).not.toBeNull();
+    expect(secs[2]!.flap).toBeNull();
+  });
+
   it('flaps the whole wing when the flap runs to the tip', () => {
     const g = buildWingGeometry({ ...flapped, flaps: { ...flapped.flaps, spanFrac: 1 } });
     const secs = surfaceById(g, 'wing-right').sections;
@@ -726,6 +739,81 @@ describe('sectionFrame against the WingSection doc (review)', () => {
           expect(cx).toBeCloseTo(side === 'right' ? 1 : -1, 12);
         }
       }
+    }
+  });
+});
+
+describe('random configurations across every slider range (review)', () => {
+  /** Small deterministic PRNG (mulberry32) so failures reproduce. */
+  function rng(seed: number): () => number {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  it('builds valid, mirrored, non-degenerate geometry for 1500 random wings', () => {
+    const r = rng(12345);
+    const pick = (lo: number, hi: number): number => lo + (hi - lo) * r();
+    const kinds = Object.keys(TIP_DEVICE_DEFAULTS) as TipDeviceKind[];
+    for (let n = 0; n < 1500; n++) {
+      const kind = kinds[Math.floor(r() * kinds.length)]!;
+      const cfg: WingConfig = {
+        ...DEFAULT_WING,
+        span: pick(4, 90),
+        rootChord: pick(0.3, 20),
+        taperRatio: pick(0.1, 1),
+        sweepDeg: pick(-10, 60),
+        dihedralDeg: pick(-10, 15),
+        rootIncidenceDeg: pick(-5, 8),
+        washoutDeg: pick(-5, 10),
+        yehudi: { spanFrac: r() < 0.3 ? 0 : pick(0, 0.5), chordFrac: pick(0, 0.6) },
+        airfoil: { camber: pick(0, 0.09), camberPos: pick(0.1, 0.9), thickness: pick(0.04, 0.24) },
+        flaps: {
+          deflectionDeg: r() < 0.3 ? 0 : pick(0, 40),
+          chordFrac: pick(0.1, 0.4),
+          spanFrac: pick(0.1, 0.9),
+        },
+        slats: r() < 0.5,
+        tipDevice: {
+          kind,
+          size: pick(0, 0.2),
+          cantDeg: pick(0, 90),
+          sweepDeg: pick(0, 70),
+          toeDeg: pick(-8, 8),
+          taper: pick(0.1, 1),
+        },
+      };
+      const g = buildWingGeometry(cfg);
+      const s = cfg.span / 2;
+      expect(g.referenceArea).toBeCloseTo((cfg.span * cfg.rootChord * (1 + cfg.taperRatio)) / 2, 8);
+      expect(g.overallSpan).toBeGreaterThanOrEqual(cfg.span * (1 - 1e-9) - 1e-9);
+      expect(g.overallSpan).toBeLessThan(cfg.span + 2 * 0.2 * s + 2 * cfg.rootChord);
+      expect(Number.isFinite(g.wettedArea) && g.wettedArea > 0).toBe(true);
+      for (const surf of g.surfaces) {
+        const secs = surf.sections;
+        expect(secs.length).toBeGreaterThanOrEqual(2);
+        secs.forEach((sec, i) => {
+          for (const v of [...sec.le, sec.chord, sec.twist, sec.roll]) {
+            expect(Number.isFinite(v)).toBe(true);
+          }
+          expect(sec.chord).toBeGreaterThan(0);
+          if (i === 0) return;
+          const p = secs[i - 1]!;
+          // No zero-length spanwise segments (they would give singular VLM panels).
+          const seg = Math.hypot(sec.le[1] - p.le[1], sec.le[2] - p.le[2]);
+          expect(seg).toBeGreaterThan(1e-4 * cfg.tipDevice.size * s);
+          if (surf.role === 'wing') {
+            expect(Math.abs(sec.le[1])).toBeGreaterThan(Math.abs(p.le[1]));
+            if (cfg.sweepDeg >= 0) expect(sec.le[0]).toBeGreaterThan(p.le[0]);
+          }
+        });
+      }
+      expectMirrorSymmetric(g);
     }
   });
 });

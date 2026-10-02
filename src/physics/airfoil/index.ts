@@ -48,7 +48,13 @@ export interface AirfoilModelInternal extends AirfoilModel {
 
 /** Panels used for every memoised airfoil model. */
 export const MODEL_PANELS = 140;
-const LRU_CAPACITY = 32;
+/**
+ * Models kept in the LRU. A wing whose airfoil varies along the span needs one model per strip
+ * (24 per semispan, plus tip-device strips, the section view and the polar sweep), so a
+ * capacity near that working set makes every update miss and rebuild all of them (~2 ms each).
+ * A model retains ~80 KB, so 128 of them cost ~10 MB.
+ */
+export const LRU_CAPACITY = 128;
 
 const round5 = (v: number) => Math.round(v * 1e5) / 1e5;
 
@@ -206,7 +212,16 @@ function buildAirfoilModel(key: AirfoilKey): AirfoilModelInternal {
       tables.set(nStations, table);
     }
     const ns = table.xc.length;
-    solver.surfaceSpeedInto(equivalentInviscidAlpha(alphaEffective, reynolds), speed);
+    const f = polar.attachedFraction(alphaEffective, reynolds);
+    const severity = f < 1 ? Math.min(1, (1 - f) / 0.9) : 0;
+    // Attached flow: the Cp shape of the equivalent inviscid angle (same cl as the polar).
+    // Separated flow: the nose still sees the true incidence (stagnation point under the nose,
+    // suction around it) and the lost lift shows up in the flat separated plateau instead. The
+    // equivalent angle of a stalled flapped or highly cambered section is far below the true one
+    // and puts the stagnation point on its upper surface, which turns the plateau into a high
+    // pressure and the section's Cp lift negative. Blend towards the true angle with severity.
+    const alphaEq = equivalentInviscidAlpha(alphaEffective, reynolds);
+    solver.surfaceSpeedInto(alphaEq + severity * (alphaEffective - alphaEq), speed);
     for (let i = 0; i < n; i++) values[i] = 1 - speed[i]! * speed[i]!;
     const le = geometry.leIndex;
     values[n] = 0.5 * (values[le - 1]! + values[le]!);
@@ -228,15 +243,17 @@ function buildAirfoilModel(key: AirfoilKey): AirfoilModelInternal {
       lower[k] = softSuctionLimit(lower[k]!);
     }
 
-    // Separation: flatten the suction side aft of x_sep and soften its leading-edge peak.
-    const f = polar.attachedFraction(alphaEffective, reynolds);
+    // Separation: soften the leading-edge suction peak and flatten the suction side aft of
+    // x_sep. At high incidence the peak wraps round the nose onto the other surface (ahead of
+    // the stagnation point), so the softening applies to both surfaces.
     if (f < 1) {
       const suction = alphaEffective >= polar.alphaZeroLift ? upper : lower;
-      const severity = Math.min(1, (1 - f) / 0.9);
       const limit = 8 - 6.8 * severity; // suction-peak limiter scale (Cp units)
-      for (let k = 0; k < ns; k++) {
-        const cp = suction[k]!;
-        if (cp < 0) suction[k] = cp + severity * (-limit * Math.tanh(-cp / limit) - cp);
+      for (const side of [upper, lower]) {
+        for (let k = 0; k < ns; k++) {
+          const cp = side[k]!;
+          if (cp < 0) side[k] = cp + severity * (-limit * Math.tanh(-cp / limit) - cp);
+        }
       }
       const xSep = f;
       let plateau = NaN;

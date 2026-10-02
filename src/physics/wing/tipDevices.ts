@@ -33,11 +33,6 @@ const MIN_CHORD_FRACTION = 0.02;
 /** Leading-edge sweep is clamped to this range (rad) so tan() stays finite. */
 const MAX_SWEEP = 80 * DEG;
 
-/** sin(x)/x, safe near zero. */
-function sinc(x: number): number {
-  return Math.abs(x) < 1e-6 ? 1 - (x * x) / 6 : Math.sin(x) / x;
-}
-
 /**
  * Description of one device surface as a path in the (y, z) plane.
  *
@@ -104,8 +99,10 @@ function buildDeviceSections(spec: DeviceSpec): WingSection[] {
   for (const s of deviceStations(spec)) {
     const roll = rollAt(s);
     if (s > prevS) {
-      // Exact displacement along a circular arc whose tangent turns from prevRoll to roll.
-      const step = (s - prevS) * sinc((roll - prevRoll) / 2);
+      // The surface between two stations is a straight segment pointing along the mean of the
+      // two rolls, so the polyline through the sections has length exactly `length` and still
+      // follows the circular arc to second order.
+      const step = s - prevS;
       const meanRoll = (roll + prevRoll) / 2;
       y += step * Math.cos(meanRoll);
       z += step * Math.sin(meanRoll);

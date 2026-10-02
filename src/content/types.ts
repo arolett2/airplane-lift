@@ -24,6 +24,8 @@ export interface LessonStep {
     wing?: DeepPartial<WingConfig>;
     flow?: Partial<FlowConditions>;
     view?: DeepPartial<ViewSettings>;
+    /** Open the side-by-side comparison of two preset ids, or close it with null. */
+    compare?: [string, string] | null;
   };
   camera?: CameraShot;
   /** ParamSpec paths to highlight in the controls panel. */

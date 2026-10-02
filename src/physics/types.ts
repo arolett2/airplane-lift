@@ -111,7 +111,12 @@ export interface ChordwiseCp {
   lower: Float32Array;
 }
 
-/** 2D flow around the airfoil at one span station, for the cross-section view. */
+/**
+ * 2D flow around the airfoil at one span station, for the cross-section view.
+ * Contour, grid and streamlines are in the AIRFOIL frame (chord along +x), where the freestream
+ * arrives at angle alphaEffective: V_inf direction = (cos a, sin a). The view rotates by -a for
+ * display so the air flows horizontally and the airfoil appears pitched up.
+ */
 export interface SectionFlow {
   /** Station (fraction of semispan, 0 root .. 1 tip). */
   eta: number;
@@ -174,9 +179,12 @@ export interface WingSection {
   /** Local surface roll (rad): 0 flat, +pi/2 vertical pointing up, -pi/2 vertical pointing down. */
   roll: number;
   airfoil: Naca4Params;
-  /** Flap state at this station, or null. Flap applies to a spanwise segment if BOTH ends have it. */
+  /**
+   * Flap state at this station, or null. A spanwise segment is flapped only if BOTH of its
+   * bounding sections have a flap (the inboard section's values are used).
+   */
   flap: FlapState | null;
-  /** Leading-edge slat deployed at this station (raises clMax/stall angle). */
+  /** Leading-edge slat deployed at this station; like flaps, a segment needs both ends true. */
   slat: boolean;
 }
 
@@ -267,8 +275,10 @@ export interface StripResult {
  * Horseshoe representation: for panel i, bound segment A_i -> B_i, plus trailing legs that run
  * from A_i and B_i to the trailing edge along the surface (`teA_i`, `teB_i`) and then to +infinity
  * along +x (the freestream direction in the tunnel frame).
- * Circulation sign: positive gamma produces positive lift on a right-side panel traversed A->B
- * with A inboard (toward -y) and B outboard.
+ * Orientation: on the RIGHT side A is inboard and B outboard (A->B follows the outward span
+ * tangent); on the LEFT side the order is reversed (A outboard, B inboard). So a symmetric flight
+ * condition has identical gamma on mirror-image panels, and positive gamma always means positive
+ * lift (for a vertical right winglet, A->B points up and positive gamma pushes it inboard).
  */
 export interface VortexLattice {
   count: number;

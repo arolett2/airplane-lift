@@ -5,7 +5,7 @@
  *
  * OWNER: content agent. Contract only — the list is filled in by that agent.
  */
-import type { FlowConditions, WingConfig } from './params';
+import type { AppState, FlowConditions, WingConfig } from './params';
 import { DEFAULT_FLOW, DEFAULT_WING } from './params';
 
 export type PresetCategory = 'airliner' | 'general-aviation' | 'glider' | 'fighter' | 'teaching';
@@ -50,4 +50,18 @@ export const PRESETS: readonly AircraftPreset[] = [
 
 export function getPreset(id: string): AircraftPreset | undefined {
   return PRESETS.find((p) => p.id === id);
+}
+
+/**
+ * Load a preset's wing and one of its flight conditions into the app state.
+ * Unknown ids leave the state unchanged.
+ */
+export function applyPreset(
+  state: AppState,
+  presetId: string,
+  conditions: 'cruise' | 'approach' = 'cruise',
+): AppState {
+  const preset = getPreset(presetId);
+  if (!preset) return state;
+  return { ...state, presetId, wing: preset.wing, flow: preset[conditions] };
 }

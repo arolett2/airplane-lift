@@ -515,3 +515,187 @@ describe('validity', () => {
     expect(first(w).airfoil).not.toBe(tip.airfoil);
   });
 });
+
+/* ------------------------------------------------------------------------------------------ */
+/* Independent checks (review): re-derive the section axes from the WingSection doc instead of  */
+/* using sectionFrame/sectionTrailingEdge, so a sign error there cannot hide one here.          */
+/* ------------------------------------------------------------------------------------------ */
+
+type V3 = [number, number, number];
+
+/** Rodrigues rotation of v about unit axis k by angle a (right-hand rule). */
+function rotate(v: V3, k: V3, a: number): V3 {
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const kxv: V3 = [k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0]];
+  const kdv = k[0] * v[0] + k[1] * v[1] + k[2] * v[2];
+  return [0, 1, 2].map((i) => v[i]! * c + kxv[i]! * s + k[i]! * kdv * (1 - c)) as V3;
+}
+
+/**
+ * Trailing edge from the WingSection doc: chord direction = +x rotated by twist about the
+ * right-hand span tangent t = (0, cos roll, sin roll). The left side is the mirror image of that
+ * construction (rotating about a mirrored tangent with the right-hand rule would flip the sense of
+ * twist, which would make positive twist nose-down on the left wing).
+ */
+function docTrailingEdge(sec: WingSection, side: 'right' | 'left'): V3 {
+  const t: V3 = [0, Math.cos(sec.roll), Math.sin(sec.roll)];
+  const d = rotate([1, 0, 0], t, sec.twist);
+  if (side === 'left') d[1] = -d[1];
+  return [sec.le[0] + sec.chord * d[0], sec.le[1] + sec.chord * d[1], sec.le[2] + sec.chord * d[2]];
+}
+
+const DEVICE_SURFACES: [TipDeviceKind, string[]][] = [
+  ['canted-winglet', ['winglet']],
+  ['blended-winglet', ['winglet']],
+  ['split-winglet', ['winglet', 'winglet-lower']],
+  ['wingtip-fence', ['fence', 'fence-lower']],
+];
+
+describe('toe against an independent rotation', () => {
+  it.each(DEVICE_SURFACES)(
+    'turns the %s leading edge outboard for positive toe at every cant and dihedral',
+    (kind, ids) => {
+      for (const cantDeg of [0, 20, 45]) {
+        for (const dihedralDeg of [-10, 0, 6, 15]) {
+          for (const toeDeg of [4, -4]) {
+            const { g } = build(device(kind, { toeDeg, cantDeg }), { dihedralDeg, washoutDeg: 0 });
+            for (const id of ids) {
+              for (const side of ['right', 'left'] as const) {
+                const top = last(surf(g, `${id}-${side}`));
+                const te = docTrailingEdge(top, side);
+                const out = Math.abs(top.le[1]) - Math.abs(te[1]);
+                expect(Math.sign(out)).toBe(Math.sign(toeDeg));
+              }
+            }
+          }
+        }
+      }
+    },
+  );
+
+  it('gives a vertical fence exactly the requested toe in plan view', () => {
+    const { g } = build(device('wingtip-fence', { toeDeg: 3 }), { washoutDeg: 5 });
+    for (const id of ['fence-right', 'fence-lower-right', 'fence-left', 'fence-lower-left']) {
+      const s = last(surf(g, id));
+      const te = docTrailingEdge(s, id.endsWith('left') ? 'left' : 'right');
+      const dx = te[0] - s.le[0];
+      const dyOut = Math.abs(s.le[1]) - Math.abs(te[1]);
+      expect(Math.atan2(dyOut, dx)).toBeCloseTo(3 * DEG, 12);
+      expect(te[2]).toBeCloseTo(s.le[2], 12);
+    }
+  });
+
+  it('agrees with sectionTrailingEdge for every device section', () => {
+    for (const [kind] of DEVICE_SURFACES) {
+      const { g } = build(device(kind, { toeDeg: 5 }), { dihedralDeg: 7, washoutDeg: 3 });
+      for (const s of g.surfaces) {
+        for (const sec of s.sections) {
+          const a = docTrailingEdge(sec, s.side);
+          const b = sectionTrailingEdge(sec, s.side);
+          for (let i = 0; i < 3; i++) expect(b[i]).toBeCloseTo(a[i]!, 12);
+        }
+      }
+    }
+  });
+});
+
+describe('junction with the wing tip', () => {
+  const smooth: [TipDeviceKind, string][] = [
+    ['blended-winglet', 'winglet'],
+    ['split-winglet', 'winglet'],
+    ['raked-tip', 'raked-tip'],
+  ];
+
+  it.each(smooth)(
+    'starts the %s with exactly the tip section for any toe, cant, dihedral and twist',
+    (kind, id) => {
+      // cant 90 with 0.5 deg dihedral turns by less than the no-arc threshold (0.02 rad).
+      for (const [toeDeg, cantDeg] of [
+        [-8, 15],
+        [-2, 30],
+        [0, 15],
+        [8, 15],
+        [5, 90],
+      ] as const) {
+        for (const dihedralDeg of [-10, 0.5, 6, 15]) {
+          const wing = { dihedralDeg, washoutDeg: 4, rootIncidenceDeg: 2 };
+          const { g, tip } = build(device(kind, { toeDeg, cantDeg }), wing);
+          for (const side of ['right', 'left'] as const) {
+            const tipSide = surf(g, `wing-${side}`).sections.at(-1)!;
+            const root = first(surf(g, `${id}-${side}`));
+            expect(root.le).toEqual(tipSide.le);
+            expect(root.chord).toBeCloseTo(tipSide.chord, 12);
+            expect(root.roll).toBeCloseTo(tipSide.roll, 12);
+            expect(root.twist).toBeCloseTo(tip.twist, 12);
+            // Same TE too, so the loft has no step at the junction.
+            const a = docTrailingEdge(root, side);
+            const b = docTrailingEdge(tipSide, side);
+            for (let i = 0; i < 3; i++) expect(a[i]).toBeCloseTo(b[i]!, 12);
+          }
+        }
+      }
+    },
+  );
+});
+
+describe('continuity across the sliders', () => {
+  /** Largest change of any root/tip section field or overall quantity between two geometries. */
+  function jump(a: WingGeometry, b: WingGeometry): number {
+    let worst = Math.abs(a.overallSpan - b.overallSpan) + Math.abs(a.wettedArea - b.wettedArea);
+    expect(b.surfaces.map((s) => s.id)).toEqual(a.surfaces.map((s) => s.id));
+    a.surfaces.forEach((sa, i) => {
+      const sb = b.surfaces[i]!;
+      for (const [x, y] of [
+        [first(sa), first(sb)],
+        [last(sa), last(sb)],
+      ] as const) {
+        for (let k = 0; k < 3; k++) worst = Math.max(worst, Math.abs(x.le[k]! - y.le[k]!));
+        worst = Math.max(
+          worst,
+          Math.abs(x.chord - y.chord),
+          Math.abs(x.twist - y.twist),
+          Math.abs(x.roll - y.roll),
+        );
+      }
+    });
+    return worst;
+  }
+
+  const kinds = DEVICE_SURFACES.map(([k]) => k).concat(['raked-tip']);
+  const wing = { washoutDeg: 4, rootIncidenceDeg: 3 };
+
+  it.each(kinds)('has no jump in the %s when dihedral or cant moves a little', (kind) => {
+    // 88.85409 straddles the cant at which the blend arc appears (turn = 0.02 rad, dihedral 0).
+    for (const cantDeg of [0, 30, 75, 88.85409, 89.9, 90]) {
+      for (const dihedralDeg of [-10, -0.1, 0, 0.1, 1, 6, 15]) {
+        const a = build(device(kind, { cantDeg, toeDeg: 3 }), { ...wing, dihedralDeg }).g;
+        const b = build(device(kind, { cantDeg, toeDeg: 3 }), {
+          ...wing,
+          dihedralDeg: dihedralDeg + 1e-4,
+        }).g;
+        const c = build(device(kind, { cantDeg: Math.max(0, cantDeg - 1e-4), toeDeg: 3 }), {
+          ...wing,
+          dihedralDeg,
+        }).g;
+        expect(jump(a, b)).toBeLessThan(1e-3);
+        expect(jump(a, c)).toBeLessThan(1e-3);
+      }
+    }
+  });
+
+  it('gives a flat (90 deg cant) winglet the wing-tip incidence, like a raked tip', () => {
+    for (const kind of ['canted-winglet', 'blended-winglet'] as const) {
+      for (const dihedralDeg of [0, 0.5]) {
+        const { g, tip } = build(device(kind, { cantDeg: 90, toeDeg: 0 }), {
+          ...wing,
+          dihedralDeg,
+        });
+        expect(tip.twist).toBeCloseTo(-1 * DEG, 12);
+        for (const s of surf(g, 'winglet-right').sections) {
+          expect(s.twist).toBeCloseTo(tip.twist, 3);
+        }
+      }
+    }
+  });
+});

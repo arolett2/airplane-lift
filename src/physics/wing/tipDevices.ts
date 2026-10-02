@@ -21,6 +21,14 @@
  * roll the twist that gives `toe` is `-toe * sin(roll)`; it vanishes on a flat (in-plane)
  * surface, where toe has no meaning. The left side is an exact mirror (twist and roll values are
  * unchanged), so the same sign turns the left LE outboard too.
+ *
+ * TWIST. A device section rolled by `roll` off a wing tip with twist `tau_t` and roll `r_t` gets
+ *   twist = w tau_t - toe (sin(roll) - w sin(r_t)),   w = inheritedTwistWeight(roll, r_t)
+ * where w is 1 in the wing's own plane and fades (cosine) to 0 once the section has rolled 45 deg
+ * away from it. So a section in the wing plane reproduces the tip section exactly (blended
+ * winglets and raked tips join without a step, and a 90-deg-cant winglet keeps the tip's
+ * incidence), while a steep fin has pure toe. Both terms are continuous in roll, cant and
+ * dihedral, so moving a slider never makes the device incidence jump.
  */
 import type { LiftingSurface, Naca4Params, Vec3, WingSection } from '../types';
 import type { TipDeviceConfig } from '../../state/params';
@@ -32,6 +40,17 @@ const EPS = 1e-9;
 const MIN_CHORD_FRACTION = 0.02;
 /** Leading-edge sweep is clamped to this range (rad) so tan() stays finite. */
 const MAX_SWEEP = 80 * DEG;
+/** Roll away from the wing plane (rad) at which a device stops inheriting the wing-tip twist. */
+const TWIST_FADE_ROLL = 45 * DEG;
+
+/**
+ * Share of the wing-tip twist that a device section rolled to `roll` inherits from a tip at
+ * `tipRoll`: 1 in the wing plane, falling smoothly to 0 at TWIST_FADE_ROLL away from it.
+ */
+function inheritedTwistWeight(roll: number, tipRoll: number): number {
+  const off = Math.abs(roll - tipRoll);
+  return off >= TWIST_FADE_ROLL ? 0 : Math.cos((off / TWIST_FADE_ROLL) * (Math.PI / 2));
+}
 
 /**
  * Description of one device surface as a path in the (y, z) plane.
@@ -60,8 +79,9 @@ interface DeviceSpec {
   sweep: number;
   /** Maps u = s/length in [0, 1] to the fraction of the total LE x-advance reached at u. */
   sweepProfile: (u: number) => number;
-  /** Incidence inherited from the wing tip, fading out as the roll turns to its final value. */
-  twistRoot: number;
+  /** Twist and roll of the wing tip the device hangs from (see TWIST in the header). */
+  tipTwist: number;
+  tipRoll: number;
   /** Toe (rad), positive = LE outboard. */
   toe: number;
   airfoil: Naca4Params;
@@ -87,7 +107,6 @@ function buildDeviceSections(spec: DeviceSpec): WingSection[] {
   const blend = Math.min(Math.max(spec.blendLength, 0), spec.length);
   const rollAt = (s: number): number =>
     blend > EPS && s < blend ? spec.roll0 + ((spec.roll1 - spec.roll0) * s) / blend : spec.roll1;
-  const rollSpan = spec.roll1 - spec.roll0;
   const tanSweep = Math.tan(spec.sweep);
 
   const sections: WingSection[] = [];
@@ -98,6 +117,10 @@ function buildDeviceSections(spec: DeviceSpec): WingSection[] {
 
   for (const s of deviceStations(spec)) {
     const roll = rollAt(s);
+    // The root section always lies in the starting plane (for a blended winglet: the wing's), even
+    // when the turn is too small to need an arc and the path runs straight at roll1. Otherwise the
+    // root roll would jump from roll0 to roll1 as the cant slider crosses the no-arc threshold.
+    const sectionRoll = s === 0 ? spec.roll0 : roll;
     if (s > prevS) {
       // The surface between two stations is a straight segment pointing along the mean of the
       // two rolls, so the polyline through the sections has length exactly `length` and still
@@ -108,12 +131,13 @@ function buildDeviceSections(spec: DeviceSpec): WingSection[] {
       z += step * Math.sin(meanRoll);
     }
     const u = spec.length > 0 ? s / spec.length : 0;
-    const rollProgress = Math.abs(rollSpan) > 1e-6 ? (roll - spec.roll0) / rollSpan : 0;
+    const w = inheritedTwistWeight(sectionRoll, spec.tipRoll);
+    const toeTwist = spec.toe * (Math.sin(sectionRoll) - w * Math.sin(spec.tipRoll));
     sections.push({
       le: [spec.le0[0] + spec.length * tanSweep * spec.sweepProfile(u), y, z],
       chord: spec.chordRoot + (spec.chordTip - spec.chordRoot) * u,
-      twist: spec.twistRoot * (1 - rollProgress) - spec.toe * Math.sin(roll),
-      roll,
+      twist: w * spec.tipTwist - toeTwist,
+      roll: sectionRoll,
       airfoil: { ...spec.airfoil },
       flap: null,
       slat: false,
@@ -186,7 +210,8 @@ function blendedWinglet(
       length: h,
       sweep: d.sweep,
       sweepProfile: identityProfile,
-      twistRoot: tip.twist,
+      tipTwist: tip.twist,
+      tipRoll: tip.roll,
       toe: d.toe,
       airfoil: tip.airfoil,
     }),
@@ -223,7 +248,8 @@ function straightFin(
       length: fin.length,
       sweep: d.sweep,
       sweepProfile: identityProfile,
-      twistRoot: 0,
+      tipTwist: tip.twist,
+      tipRoll: tip.roll,
       toe: d.toe,
       airfoil: tip.airfoil,
     }),
@@ -296,7 +322,8 @@ export function buildTipDeviceSurfaces(
             length,
             sweep: d.sweep,
             sweepProfile: rakedProfile,
-            twistRoot: tip.twist,
+            tipTwist: tip.twist,
+            tipRoll: tip.roll,
             toe: d.toe,
             airfoil: tip.airfoil,
           }),

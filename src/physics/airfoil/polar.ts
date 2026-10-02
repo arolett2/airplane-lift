@@ -166,7 +166,7 @@ export function createSectionPolar(
   const blendWidth = lerp(8, 14, thick) * DEG; // stall -> flat plate blend
   const dropFrac = lerp(0.45, 0.25, thick); // how far the remnant falls right after stall
   const dropWidth = lerp(3, 4.5, thick) * DEG;
-  const sepWidth = lerp(3, 5, thick) * DEG; // how fast separation creeps forward
+  const sepWidth = lerp(3, 7, thick) * DEG; // how fast separation creeps forward
   const flapDragDelta = options.flap
     ? 0.9 *
       Math.pow(clamp(options.flap.chordFrac, 0, 1), 1.38) *

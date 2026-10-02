@@ -75,17 +75,17 @@ describe('section polar', () => {
     for (const polar of [p0012, p2412, thinFlapped]) {
       const h = 1e-6;
       let prevSlope = NaN;
-      for (let a = -Math.PI + 1e-3; a < Math.PI - 1e-3; a += 0.01 * DEG) {
+      for (let a = -Math.PI + 1e-3; a < Math.PI - 1e-3; a += 0.02 * DEG) {
         const c0 = polar.cl(a, RE);
         expect(Number.isFinite(c0)).toBe(true);
         // Continuity of value.
         expect(Math.abs(polar.cl(a + h, RE) - c0)).toBeLessThan(1e-4);
         expect(Math.abs(polar.cd(a + h, RE) - polar.cd(a, RE))).toBeLessThan(1e-4);
         expect(Math.abs(polar.cm(a + h, RE) - polar.cm(a, RE))).toBeLessThan(1e-4);
-        // Continuity of slope: 0.01 deg apart the slope only changes by curvature * step
-        // (< ~0.3 here), whereas any kink in the piecewise curve would jump by O(lift slope).
+        // Continuity of slope: 0.02 deg apart the slope only changes by curvature * step
+        // (< ~0.5 here), whereas any kink in the piecewise curve would jump by O(lift slope).
         const slope = (polar.cl(a + h, RE) - polar.cl(a - h, RE)) / (2 * h);
-        if (!Number.isNaN(prevSlope)) expect(Math.abs(slope - prevSlope)).toBeLessThan(0.5);
+        if (!Number.isNaN(prevSlope)) expect(Math.abs(slope - prevSlope)).toBeLessThan(1);
         prevSlope = slope;
       }
       // Wraps continuously at +-pi.

@@ -238,7 +238,6 @@ export class ReadoutPanel {
 
     this.root.classList.toggle('is-computing', computing);
     this.root.setAttribute('aria-busy', String(computing));
-    this.root.classList.toggle('has-data', aero !== null);
     this.status.textContent = computing
       ? 'computing…'
       : aero

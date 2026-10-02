@@ -35,8 +35,21 @@ const STEP_FAR_CHORDS = 0.08;
 const STEP_GROWTH = 0.08;
 /** Maximum direction change per step before the step is halved (cos 12 deg). */
 const COS_MAX_TURN = Math.cos((12 * Math.PI) / 180);
-/** Lines stuck against the wing for this many consecutive steps are ended. */
-const MAX_CONSECUTIVE_PUSHES = 60;
+/**
+ * Lines stuck against the wing for this many consecutive steps are ended. Sliding along a whole
+ * chord at ~0.02 chord per step already takes ~50 pushed steps, so allow a few chords' worth.
+ */
+const MAX_CONSECUTIVE_PUSHES = 200;
+/**
+ * Once a line has been pushed out of the wing this often recently, each further push also nudges
+ * it toward the trailing edge: where the model's flow runs into the nose (near the attachment
+ * line of a swept wing, which six chordwise panels cannot resolve) a line would otherwise creep
+ * along the leading edge for hundreds of tiny steps. Steps outside the wing decay the count.
+ */
+const STUCK_PUSHES = 8;
+const STUCK_DECAY = 0.25;
+/** Fractions of each step checked against the solid (thin edges can fit between two points). */
+const SUB_STEPS = [0.25, 0.5, 0.75] as const;
 /** Distance of the seed plane behind the inlet, as a fraction of the domain length. */
 const INLET_OFFSET = 0.005;
 
@@ -156,7 +169,8 @@ export function seedStreamlines(
     const st = wingStationAt(geometry, alpha, y);
     // The dividing streamline arrives slightly below the leading edge.
     const zc = st.le[2] - 0.02 * st.chord + rake.height * S;
-    const half = 0.25 * S;
+    // +-0.25 semispan, but at least the chord: a stubby, long-chord wing must still be covered.
+    const half = Math.max(0.25 * S, 0.5 * st.chord);
     for (let i = 0; i < n; i++) {
       const u = -1 + (2 * (i + 0.5)) / n;
       // Denser near the wing's height.
@@ -306,6 +320,7 @@ function traceOne(
   let n = 1;
   let time = 0;
   let pushes = 0;
+  let stuck = 0;
   const minSpeed = 0.02 * vInf;
 
   while (n < MAX_STREAMLINE_POINTS) {
@@ -336,11 +351,28 @@ function traceOne(
     next[1] = py + f * (k1[1]! + 2 * k2[1]! + 2 * k3[1]! + k4[1]!);
     next[2] = pz + f * (k1[2]! + 2 * k2[2]! + 2 * k3[2]! + k4[2]!);
 
-    if (solid.contains(next[0]!, next[1]!, next[2]!)) {
-      if (!solid.pushOut(next)) break;
+    // A thin leading/trailing edge or flap can lie entirely between two points: end the step
+    // where it first enters the wing, then slide out along the surface normal.
+    let inside = solid.contains(next[0]!, next[1]!, next[2]!);
+    for (const f of SUB_STEPS) {
+      const qx = px + f * (next[0]! - px);
+      const qy = py + f * (next[1]! - py);
+      const qz = pz + f * (next[2]! - pz);
+      if (solid.contains(qx, qy, qz)) {
+        next[0] = qx;
+        next[1] = qy;
+        next[2] = qz;
+        inside = true;
+        break;
+      }
+    }
+    if (inside) {
       if (++pushes > MAX_CONSECUTIVE_PUSHES) break;
+      stuck++;
+      if (!solid.pushOut(next, stuck > STUCK_PUSHES ? STEP_NEAR_CHORDS : 0, pos)) break;
     } else {
       pushes = 0;
+      stuck = Math.max(0, stuck - STUCK_DECAY);
     }
 
     let leaving = false;

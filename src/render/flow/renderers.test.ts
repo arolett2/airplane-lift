@@ -3,7 +3,7 @@
  * the CPU-side attribute arrays; nothing here needs a WebGL context.
  */
 import { describe, expect, it } from 'vitest';
-import type { BufferAttribute, BufferGeometry, Object3D, Points } from 'three';
+import type { BufferAttribute, BufferGeometry, LineSegments, Object3D, Points } from 'three';
 import type { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { StreamlineRenderer, MAX_PULSES, PUFFS_PER_TRANSIT } from './StreamlineRenderer';
 import { ParticleSystem } from './ParticleSystem';
@@ -27,6 +27,15 @@ function findPoints(root: Object3D, index: number): Points {
     if ((o as Points).isPoints) found.push(o as Points);
   });
   return found[index]!;
+}
+function findLineSegments(root: Object3D): LineSegments {
+  let found: LineSegments | null = null;
+  root.traverse((o) => {
+    if ((o as LineSegments).isLineSegments && !(o as LineSegments2).isLineSegments2) {
+      found = o as LineSegments;
+    }
+  });
+  return found!;
 }
 function attr(geometry: BufferGeometry, name: string): Float32Array {
   return (geometry.getAttribute(name) as BufferAttribute).array as Float32Array;
@@ -159,6 +168,46 @@ describe('StreamlineRenderer', () => {
     expect(topX).toBeGreaterThan(xTarget);
     expect(bottomX).toBeLessThan(xTarget);
     r.dispose();
+  });
+
+  it('joins neighbouring timeline markers with a connector, but not across seed groups', () => {
+    const rake = makeAnalyticStreamlines(domain, params, 4, 1.5);
+    const r = new StreamlineRenderer();
+    r.setStreamlines(rake, vInf);
+    r.update(0, 0);
+    r.firePulse();
+    r.update(0.05, 0.05);
+    const connectors = findLineSegments(r.object);
+    const cAlpha = attr(connectors.geometry, 'aAlpha');
+    const cPos = attr(connectors.geometry, 'position');
+    const mPos = attr(findPoints(r.object, 1).geometry, 'position');
+    // Pulse 0: 3 connectors (0-1, 1-2, 2-3) = segments 0..2; segment 3 (last line) is unused.
+    for (let seg = 0; seg < 3; seg++) {
+      expect(cAlpha[seg * 2]!).toBeGreaterThan(0.3);
+      expect([...cPos.subarray(seg * 6, seg * 6 + 3)]).toEqual([
+        ...mPos.subarray(seg * 3, seg * 3 + 3),
+      ]);
+      expect([...cPos.subarray(seg * 6 + 3, seg * 6 + 6)]).toEqual([
+        ...mPos.subarray(seg * 3 + 3, seg * 3 + 6),
+      ]);
+    }
+    expect(cAlpha[3 * 2]!).toBe(0);
+    r.dispose();
+
+    const mixed = rake.map((l, i) => ({
+      ...l,
+      group: i < 2 ? ('rake' as const) : ('tip-vortex' as const),
+    }));
+    const r2 = new StreamlineRenderer();
+    r2.setStreamlines(mixed, vInf);
+    r2.update(0, 0);
+    r2.firePulse();
+    r2.update(0.05, 0.05);
+    const a2 = attr(findLineSegments(r2.object).geometry, 'aAlpha');
+    expect(a2[0]!).toBeGreaterThan(0); // 0-1 same group
+    expect(a2[2]!).toBe(0); // 1-2 crosses groups
+    expect(a2[4]!).toBeGreaterThan(0); // 2-3 same group
+    r2.dispose();
   });
 
   it('lets several pulses coexist, caps them, and fades them out after the end', () => {

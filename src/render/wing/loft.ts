@@ -544,13 +544,11 @@ function loftSurfaceInto(
   const ringInfos: RingInfo[] = [];
   let ringSize = 0;
   let leIndex = 0;
-  const contoursUsed: Contour[] = [];
   for (const r of rings) {
     const sample = sampleSection(secs[r.seg]!, secs[r.seg + 1]!, r.t);
     const contour = cache.get(sample.airfoil, r.flap);
     ringSize = contour.n;
     leIndex = contour.leIndex;
-    contoursUsed.push(contour);
     ringInfos.push(
       addRingVertices(
         b,

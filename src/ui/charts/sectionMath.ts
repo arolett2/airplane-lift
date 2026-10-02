@@ -93,6 +93,19 @@ export interface WorldWindow {
 
 export type FieldMode = 'pressure' | 'speed';
 
+/** Width (chords) over which the tint fades out towards the edge of the solver grid. */
+const GRID_FEATHER = 0.15;
+
+/**
+ * 1 well inside the grid, easing to 0 at its border, so the tint does not end in a visible
+ * rectangle (the far field still carries a little pressure disturbance at the border).
+ */
+function gridFade(g: SectionFlow['grid'], x: number, y: number): number {
+  const edge = Math.min(x - g.xMin, g.xMax - x, y - g.yMin, g.yMax - y);
+  const t = Math.min(1, Math.max(0, edge / GRID_FEATHER));
+  return t * t * (3 - 2 * t);
+}
+
 /**
  * Resample the section's velocity grid into a w x h RGBA image covering `win` in the display
  * frame. Inside-airfoil nodes are masked out of the interpolation; pixels with only masked
@@ -158,7 +171,7 @@ export function fillFieldImage(
         deviation = v - 1;
         speedColor(v, rgb);
       }
-      const alpha = tintAlpha(deviation);
+      const alpha = tintAlpha(deviation) * gridFade(g, x, y);
       out[o] = rgb[0] * 255;
       out[o + 1] = rgb[1] * 255;
       out[o + 2] = rgb[2] * 255;

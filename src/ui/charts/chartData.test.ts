@@ -121,6 +121,16 @@ describe('spanChartData', () => {
     expect(spanChartData(makeAero({ strips: [] }), null)).toBeNull();
   });
 
+  it('declines to normalise when the net lift is tiny next to the local loads', () => {
+    const aero = makeAero();
+    // Root lifts, tip pushes down by the same amount: the average is about zero.
+    aero.strips = aero.strips.map((s) => ({
+      ...s,
+      liftPerSpan: s.eta < 0.5 ? 3000 : -3000 + (s.side === 'right' ? 1 : 0),
+    }));
+    expect(spanChartData(aero, null)).toBeNull();
+  });
+
   it('keeps negative lift negative', () => {
     const aero = makeAero();
     aero.strips = aero.strips.map((s) => ({ ...s, liftPerSpan: -s.liftPerSpan }));

@@ -116,6 +116,28 @@ describe('pressure field image', () => {
     expect(big[4 * (w * h - 1) + 3]).toBe(0);
   });
 
+  it('fades the tint out towards the edge of the solver grid', () => {
+    // Uniformly fast flow everywhere (inside nodes none): without a fade the tint would end in
+    // a hard rectangle at the grid border.
+    const uniform = makeSection({ alphaEffective: 0 });
+    uniform.grid.inside.fill(0);
+    for (let k = 0; k < uniform.grid.nx * uniform.grid.ny; k++) {
+      uniform.grid.uv[2 * k] = 1.5;
+      uniform.grid.uv[2 * k + 1] = 0;
+    }
+    const g = uniform.grid;
+    const full = { Xmin: g.xMin, Xmax: g.xMax, Ymin: g.yMin, Ymax: g.yMax };
+    const img = new Uint8ClampedArray(w * h * 4);
+    fillFieldImage(uniform, speedGrid(uniform), full, w, h, 'pressure', img);
+    const alphaAt = (i: number, j: number): number => img[4 * (j * w + i) + 3]!;
+    const centre = alphaAt(w >> 1, h >> 1);
+    expect(centre).toBeGreaterThan(150);
+    expect(alphaAt(0, h >> 1)).toBeLessThan(centre * 0.2);
+    expect(alphaAt(w - 1, h >> 1)).toBeLessThan(centre * 0.2);
+    expect(alphaAt(w >> 1, 0)).toBeLessThan(centre * 0.2);
+    expect(alphaAt(w >> 1, h - 1)).toBeLessThan(centre * 0.2);
+  });
+
   it('supports the speed colour mode', () => {
     const o2 = new Uint8ClampedArray(w * h * 4);
     expect(fillFieldImage(section, speed, win, w, h, 'speed', o2)).toBeGreaterThan(100);

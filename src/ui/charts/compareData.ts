@@ -313,7 +313,11 @@ const ratioText = (r: number): string => (r >= 10 ? r.toFixed(0) : r.toFixed(1))
  * Plain-language reasons the two wings differ, generated from the numbers. Returns at most
  * five short sentences; a fallback sentence when the aircraft are nearly identical.
  */
-export function explainDifferences(a: CaseSummary, b: CaseSummary): string[] {
+export function explainDifferences(
+  a: CaseSummary,
+  b: CaseSummary,
+  units: UnitSystem = 'metric',
+): string[] {
   const out: string[] = [];
   const nameA = a.preset.shortName;
   const nameB = b.preset.shortName;
@@ -327,7 +331,7 @@ export function explainDifferences(a: CaseSummary, b: CaseSummary): string[] {
     const [big, small] = spanRatio > 1 ? [a, b] : [b, a];
     const areaRatio = big.areaM2 / small.areaM2;
     out.push(
-      `The ${big.preset.shortName} is the larger wing: ${formatLength(big.spanM, 'metric')} across against ${formatLength(small.spanM, 'metric')}, with ${ratioText(areaRatio)}× the wing area. More area means more total lift for a heavier aircraft.`,
+      `The ${big.preset.shortName} is the larger wing: ${formatLength(big.spanM, units)} across against ${formatLength(small.spanM, units)}, with ${ratioText(areaRatio)}× the wing area. More area means more total lift for a heavier aircraft.`,
     );
   }
 

@@ -205,6 +205,15 @@ describe('explainDifferences', () => {
     expect(out.some((s) => /larger wing/.test(s) && s.includes('big'))).toBe(true);
   });
 
+  it('quotes spans in the requested unit system', () => {
+    const big = summary('big', { span: 60, rootChord: 8, tipChord: 2 });
+    const small = summary('small', { span: 12, rootChord: 1.6, tipChord: 1.0 });
+    const imperial = explainDifferences(big, small, 'imperial').find((s) => /larger wing/.test(s))!;
+    expect(imperial).toContain('197 ft');
+    expect(imperial).not.toContain('60.0 m');
+    expect(explainDifferences(big, small).find((s) => /larger wing/.test(s))).toContain('60.0 m');
+  });
+
   it('ties sweep to cruise speed only when the numbers agree', () => {
     const swept = summary('swept', { sweepOffset: 6, mach: 0.85 });
     const straight = summary('straight', { sweepOffset: 0, mach: 0.3 });

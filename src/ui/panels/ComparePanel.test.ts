@@ -284,6 +284,57 @@ describe('ComparePanel computing', () => {
     );
   });
 
+  it('turns bad solver data into a visible error instead of a broken dialog', async () => {
+    requester.mockImplementationOnce(async (cases) =>
+      cases.map((c) => {
+        const geometry = makeGeometry({ span: 10 });
+        geometry.surfaces[0]!.sections = undefined as never; // malformed answer
+        return { id: c.id, geometry, aero: makeAero() };
+      }),
+    );
+    open();
+    await flush();
+    const status = root.querySelector<HTMLElement>('.viz-compare-status')!;
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toContain('Could not compare');
+    expect(root.querySelector<HTMLElement>('.viz-compare-table')!.hidden).toBe(true);
+    expect(root.querySelector<HTMLButtonElement>('.viz-compare-status .viz-button')!.hidden).toBe(
+      false,
+    );
+  });
+
+  it('keeps keyboard focus inside the dialog, ignoring the hidden retry button', async () => {
+    open();
+    await flush();
+    const tab = (shiftKey = false): KeyboardEvent => {
+      const e = new KeyboardEvent('keydown', {
+        key: 'Tab',
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      document.dispatchEvent(e);
+      return e;
+    };
+    select('b').focus();
+    expect(tab().defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(root.querySelector('.viz-close'));
+    expect(tab(true).defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(select('b'));
+    // In the middle of the dialog Tab is left alone.
+    select('a').focus();
+    expect(tab().defaultPrevented).toBe(false);
+  });
+
+  it('quotes distances in the selected unit system in the explanations', async () => {
+    store.set((s) => ({ ...s, view: { ...s.view, units: 'imperial' } }));
+    open();
+    await flush();
+    const first = root.querySelector('.viz-compare-why li')!.textContent!;
+    expect(first).toMatch(/\d ft/);
+    expect(first).not.toMatch(/\d m /);
+  });
+
   it('handles a synchronous throw and an incomplete answer', async () => {
     requester.mockImplementationOnce(() => {
       throw new Error('no worker');

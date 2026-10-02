@@ -290,8 +290,9 @@ export class ComparePanel {
   }
 
   private trapFocus(e: KeyboardEvent): void {
+    // Skip controls that are hidden (such as the retry button) or disabled: they cannot hold focus.
     const focusable = [...this.card.querySelectorAll<HTMLElement>('button, select')].filter(
-      (n) => !n.hasAttribute('disabled'),
+      (n) => !n.hidden && !n.hasAttribute('disabled'),
     );
     if (focusable.length === 0) return;
     const first = focusable[0]!;
@@ -392,8 +393,16 @@ export class ComparePanel {
       this.statusText.textContent = `Could not compare these aircraft: ${this.errorMessage}`;
     }
     if (!ready || !this.summaries) return;
+    try {
+      this.renderReady(this.summaries[0], this.summaries[1]);
+    } catch (e) {
+      // Bad data from the solver must end in a visible error, not a half-drawn dialog.
+      this.fail(e instanceof Error ? e.message : String(e));
+    }
+  }
 
-    const [a, b] = this.summaries;
+  /** Fill the planform drawing, table and explanations from two solved aircraft. */
+  private renderReady(a: CaseSummary, b: CaseSummary): void {
     const units = this.store.get().view.units;
 
     this.planformEl.innerHTML = buildPlanformSvg(
@@ -448,7 +457,7 @@ export class ComparePanel {
     }
 
     this.whyList.replaceChildren();
-    for (const sentence of explainDifferences(a, b)) {
+    for (const sentence of explainDifferences(a, b, units)) {
       const li = doc.createElement('li');
       li.textContent = sentence;
       this.whyList.appendChild(li);

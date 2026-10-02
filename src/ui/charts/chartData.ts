@@ -168,7 +168,9 @@ export function spanChartData(
   }
   const mean = sumLoad / sumWidth;
   const norm = Math.abs(mean);
-  if (!(norm > 1e-6) || !(peak > 0)) return null;
+  // Normalising by a mean that is tiny next to the local loads (net lift near zero, e.g. a
+  // washed-out wing at its zero-lift angle) would make the chart meaningless.
+  if (!(peak > 1e-6) || !(norm > 0.02 * peak)) return null;
   const sign = mean < 0 ? -1 : 1;
 
   const toLine = (strips: StripResult[], shift: number): SpanLine => ({

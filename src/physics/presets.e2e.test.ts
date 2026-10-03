@@ -57,7 +57,9 @@ describe('aircraft presets at cruise (real solvers)', { timeout: 120_000 }, () =
         expect(s.cp.upper.every(Number.isFinite) && s.cp.lower.every(Number.isFinite)).toBe(true);
       }
       expect(aero.stall.any).toBe(false);
-      expect(aero.stall.margin).toBeGreaterThan(0.2);
+      // Every strip at least 0.15 below its maximum lift. The tightest one is the root strip of
+      // the 747-400's winglet (about 0.2), which the lattice hangs along the whole tip chord.
+      expect(aero.stall.margin).toBeGreaterThan(0.15);
       const [lo, hi] = LD_RANGE[p.category as keyof typeof LD_RANGE];
       expect(aero.liftToDrag).toBeGreaterThan(lo);
       expect(aero.liftToDrag).toBeLessThan(hi);

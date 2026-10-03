@@ -21,6 +21,14 @@ import {
   weightOfMass,
 } from '../../shared/units';
 import type { UnitSystem } from '../../shared/units';
+import { momentumEstimate, pressurePush } from '../../physics/everyday';
+import {
+  formatAirMass,
+  formatDownwashSpeed,
+  formatPercent,
+  formatPressure,
+  formatPushPerArea,
+} from '../../shared/everydayFormat';
 import { clamp, h, setHidden } from '../dom';
 
 /**
@@ -36,6 +44,45 @@ export function isApproachingStall(aero: AeroResult): boolean {
   return aero.strips.some(
     (s) => s.clMax > 0 && Number.isFinite(s.cl) && s.cl / s.clMax > APPROACHING_STALL_RATIO,
   );
+}
+
+/** Below this |CL| the wing counts as "not lifting" in the two-views card. */
+const NO_LIFT_CL = 0.01;
+
+/** The wording of the "same lift, two views" card (pure, for tests and reuse). */
+export function liftViewsText(
+  aero: Pick<AeroResult, 'lift' | 'CL' | 'velocity' | 'atmosphere'>,
+  geometry: Pick<WingGeometry, 'referenceArea' | 'referenceSpan'>,
+  system: UnitSystem,
+): { pressure: string; newton: string } {
+  if (!(Math.abs(aero.CL) >= NO_LIFT_CL) || !Number.isFinite(aero.lift)) {
+    return {
+      pressure:
+        'The air pushes about as hard on top as underneath: no pressure difference, no lift.',
+      newton: 'With no lift, the wing throws no air down.',
+    };
+  }
+  const pInf = aero.atmosphere.pressure;
+  const push = pressurePush(aero.lift, geometry.referenceArea, pInf);
+  const up = aero.lift > 0;
+  const where = aero.atmosphere.altitude > 500 ? 'up here' : 'at the ground';
+  const pressure = `The pressure difference pushes ${up ? 'up' : 'down'} with about ${formatPushPerArea(
+    push.massPerArea,
+    system,
+  )} of wing. That is only ${formatPercent(push.fractionOfAtmosphere)} of the air pressure ${where} (${formatPressure(
+    Math.abs(push.meanDelta),
+    system,
+  )} of ${formatPressure(pInf, system)}).`;
+  const m = momentumEstimate(
+    aero.lift,
+    aero.atmosphere.density,
+    aero.velocity,
+    geometry.referenceSpan,
+  );
+  const newton = `This wing throws about ${formatAirMass(m.massFlow, system)} of air ${
+    up ? 'downward' : 'upward'
+  } every second, at about ${formatDownwashSpeed(m.downwash, system)}.`;
+  return { pressure, newton };
 }
 
 /** The lift/weight ratio treated as "level flight". */
@@ -137,6 +184,14 @@ export class ReadoutPanel {
   private readonly gaugeValue = h('span', { class: 'metric__number' }, DASH);
   private readonly gaugeText = h('p', { class: 'metric__sub' });
 
+  private readonly views = h('section', {
+    class: 'lift-views',
+    'aria-label': 'Same lift, two views',
+    hidden: true,
+  });
+  private readonly viewsPressure = h('p', { class: 'lift-view__text' });
+  private readonly viewsNewton = h('p', { class: 'lift-view__text' });
+
   private readonly engineer = h('section', { class: 'engineer', hidden: true });
   private readonly engineerRows: EngineerRow[] = [];
   private readonly warnings = h('ul', { class: 'engineer__warnings' });
@@ -148,6 +203,7 @@ export class ReadoutPanel {
     root.classList.add('readouts');
 
     this.buildGauge();
+    this.buildViews();
     this.buildEngineerTable();
     root.append(
       this.status,
@@ -165,7 +221,7 @@ export class ReadoutPanel {
       this.engineer,
     );
     // Lift and "compared with weight" tell one story, so they share a card.
-    this.lift.el.append(this.gaugeCard);
+    this.lift.el.append(this.gaugeCard, this.views);
 
     this.render();
     this.unsubscribers.push(
@@ -202,6 +258,34 @@ export class ReadoutPanel {
       h('div', { class: 'metric__value' }, this.gaugeValue),
       this.gaugeBar,
       this.gaugeText,
+    );
+  }
+
+  /** "Same lift, two views": the pressure push and the air thrown down. */
+  private buildViews(): void {
+    this.views.append(
+      h('h3', { class: 'metric__title' }, 'Same lift, two views'),
+      h(
+        'div',
+        { class: 'lift-view lift-view--pressure' },
+        h('span', { class: 'lift-view__tag' }, 'Pressure'),
+        this.viewsPressure,
+      ),
+      h(
+        'div',
+        {
+          class: 'lift-view lift-view--newton',
+          title:
+            'Estimate from momentum theory: the wing acts on the air flowing through a circle as wide as its span (mass flow = density × speed × π × span² / 4) and gives it the downward speed that makes mass flow × speed equal to the lift.',
+        },
+        h('span', { class: 'lift-view__tag' }, 'Air thrown down'),
+        this.viewsNewton,
+      ),
+      h(
+        'p',
+        { class: 'metric__sub lift-views__note' },
+        'One force, told two ways: the air pushes the wing up because the wing pushes the air down. (The air figures are an estimate.)',
+      ),
     );
   }
 
@@ -271,6 +355,7 @@ export class ReadoutPanel {
     this.renderBanners(aero, error);
     this.renderMetrics(aero, system);
     this.renderGauge(aero, state, system);
+    this.renderViews(aero, geometry, system);
     setHidden(this.engineer, !state.view.engineerMode);
     if (state.view.engineerMode) this.renderEngineer(aero, geometry, system);
   }
@@ -406,6 +491,18 @@ export class ReadoutPanel {
         : state_ === 'ok'
           ? `Matches the ${name}'s ${weight}: steady, level flight.`
           : `More than the ${name}'s ${weight}: it would climb.`;
+  }
+
+  private renderViews(
+    aero: AeroResult | null,
+    geometry: WingGeometry | null,
+    system: UnitSystem,
+  ): void {
+    setHidden(this.views, !aero || !geometry);
+    if (!aero || !geometry) return;
+    const text = liftViewsText(aero, geometry, system);
+    this.viewsPressure.textContent = text.pressure;
+    this.viewsNewton.textContent = text.newton;
   }
 
   private renderEngineer(

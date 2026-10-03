@@ -16,6 +16,28 @@ import type { Control } from './control';
 import { createInfoPopover } from './infoPopover';
 import type { InfoPopover } from './infoPopover';
 
+/** Thousands grouped with commas: "10,000", "-1,234,567". */
+const COMMA_GROUPED = /^[-+]?\d{1,3}(,\d{3})+$/;
+
+/**
+ * Read a number typed into a slider's field, or null if it is not one. Spaces are ignored. A
+ * comma is a decimal comma ("7,5" is 7.5) unless it groups thousands ("10,000"); with both
+ * separators, the last one is the decimal mark ("1,234.5", "1.234,5").
+ */
+export function parseTypedNumber(text: string): number | null {
+  let t = text.replace(/[\s\u00a0\u202f]/g, '');
+  if (t === '') return null;
+  const comma = t.lastIndexOf(',');
+  const dot = t.lastIndexOf('.');
+  if (comma >= 0 && dot >= 0) {
+    t = comma > dot ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  } else if (comma >= 0) {
+    t = COMMA_GROUPED.test(t) ? t.replace(/,/g, '') : t.replace(',', '.');
+  }
+  const value = Number(t);
+  return Number.isFinite(value) ? value : null;
+}
+
 export interface SliderOptions {
   label: string;
   /** Range and step in SI units (degrees for angles), exactly as stored in the state. */
@@ -173,8 +195,8 @@ export function createSlider(options: SliderOptions): SliderControl {
   number.addEventListener(
     'change',
     () => {
-      const parsed = Number(number.value.replace(/[,\s]/g, ''));
-      if (number.value.trim() !== '' && Number.isFinite(parsed)) {
+      const parsed = parseTypedNumber(number.value);
+      if (parsed !== null) {
         current = clamp(unit.fromDisplay(parsed), min, max);
         emitInput(current);
         emitCommit(current);
@@ -188,7 +210,10 @@ export function createSlider(options: SliderOptions): SliderControl {
     'keydown',
     (e) => {
       if (e.key === 'Escape') {
-        number.value = formatNumber(unit.toDisplay(current), digits, { grouping: false });
+        const shown = formatNumber(unit.toDisplay(current), digits, { grouping: false });
+        // Reverting a typed value is all this Escape does (it must not also close a drawer).
+        if (number.value !== shown) e.stopPropagation();
+        number.value = shown;
         number.blur();
       }
     },

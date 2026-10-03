@@ -11,6 +11,7 @@ import {
   probeSection,
   sampleCpRaster,
   sampleSection,
+  smoothField,
   terrainColor,
   terrainHeight,
   TERRAIN_LEVELS,
@@ -134,6 +135,14 @@ describe('pressure terrain', () => {
     expect(range.min).toBeLessThan(0.95); // and the others darker
     const k = Math.floor(h / 2) * w + Math.floor(((0.5 - win.Xmin) / 2) * w);
     expect(img[4 * k + 3]).toBe(0); // the airfoil itself is left transparent
+  });
+
+  it('smooths a field without spreading NaN holes', () => {
+    const f = Float32Array.from([0, 0, 0, 0, 9, 0, 0, 0, NaN]);
+    const g = smoothField(f, 3, 3, 1);
+    expect(g[4]).toBeCloseTo(9 / 8, 9); // centre averages its 8 finite neighbours (incl. itself)
+    expect(Number.isNaN(g[8])).toBe(true);
+    expect(g[0]).toBeCloseTo(9 / 4, 9);
   });
 
   it('contours a cone into a closed ring at the right radius', () => {

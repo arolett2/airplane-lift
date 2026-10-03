@@ -372,10 +372,8 @@
 .viz-probe__value {
   font-size: 14px;
   font-weight: 700;
+  line-height: 1.25;
   color: var(--viz-fg);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .viz-probe__value[data-sign='-'] {

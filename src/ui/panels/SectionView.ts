@@ -62,6 +62,7 @@ import {
   fillTerrainImage,
   probeSection,
   sampleCpRaster,
+  smoothField,
   terrainColor,
   terrainHeights,
   type DisturbanceArrow,
@@ -105,7 +106,7 @@ const PROBE_STEP = 0.01;
 const PROBE_LIMITS = { xMin: -0.7, xMax: 1.9, yMin: -0.7, yMax: 0.7 } as const;
 /** Disturbance arrows: lattice spacing on screen (CSS px) and typical arrow length (spacings). */
 const DISTURBANCE_SPACING_PX = { card: 23, large: 30 } as const;
-const DISTURBANCE_ARROW_SPACINGS = 0.8;
+const DISTURBANCE_ARROW_SPACINGS = { card: 1.05, large: 0.85 } as const;
 /** Candidate sizes for the arrow key, as fractions of the wind speed. */
 const KEY_FRACTIONS = [0.02, 0.05, 0.1, 0.2, 0.25, 0.5] as const;
 /** Terrain relief: chords of height per unit of terrain height (for the hillshading slopes). */
@@ -1321,7 +1322,7 @@ export class SectionView {
         this.fieldImage.data,
         this.terrainFade,
       );
-      const heights = terrainHeights(this.terrainCp, this.terrainFade);
+      const heights = smoothField(terrainHeights(this.terrainCp, this.terrainFade), w, h, 2);
       this.contours = TERRAIN_LEVELS.map((level) => ({
         level,
         segs: contourSegments(heights, w, h, level),
@@ -1347,8 +1348,8 @@ export class SectionView {
       ctx.strokeStyle = sea
         ? 'rgba(255, 255, 255, 0.7)'
         : level < 0
-          ? `rgba(190, 225, 255, ${major ? 0.5 : 0.28})`
-          : `rgba(255, 214, 196, ${major ? 0.55 : 0.32})`;
+          ? `rgba(190, 225, 255, ${major ? 0.6 : 0.34})`
+          : `rgba(255, 214, 196, ${major ? 0.6 : 0.36})`;
       ctx.lineWidth = sea ? 1.4 : major ? 1.1 : 0.8;
       ctx.beginPath();
       for (let k = 0; k + 3 < segs.length; k += 4) {
@@ -1378,7 +1379,7 @@ export class SectionView {
       Ymin: vt.worldY(this.cssH - spacingPx * 0.5),
     };
     this.dArrows = disturbanceArrows(section, win, spacing);
-    this.dGain = disturbanceGain(this.dArrows, DISTURBANCE_ARROW_SPACINGS * spacing);
+    this.dGain = disturbanceGain(this.dArrows, DISTURBANCE_ARROW_SPACINGS[this.mode] * spacing);
     // Key: the largest "nice" fraction of the wind whose arrow fits in about two spacings.
     let key: number = KEY_FRACTIONS[0];
     for (const f of KEY_FRACTIONS) if (f * this.dGain <= 2.2 * spacing) key = f;
@@ -1388,7 +1389,7 @@ export class SectionView {
     for (const a of this.dArrows) {
       const mag = Math.hypot(a.dU, a.dV);
       let len = mag * this.dGain * vt.scale;
-      if (len < 4) continue;
+      if (len < 3) continue;
       len = Math.min(len, maxLen);
       const ux = a.dU / mag;
       const uy = -a.dV / mag; // screen y runs down
@@ -1521,17 +1522,22 @@ export class SectionView {
     const font = this.font(11, '700');
     ctx.font = font;
     const tw = ctx.measureText(tag).width;
-    const right = px + ring + 6 + tw < this.cssW - 4;
-    const ty = py - ring - 8 < 10 ? py + ring + 12 : py - ring - 8;
-    this.label(
-      ctx,
-      tag,
-      right ? px + ring + 4 : px - ring - 4,
-      ty,
-      right ? 'left' : 'right',
-      color,
-      font,
-    );
+    const right = px + ring + 10 + tw < this.cssW - 4;
+    const ty = py - ring - 10 < 12 ? py + ring + 14 : py - ring - 10;
+    const x0 = right ? px + ring + 2 : px - ring - 2 - tw - 10;
+    // A dark pill keeps the tag readable over arrows, smoke and the lift arrow.
+    const pillH = 17 * this.textScale;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function')
+      ctx.roundRect(x0, ty - pillH / 2, tw + 10, pillH, pillH / 2);
+    else ctx.rect(x0, ty - pillH / 2, tw + 10, pillH);
+    ctx.fillStyle = 'rgba(7, 12, 21, 0.86)';
+    ctx.fill();
+    ctx.font = font;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = color;
+    ctx.fillText(tag, x0 + 5, ty + 0.5);
   }
 
   private drawStreamlines(ctx: CanvasRenderingContext2D, vt: ViewTransform): void {

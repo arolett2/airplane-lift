@@ -287,10 +287,10 @@ export function terrainHeights(
 
 /* Terrain palette: a dark slate "plain" at normal pressure, blue valleys, warm hills. Same colour
  * language as the rest of the app (blue low, red high), but opaque so the shading reads. */
-const PLAIN: readonly [number, number, number] = [46, 58, 78];
-const VALLEY_DEEP: readonly [number, number, number] = [30, 86, 196];
+const PLAIN: readonly [number, number, number] = [32, 42, 60];
+const VALLEY_DEEP: readonly [number, number, number] = [30, 92, 214];
 const VALLEY_FLOOR: readonly [number, number, number] = [116, 192, 255];
-const HILL_LOW: readonly [number, number, number] = [150, 72, 64];
+const HILL_LOW: readonly [number, number, number] = [164, 70, 58];
 const HILL_TOP: readonly [number, number, number] = [255, 146, 100];
 
 function mix3(
@@ -311,12 +311,12 @@ export function terrainColor(cp: number, out: [number, number, number]): void {
     out[2] = PLAIN[2];
   } else if (cp < 0) {
     const t = Math.min(1, -cp / 1.4);
-    if (t < 0.45) mix3(PLAIN, VALLEY_DEEP, t / 0.45, out);
-    else mix3(VALLEY_DEEP, VALLEY_FLOOR, (t - 0.45) / 0.55, out);
+    if (t < 0.4) mix3(PLAIN, VALLEY_DEEP, t / 0.4, out);
+    else mix3(VALLEY_DEEP, VALLEY_FLOOR, (t - 0.4) / 0.6, out);
   } else {
     const t = Math.min(1, cp);
-    if (t < 0.4) mix3(PLAIN, HILL_LOW, t / 0.4, out);
-    else mix3(HILL_LOW, HILL_TOP, (t - 0.4) / 0.6, out);
+    if (t < 0.3) mix3(PLAIN, HILL_LOW, t / 0.3, out);
+    else mix3(HILL_LOW, HILL_TOP, (t - 0.3) / 0.7, out);
   }
 }
 
@@ -341,10 +341,13 @@ export function fillTerrainImage(
   const rgb: [number, number, number] = [0, 0, 0];
   let min = Infinity;
   let max = -Infinity;
+  // Shade from lightly smoothed heights: the light would otherwise pick out grid-scale ripples
+  // (e.g. along the shear layer of a stall bubble) as glitter.
+  const smooth = smoothField(terrainHeights(cp), w, h, 2);
   const height = (i: number, j: number, fallback: number): number => {
     const ii = Math.min(w - 1, Math.max(0, i));
     const jj = Math.min(h - 1, Math.max(0, j));
-    const v = terrainHeight(cp[jj * w + ii]!);
+    const v = smooth[jj * w + ii]!;
     return Number.isFinite(v) ? v : fallback;
   };
   for (let j = 0; j < h; j++) {
@@ -356,7 +359,7 @@ export function fillTerrainImage(
         continue;
       }
       const f = fade ? fade[j * w + i]! : 1;
-      const hc = terrainHeight(v);
+      const hc = Number.isFinite(smooth[j * w + i]!) ? smooth[j * w + i]! : terrainHeight(v);
       // Screen rows run downward, so +j is "south".
       const dzdx = ((height(i + 1, j, hc) - height(i - 1, j, hc)) / 2) * relief;
       const dzdy = ((height(i, j + 1, hc) - height(i, j - 1, hc)) / 2) * relief;
@@ -377,6 +380,44 @@ export function fillTerrainImage(
     }
   }
   return { min, max };
+}
+
+/**
+ * NaN-aware 3x3 box blur, `passes` times (NaN cells stay NaN and are left out of their
+ * neighbours' averages). Returns a new array.
+ */
+export function smoothField(field: Float32Array, w: number, h: number, passes = 1): Float32Array {
+  let src = Float32Array.from(field);
+  let dst = new Float32Array(field.length);
+  for (let p = 0; p < passes; p++) {
+    for (let j = 0; j < h; j++) {
+      for (let i = 0; i < w; i++) {
+        const k = j * w + i;
+        if (!Number.isFinite(src[k]!)) {
+          dst[k] = NaN;
+          continue;
+        }
+        let sum = 0;
+        let n = 0;
+        for (let dj = -1; dj <= 1; dj++) {
+          const jj = j + dj;
+          if (jj < 0 || jj >= h) continue;
+          for (let di = -1; di <= 1; di++) {
+            const ii = i + di;
+            if (ii < 0 || ii >= w) continue;
+            const v = src[jj * w + ii]!;
+            if (Number.isFinite(v)) {
+              sum += v;
+              n++;
+            }
+          }
+        }
+        dst[k] = sum / n;
+      }
+    }
+    [src, dst] = [dst, src];
+  }
+  return src;
 }
 
 /**

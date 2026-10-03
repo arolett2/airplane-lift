@@ -1,0 +1,453 @@
+/**
+ * Panel-specific styles: top bar, controls panel and the readouts ("Numbers") card.
+ */
+
+/* ------------------------------------------------------------------------------------------ */
+/* Top bar                                                                                      */
+/* ------------------------------------------------------------------------------------------ */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--topbar-h);
+  padding: 6px 8px 6px var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+}
+
+.topbar__left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.topbar__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: 700;
+  letter-spacing: 0.005em;
+}
+
+.topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+/* Panel toggles only exist in the drawer layout. */
+.topbar__panel-toggle {
+  display: none;
+}
+
+.topbar__camera {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 4px 0 10px;
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  transition: border-color var(--dur) var(--ease);
+}
+
+.topbar__camera:hover,
+.topbar__camera:focus-within {
+  border-color: var(--border-strong);
+}
+
+.topbar__camera-select {
+  height: 32px;
+  padding: 0 4px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (min-width: 700px) and (max-width: 1099.98px) {
+  .topbar__panel-toggle {
+    display: inline-flex;
+  }
+}
+
+/* Labels drop away before the bar gets crowded; every button keeps its accessible name. */
+@media (max-width: 1019.98px) {
+  .topbar .btn--with-text {
+    width: 36px;
+    padding: 0;
+  }
+
+  .topbar .btn__text {
+    display: none;
+  }
+}
+
+@media (max-width: 559.98px) {
+  .topbar {
+    flex-wrap: wrap;
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .topbar__left {
+    flex-basis: 100%;
+  }
+
+  .topbar__title {
+    font-size: var(--fs-base);
+  }
+
+  .topbar__actions {
+    flex-basis: 100%;
+    justify-content: space-between;
+  }
+
+  .topbar__camera {
+    flex: 1;
+    max-width: 180px;
+  }
+
+  .topbar__camera-select {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* Controls panel                                                                               */
+/* ------------------------------------------------------------------------------------------ */
+
+.controls {
+  display: flex;
+  flex-direction: column;
+}
+
+.aircraft__blurb {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.card > .collapsible__header {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  overflow: hidden;
+}
+
+.card:not(.is-open) > .collapsible__header {
+  border-radius: var(--radius-lg);
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* Readouts                                                                                     */
+/* ------------------------------------------------------------------------------------------ */
+
+.readouts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.readouts__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.readouts.is-computing .readouts__status::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse-dot 1s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  50% {
+    opacity: 0.25;
+    transform: scale(0.7);
+  }
+}
+
+.readouts.is-computing .metric__number,
+.readouts.is-computing .gauge,
+.readouts.is-computing .engineer__value {
+  opacity: 0.6;
+}
+
+/* ---- Banners ---- */
+
+.banners {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.banners:not(:has(.banner:not([hidden]))) {
+  display: none;
+}
+
+.banner {
+  padding: 10px var(--space-3);
+  border: 1px solid;
+  border-radius: var(--radius);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.banner__title {
+  font-weight: 700;
+}
+
+.banner__text {
+  color: var(--text);
+}
+
+.banner--stall,
+.banner--error {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+
+.banner--stall {
+  border-width: 2px;
+  font-size: var(--fs-base);
+  animation: stall-pulse 1.6s ease-in-out infinite;
+}
+
+.banner--stall .banner__title,
+.banner--error .banner__title {
+  color: #fecaca;
+}
+
+.banner--approach,
+.banner--mach {
+  background: var(--warning-soft);
+  border-color: var(--warning);
+}
+
+.banner--approach .banner__title,
+.banner--mach .banner__title {
+  color: var(--warning);
+}
+
+@keyframes stall-pulse {
+  50% {
+    box-shadow: 0 0 0 3px var(--danger-soft);
+  }
+}
+
+/* ---- Metric cards ---- */
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: var(--space-3);
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.metric--lift,
+.metric--gauge {
+  grid-column: 1 / -1;
+}
+
+.metric__title {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.metric__value {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.metric__number {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.metric__unit {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.metric__sub {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.metric--lift {
+  border-color: rgba(74, 222, 128, 0.35);
+  background: linear-gradient(135deg, var(--lift-soft), var(--elevated) 70%);
+}
+
+.metric--lift .metric__number {
+  color: var(--lift);
+  font-size: var(--fs-hero);
+}
+
+.metric--drag {
+  border-color: rgba(251, 146, 60, 0.35);
+  background: linear-gradient(135deg, var(--drag-soft), var(--elevated) 70%);
+}
+
+.metric--drag .metric__number {
+  color: var(--drag);
+}
+
+.metric--ld .metric__number {
+  color: var(--text);
+}
+
+/* ---- Lift versus weight gauge ---- */
+
+.metric--gauge {
+  --gauge-color: var(--lift);
+}
+
+.metric--gauge[data-level='low'] {
+  --gauge-color: var(--warning);
+}
+
+.metric--gauge[data-level='high'] {
+  --gauge-color: var(--accent);
+}
+
+.metric--gauge .metric__number {
+  font-size: var(--fs-lg);
+  color: var(--gauge-color);
+}
+
+.gauge {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.gauge__track {
+  position: relative;
+  height: 12px;
+  overflow: hidden;
+  background: var(--track);
+  border-radius: var(--radius-pill);
+}
+
+.gauge__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--fill, 0%);
+  background: var(--gauge-color);
+  border-radius: var(--radius-pill);
+  transition:
+    width var(--dur-slow) var(--ease),
+    background var(--dur) var(--ease);
+}
+
+.gauge__mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+  box-shadow: 0 0 0 1px rgba(5, 8, 15, 0.6);
+}
+
+.gauge__scale {
+  display: flex;
+  justify-content: space-between;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+}
+
+/* ---- Engineer table ---- */
+
+.engineer {
+  padding: var(--space-3);
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.engineer__table {
+  width: 100%;
+  margin-top: var(--space-2);
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+
+.engineer__table tr + tr {
+  border-top: 1px solid var(--border);
+}
+
+.engineer__table th,
+.engineer__table td {
+  padding: 5px 0;
+  vertical-align: baseline;
+}
+
+.engineer__symbol {
+  text-align: left;
+  font-weight: 700;
+}
+
+.engineer__desc {
+  display: block;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+}
+
+.engineer__value {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.engineer__warnings {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  color: var(--warning);
+  font-size: var(--fs-sm);
+}

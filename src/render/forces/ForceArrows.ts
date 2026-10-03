@@ -1,6 +1,6 @@
 /**
  * Lift (up, green), drag (downstream, orange, drawn x5) and optional weight (down, grey) arrows.
- * Negative lift (the wing pushing down) is drawn pointing down, just upstream of the weight arrow.
+ * Negative lift (the wing pushing down) is drawn pointing down, beside the weight arrow.
  *
  * Lengths follow `0.6 * semispan * F / max(lift, weight)`, so the lift and weight arrows share a
  * scale (equal arrows = level flight). Lift and drag start at the centre of pressure; changes in
@@ -44,8 +44,9 @@ const LIFT: ArrowSpec = {
   cssColor: '#7dffb0',
   dir: [0, 0, 1],
   labelCenter: [0.5, 1.15],
-  // Pointing down it runs beside the weight arrow, label to the left of its tip.
-  negative: { labelCenter: [1.08, 0.5], offset: [-0.09, 0, 0] },
+  // Pointing down it runs beside the weight arrow (offset across the span, so the front and
+  // behind shots show both), label beside its tip.
+  negative: { labelCenter: [-0.08, 0.5], offset: [0, -0.1, 0] },
 };
 const DRAG: ArrowSpec = {
   name: 'Drag',

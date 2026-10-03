@@ -7,7 +7,7 @@
  * pitched nose-up:   X =  x cos a + y sin a,   Y = -x sin a + y cos a.
  * "Display frame" below means (X, Y) after that rotation, in chord lengths, Y up.
  */
-import { cpFromSpeed, pressureColor, speedColor, type RGB } from '../../shared/colormaps';
+import { cpFromSpeed, speedColor, type RGB } from '../../shared/colormaps';
 import type { ChordwiseCp, SectionFlow } from '../../physics/types';
 import { interpolateAt } from './chartMath';
 
@@ -48,21 +48,48 @@ export class ViewTransform {
   }
 }
 
-/** Horizontal extent of the view in chords (leading edge near 0.55 from the left edge). */
-const VIEW_WIDTH_CHORDS = 2.3;
-const VIEW_MIN_HEIGHT_CHORDS = 1.05;
-const VIEW_CENTER_X = 0.6;
+export interface FitOptions {
+  /** Horizontal extent of the view in chords. */
+  widthChords?: number;
+  /** The view is never less tall than this (chords). */
+  minHeightChords?: number;
+  /** Display X (chords from the leading edge) placed at the centre of the canvas. */
+  centerX?: number;
+}
+
+/** The compact card: the airfoil fills most of the width. */
+export const CARD_VIEW: Required<FitOptions> = {
+  widthChords: 1.5,
+  minHeightChords: 0.95,
+  centerX: 0.56,
+};
+
+/** The enlarged view: a little more air around the wing. */
+export const LARGE_VIEW: Required<FitOptions> = {
+  widthChords: 2.05,
+  minHeightChords: 1.05,
+  centerX: 0.6,
+};
 
 /** Fit the airfoil in a canvas of the given CSS size, keeping the same scale on both axes. */
-export function fitView(width: number, height: number, alphaEff: number): ViewTransform {
-  const scale = Math.max(1, Math.min(width / VIEW_WIDTH_CHORDS, height / VIEW_MIN_HEIGHT_CHORDS));
-  // Centre on the middle of the (pitched) chord line.
-  const cy = -0.5 * Math.sin(alphaEff);
+export function fitView(
+  width: number,
+  height: number,
+  alphaEff: number,
+  options: FitOptions = {},
+): ViewTransform {
+  const widthChords = options.widthChords ?? CARD_VIEW.widthChords;
+  const minHeight = options.minHeightChords ?? CARD_VIEW.minHeightChords;
+  const centerX = options.centerX ?? CARD_VIEW.centerX;
+  const scale = Math.max(1, Math.min(width / widthChords, height / minHeight));
+  // Centre on the middle of the (pitched) chord line, nudged down a little so the lift arrow
+  // and the suction above the wing get the extra room.
+  const cy = -0.5 * Math.sin(alphaEff) + 0.06;
   return new ViewTransform(
     width,
     height,
     scale,
-    width / 2 - VIEW_CENTER_X * scale,
+    width / 2 - centerX * scale,
     height / 2 + cy * scale,
   );
 }
@@ -82,6 +109,51 @@ export function speedGrid(section: SectionFlow): Float32Array {
 /** Opacity of the background tint: the calm freestream stays transparent over the dark panel. */
 export function tintAlpha(deviation: number): number {
   return Math.min(0.92, 1 - Math.exp(-2.4 * Math.abs(deviation)));
+}
+
+/* Night-lab pressure tint. On the dark tunnel window a tint that fades to white near Cp = 0
+ * reads as grey haze, so each sign gets one clear hue whose opacity (and brightness) grows with
+ * the size of the pressure change: blue for suction (low pressure), red for high pressure. The
+ * colour language matches the shared pressure map: blue low, red high. */
+const SUCTION_DEEP: readonly [number, number, number] = [36, 92, 214];
+const SUCTION_BRIGHT: readonly [number, number, number] = [104, 186, 255];
+const PRESSURE_DEEP: readonly [number, number, number] = [176, 42, 52];
+const PRESSURE_BRIGHT: readonly [number, number, number] = [255, 122, 92];
+/** |Cp| at which the colour reaches its brightest. */
+const SUCTION_FULL = 1.6;
+const PRESSURE_FULL = 1;
+
+/**
+ * Colour and opacity (0..1) of the section's pressure tint for a pressure coefficient.
+ * Writes 0..255 RGB into `out` and returns the opacity.
+ */
+export function sectionPressureTint(cp: number, out: RGB): number {
+  if (!Number.isFinite(cp)) {
+    out[0] = out[1] = out[2] = 0;
+    return 0;
+  }
+  const suction = cp < 0;
+  const mag = Math.abs(cp);
+  const t = Math.min(1, mag / (suction ? SUCTION_FULL : PRESSURE_FULL));
+  const lo = suction ? SUCTION_DEEP : PRESSURE_DEEP;
+  const hi = suction ? SUCTION_BRIGHT : PRESSURE_BRIGHT;
+  const f = Math.sqrt(t);
+  out[0] = lo[0] + (hi[0] - lo[0]) * f;
+  out[1] = lo[1] + (hi[1] - lo[1]) * f;
+  out[2] = lo[2] + (hi[2] - lo[2]) * f;
+  return suction ? 0.9 * (1 - Math.exp(-1.9 * mag)) : 0.88 * (1 - Math.exp(-2.6 * mag));
+}
+
+/**
+ * Pressure inside the separated dead-air bubble: roughly the low "base" pressure that the upper
+ * surface feels at the trailing edge, not 1 - |V|^2 (the air there is slow but NOT at high
+ * pressure). Clamped to a plausible range.
+ */
+export function separatedBaseCp(section: SectionFlow): number {
+  const upper = section.cp.upper;
+  const te = upper.length ? upper[upper.length - 1]! : NaN;
+  const value = Number.isFinite(te) ? te : -0.4;
+  return Math.min(-0.25, Math.max(-1.2, value));
 }
 
 export interface WorldWindow {
@@ -128,6 +200,16 @@ export function fillFieldImage(
   const s = Math.sin(a);
   const gx = (g.nx - 1) / (g.xMax - g.xMin);
   const gy = (g.ny - 1) / (g.yMax - g.yMin);
+  const sep =
+    mode === 'pressure' && section.separated?.length === g.nx * g.ny ? section.separated : null;
+  const baseCp = sep ? separatedBaseCp(section) : 0;
+  // Value carried by one grid node: Cp in pressure mode (dead air at its base pressure), speed
+  // ratio in speed mode.
+  const nodeValue = (k: number): number => {
+    if (mode !== 'pressure') return speed[k]!;
+    if (sep && sep[k]) return baseCp;
+    return cpFromSpeed(speed[k]!);
+  };
   const rgb: RGB = [0, 0, 0];
   let tinted = 0;
   for (let j = 0; j < h; j++) {
@@ -141,7 +223,8 @@ export function fillFieldImage(
       const o = 4 * (j * w + i);
       let v: number;
       if (fx < 0 || fy < 0 || fx > g.nx - 1 || fy > g.ny - 1) {
-        v = 1; // beyond the grid the flow is the undisturbed freestream
+        // Beyond the grid the flow is the undisturbed freestream.
+        v = mode === 'pressure' ? 0 : 1;
       } else {
         const i0 = Math.min(g.nx - 2, Math.floor(fx));
         const j0 = Math.min(g.ny - 2, Math.floor(fy));
@@ -160,26 +243,76 @@ export function fillFieldImage(
           out[o + 3] = 0;
           continue;
         }
-        v = (w00 * speed[k00]! + w10 * speed[k10]! + w01 * speed[k01]! + w11 * speed[k11]!) / wSum;
+        v =
+          (w00 * (w00 ? nodeValue(k00) : 0) +
+            w10 * (w10 ? nodeValue(k10) : 0) +
+            w01 * (w01 ? nodeValue(k01) : 0) +
+            w11 * (w11 ? nodeValue(k11) : 0)) /
+          wSum;
       }
-      let deviation: number;
+      let alpha: number;
       if (mode === 'pressure') {
-        const cp = cpFromSpeed(v);
-        deviation = cp;
-        pressureColor(cp, rgb);
+        alpha = sectionPressureTint(v, rgb);
+        out[o] = rgb[0];
+        out[o + 1] = rgb[1];
+        out[o + 2] = rgb[2];
       } else {
-        deviation = v - 1;
         speedColor(v, rgb);
+        alpha = tintAlpha(v - 1);
+        out[o] = rgb[0] * 255;
+        out[o + 1] = rgb[1] * 255;
+        out[o + 2] = rgb[2] * 255;
       }
-      const alpha = tintAlpha(deviation) * gridFade(g, x, y);
-      out[o] = rgb[0] * 255;
-      out[o + 1] = rgb[1] * 255;
-      out[o + 2] = rgb[2] * 255;
+      alpha *= gridFade(g, x, y);
       out[o + 3] = alpha * 255;
       if (alpha > 0.05) tinted++;
     }
   }
   return tinted;
+}
+
+/**
+ * Where to label the separated dead-air bubble: the display-frame point at the top of the
+ * bubble's rear half (from the solver's `separated` mask), or null when there is none.
+ */
+export function separatedLabelAnchor(section: SectionFlow): { X: number; Y: number } | null {
+  const g = section.grid;
+  const mask = section.separated;
+  if (!mask || mask.length !== g.nx * g.ny) return null;
+  const a = section.alphaEffective;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const dx = (g.xMax - g.xMin) / (g.nx - 1);
+  const dy = (g.yMax - g.yMin) / (g.ny - 1);
+  let count = 0;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (let j = 0; j < g.ny; j++) {
+    for (let i = 0; i < g.nx; i++) {
+      if (!mask[i + g.nx * j]) continue;
+      const X = displayX(c, s, g.xMin + i * dx, g.yMin + j * dy);
+      minX = Math.min(minX, X);
+      maxX = Math.max(maxX, X);
+      count++;
+    }
+  }
+  if (count < 4) return null;
+  // Highest point of the bubble over its middle stretch, so the label sits above it.
+  const from = minX + 0.3 * (maxX - minX);
+  const to = minX + 0.75 * (maxX - minX);
+  let best: { X: number; Y: number } | null = null;
+  for (let j = 0; j < g.ny; j++) {
+    for (let i = 0; i < g.nx; i++) {
+      if (!mask[i + g.nx * j]) continue;
+      const x = g.xMin + i * dx;
+      const y = g.yMin + j * dy;
+      const X = displayX(c, s, x, y);
+      if (X < from || X > to) continue;
+      const Y = displayY(c, s, x, y);
+      if (!best || Y > best.Y) best = { X, Y };
+    }
+  }
+  return best;
 }
 
 /* ------------------------------------------------------------------------------------------ */
@@ -387,6 +520,8 @@ export interface PreparedStreamline {
   side: 'top' | 'bottom' | null;
   /** Time at which the line crosses the trailing-edge position, or NaN. */
   teTime: number;
+  /** Display-frame height above (+) or below (-) the trailing edge where it passes it, or NaN. */
+  teOffset: number;
 }
 
 export interface PreparedStreamlines {
@@ -450,6 +585,7 @@ export function prepareStreamlines(section: SectionFlow): PreparedStreamlines {
       total: n ? time[n - 1]! : 0,
       side: null,
       teTime: NaN,
+      teOffset: NaN,
     };
   });
 
@@ -469,6 +605,7 @@ export function prepareStreamlines(section: SectionFlow): PreparedStreamlines {
     const te = crossingAtX(l.disp, l.time, teX);
     if (te) {
       l.teTime = te.t;
+      l.teOffset = te.y - teY;
       l.side = te.y > teY ? 'top' : 'bottom';
       // Only streamlines that hug the airfoil say anything about "top vs bottom".
       if (Math.abs(te.y - teY) < 0.3) {

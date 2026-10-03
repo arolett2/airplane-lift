@@ -110,17 +110,21 @@ describe('SectionView drawing', () => {
     expect(fake.texts).toContain('Working out the flow…');
   });
 
-  it('draws the lift arrow, stagnation point and the angle inset', () => {
+  it('draws the lift arrow and stagnation point, with the angle sum under the picture', () => {
     results.set({ section: section() });
     runFrames(1);
     expect(fake.texts).toContain('Lift');
     expect(fake.texts).toContain('Stagnation point');
-    expect(fake.texts).toContain('Wing tilt');
-    expect(fake.texts).toContain('− Downwash');
-    expect(fake.texts).toContain('= Air feels');
-    expect(fake.texts).toContain('7.5°');
-    expect(fake.texts).toContain('1.5°');
-    expect(fake.texts).toContain('6.0°');
+    // The angles live in the DOM, never on top of the airfoil.
+    expect(fake.texts).not.toContain('Wing tilt');
+    const value = (cls: string): string =>
+      root.querySelector(`.viz-angle--${cls} .viz-angle__value`)!.textContent!;
+    expect(root.querySelector('.viz-section-angles')!.textContent).toContain('Wing tilt');
+    expect(root.querySelector('.viz-section-angles')!.textContent).toContain('Downwash');
+    expect(root.querySelector('.viz-section-angles')!.textContent).toContain('Air feels');
+    expect(value('tilt')).toBe('7.5°');
+    expect(value('down')).toBe('1.5°');
+    expect(value('feels')).toBe('6.0°');
     expect(fake.counts.putImageData).toBeGreaterThan(0); // pressure field was rendered
     expect(fake.counts.drawImage).toBeGreaterThan(0);
   });
@@ -157,14 +161,20 @@ describe('SectionView drawing', () => {
     expect(fake.counts.putImageData).toBe(1);
   });
 
-  it('hides the inset on very small canvases', () => {
-    view.destroy();
-    restoreObserver();
-    restoreObserver = installFixedResizeObserver(200, 110);
-    view = new SectionView(root, state, results);
+  it('shows dashes in the angle sum until a section arrives', () => {
+    expect(root.querySelector('.viz-angle--feels .viz-angle__value')!.textContent).toBe('–');
     results.set({ section: section() });
-    runFrames(1);
-    expect(fake.texts).not.toContain('Wing tilt');
+    expect(root.querySelector('.viz-angle--feels .viz-angle__value')!.textContent).toBe('6.0°');
+    results.set({ section: null });
+    expect(root.querySelector('.viz-angle--feels .viz-angle__value')!.textContent).toBe('–');
+  });
+
+  it('switches the colour key with the colour mode', () => {
+    const key = (): string => root.querySelector('.viz-section-legend')!.textContent!;
+    expect(key()).toContain('Low pressure');
+    expect(key()).toContain('High pressure');
+    state.set((s) => ({ ...s, view: { ...s.view, colorBy: 'speed' } }));
+    expect(key()).toContain('Fast air');
   });
 });
 
@@ -227,12 +237,13 @@ describe('SectionView animation', () => {
     expect(view.getClock().clock - one).toBeCloseTo(one / 2, 9);
   });
 
-  it('draws puffs every frame without redrawing the static layer', () => {
+  it('draws smoke streaks every frame without redrawing the static layer', () => {
     results.set({ section: section() });
     runFrames(1);
     fake.reset();
     runFrames(3);
-    expect(fake.counts.arc).toBeGreaterThan(100); // many smoke puffs
+    expect(fake.counts.lineTo).toBeGreaterThan(60); // smoke streaks along every streamline
+    expect(fake.counts.stroke).toBe(3); // one batched stroke per frame
     expect(fake.counts.putImageData ?? 0).toBe(0);
     expect(fake.counts.drawImage).toBe(3); // just blitting the cached layer
   });
@@ -258,6 +269,19 @@ describe('SectionView timing pulse', () => {
     expect(view.isPulseActive()).toBe(false);
   });
 
+  it('puts markers only on the few streamlines that hug the wing', () => {
+    results.set({ section: section() });
+    runFrames(1);
+    view.firePulse();
+    view.advance(0.3, 1);
+    fake.reset();
+    runFrames(1);
+    // Each marker is a halo + a dot; at most 5 per side, plus the two legend dots.
+    const arcs = fake.counts.arc ?? 0;
+    expect(arcs).toBeGreaterThan(2);
+    expect(arcs).toBeLessThanOrEqual(2 * 2 * 5 + 2);
+  });
+
   it('is frozen while paused', () => {
     results.set({ section: section() });
     state.set((s) => ({ ...s, view: { ...s.view, paused: true } }));
@@ -281,6 +305,45 @@ describe('SectionView timing pulse', () => {
     results.set({ section: section() });
     root.querySelector<HTMLButtonElement>('.viz-button')!.click();
     expect(view.isPulseActive()).toBe(true);
+  });
+});
+
+describe('SectionView enlarged view', () => {
+  it('moves the picture into a dialog and back, keyboard-closable', () => {
+    results.set({ section: section() });
+    const expand = root.querySelector<HTMLButtonElement>('.viz-section-expand')!;
+    expand.focus();
+    expand.click();
+    expect(view.isExpanded()).toBe(true);
+    const dialog = document.querySelector<HTMLElement>('.viz-section-dialog')!;
+    expect(dialog.hidden).toBe(false);
+    expect(dialog.getAttribute('role')).toBe('dialog');
+    expect(dialog.contains(view.canvas)).toBe(true);
+    expect(root.querySelector<HTMLElement>('.viz-section-away')!.hidden).toBe(false);
+    expect(dialog.textContent).toContain('Slice at 35%');
+
+    dialog
+      .querySelector('.viz-section-sheet')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(view.isExpanded()).toBe(false);
+    expect(dialog.hidden).toBe(true);
+    expect(root.contains(view.canvas)).toBe(true);
+    expect(root.querySelector<HTMLElement>('.viz-section-away')!.hidden).toBe(true);
+    expect(document.activeElement).toBe(expand);
+  });
+
+  it('closes from the close button and the backdrop, and is removed on destroy', () => {
+    view.setExpanded(true);
+    const dialog = document.querySelector<HTMLElement>('.viz-section-dialog')!;
+    dialog.querySelector<HTMLButtonElement>('.viz-close')!.click();
+    expect(view.isExpanded()).toBe(false);
+    view.setExpanded(true);
+    dialog.querySelector<HTMLElement>('.viz-section-backdrop')!.click();
+    expect(view.isExpanded()).toBe(false);
+    view.setExpanded(true);
+    view.destroy();
+    expect(document.querySelector('.viz-section-dialog')).toBeNull();
+    view = new SectionView(root, state, results); // keep afterEach happy
   });
 });
 

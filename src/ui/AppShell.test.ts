@@ -50,10 +50,10 @@ describe('createAppShell slots', () => {
     expect(shell.topBar.tagName).toBe('HEADER');
     expect(root.querySelectorAll('aside')).toHaveLength(2);
     const cards = [...root.querySelectorAll<HTMLElement>('.card')];
-    expect(cards.map((c) => c.dataset.card)).toEqual(['numbers', 'charts', 'section']);
+    expect(cards.map((c) => c.dataset.card)).toEqual(['numbers', 'section', 'charts']);
     expect(shell.readouts.closest('.card')).toBe(cards[0]);
-    expect(shell.charts.closest('.card')).toBe(cards[1]);
-    expect(shell.section.closest('.card')).toBe(cards[2]);
+    expect(shell.section.closest('.card')).toBe(cards[1]);
+    expect(shell.charts.closest('.card')).toBe(cards[2]);
     expect(shell.controls.closest('#panel-left')).not.toBeNull();
   });
 
@@ -66,7 +66,7 @@ describe('createAppShell slots', () => {
 
   it('has a phone tab bar with the four tabs', () => {
     const tabs = [...root.querySelectorAll<HTMLButtonElement>('.shell__tab')];
-    expect(tabs.map((t) => t.textContent)).toEqual(['Controls', 'Numbers', 'Charts', 'Section']);
+    expect(tabs.map((t) => t.textContent)).toEqual(['Controls', 'Numbers', 'Section', 'Charts']);
   });
 });
 
@@ -111,7 +111,7 @@ describe('createAppShell behaviour', () => {
     expect(shellEl().dataset.tab).toBe('numbers');
     expect(tabs[1]!.getAttribute('aria-pressed')).toBe('true');
     tabs[2]!.click();
-    expect(shellEl().dataset.tab).toBe('charts');
+    expect(shellEl().dataset.tab).toBe('section');
     expect(tabs[1]!.getAttribute('aria-pressed')).toBe('false');
     tabs[2]!.click();
     expect(shellEl().dataset.sheet).toBe('closed');

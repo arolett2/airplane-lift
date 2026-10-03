@@ -456,11 +456,13 @@ export function buildPlanformSvg(inputs: readonly PlanformInput[], units: UnitSy
     `<line class="viz-plan-dim" stroke="#8a97a8" stroke-opacity="0.6" x1="${cx}" y1="${top - 6}" x2="${cx}" y2="${planformBottom + 6}" stroke-dasharray="2 4"/>`,
   );
 
-  for (const input of inputs) {
+  // The bigger wing is drawn first so the smaller one sits on top of it and stays visible.
+  const drawOrder = [...inputs].sort((p, q) => q.spanM - p.spanM);
+  for (const input of drawOrder) {
     const cls = input.slot === 'a' ? 'viz-plan-a' : 'viz-plan-b';
     const stroke = input.slot === 'a' ? 'var(--viz-series-1)' : 'var(--viz-series-2)';
     parts.push(
-      `<g class="${cls}" style="fill:${stroke};fill-opacity:0.22;stroke:${stroke};stroke-width:1.6;stroke-linejoin:round">`,
+      `<g class="${cls}" style="fill:${stroke};fill-opacity:0.2;stroke:${stroke};stroke-width:1.75;stroke-linejoin:round">`,
     );
     for (const shape of input.shapes) {
       const pts = shape.points

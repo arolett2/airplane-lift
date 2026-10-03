@@ -4,7 +4,7 @@
  *   >= 1100px   3D viewport full-bleed; controls card on the left (320px), results cards on the
  *               right (360px), floating over the viewport; lesson card bottom-centre.
  *   700-1099px  the two panels become slide-in drawers toggled from the top bar.
- *   < 700px     both become one bottom sheet with tabs (Controls / Numbers / Charts / Section).
+ *   < 700px     both become one bottom sheet with tabs (Controls / Numbers / Section / Charts).
  *
  * Layout is pure CSS driven by `data-*` attributes on the root `.shell` element:
  *   data-panel  "none" | "left" | "right"   which drawer is open (drawer layout)
@@ -28,8 +28,8 @@ export interface ShellSlots {
   topBar: HTMLElement;
   controls: HTMLElement; // left panel
   readouts: HTMLElement; // right column, top
-  charts: HTMLElement; // right column, middle
-  section: HTMLElement; // right column, 2D cross-section view
+  charts: HTMLElement; // right column, bottom
+  section: HTMLElement; // right column, middle: the 2D cross-section view
   lesson: HTMLElement; // bottom-centre overlay card
   compare: HTMLElement; // modal / drawer host
 }
@@ -48,8 +48,8 @@ type SheetTab = 'controls' | 'numbers' | 'charts' | 'section';
 const TABS: { id: SheetTab; label: string; icon: IconName }[] = [
   { id: 'controls', label: 'Controls', icon: 'sliders' },
   { id: 'numbers', label: 'Numbers', icon: 'numbers' },
-  { id: 'charts', label: 'Charts', icon: 'charts' },
   { id: 'section', label: 'Section', icon: 'section' },
+  { id: 'charts', label: 'Charts', icon: 'charts' },
 ];
 
 /** Width below which the layout is a bottom sheet with tabs. */
@@ -107,8 +107,8 @@ export function createAppShell(root: HTMLElement): AppShell {
     'aside',
     { class: 'panel panel--right', id: 'panel-right', 'aria-label': 'Results', tabindex: -1 },
     numbersCard.el,
-    chartsCard.el,
     sectionCard.el,
+    chartsCard.el,
   );
 
   // Bottom-sheet tab bar (phone layout only; hidden by CSS otherwise) ---------------------------

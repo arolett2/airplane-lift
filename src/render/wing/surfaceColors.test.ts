@@ -7,23 +7,28 @@ import {
   bindStrips,
   colorizeWing,
   sampleChordwise,
+  WING_CP_MIN,
   writePressureColor,
 } from './surfaceColors';
-import { pressureColor } from '../../shared/colormaps';
+import { srgbToLinear, wingPressureColor } from '../util/palette';
 import type { StripResult } from '../../physics/types';
 
-function srgbToLinear(c: number): number {
-  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-}
-
 describe('writePressureColor', () => {
-  it('matches the shared pressure colour map (in linear space)', () => {
+  it('matches the 3D wing palette (in linear space)', () => {
     const out = new Float32Array(3);
     for (const cp of [-2.5, -1.2, -0.3, 0, 0.4, 1, -9, 3]) {
       writePressureColor(cp, out, 0);
-      const ref = pressureColor(Math.min(1, Math.max(-2.5, cp)));
+      const ref = wingPressureColor(Math.min(1, Math.max(WING_CP_MIN, cp)));
       for (let k = 0; k < 3; k++) expect(out[k]).toBeCloseTo(srgbToLinear(ref[k]!), 2);
     }
+  });
+
+  it('reads clearly blue at airliner cruise suction (Cp about -0.6)', () => {
+    const o = new Float32Array(3);
+    writePressureColor(-0.6, o, 0);
+    expect(o[2]).toBeGreaterThan(2.5 * o[0]!);
+    writePressureColor(0.5, o, 0);
+    expect(o[0]).toBeGreaterThan(3 * o[2]!);
   });
 
   it('is blue for suction, light for freestream and red for stagnation', () => {

@@ -1,19 +1,33 @@
 /**
- * Lookup tables turning |V|/Vinf into RGB for the two colouring modes, built once from the
- * shared colour maps so streamlines, particles and the wing surface always agree.
+ * Lookup tables turning |V|/Vinf into colour for the two colouring modes, built once from the 3D
+ * flow palette (render/util/palette.ts) so streamlines and particles always agree.
  * Pure (no three.js).
+ *
+ * Colours are LINEAR RGB (the flow shaders write them straight into three's linear working space
+ * and the output pass encodes sRGB). Each entry also carries an `emphasis` (0 .. 1): 0 for
+ * undisturbed air, 1 for strongly sped-up or slowed air. Renderers fade the undisturbed smoke
+ * with it so the interesting flow stands out.
  */
 import type { ColorBy } from '../../state/params';
-import { cpFromSpeed, pressureColor, speedColor } from '../../shared/colormaps';
+import { cpFromSpeed } from '../../shared/colormaps';
 import type { RGB } from '../../shared/colormaps';
+import {
+  flowEmphasis,
+  flowPressureColor,
+  flowSpeedColor,
+  speedEmphasis,
+  srgbToLinear,
+} from '../util/palette';
 
 /** Speed ratios 0 .. LUT_MAX_SPEED map onto LUT_SIZE entries. */
 export const LUT_SIZE = 256;
 export const LUT_MAX_SPEED = 2;
 
 export interface ColorLut {
-  /** LUT_SIZE * 3 floats. */
+  /** LUT_SIZE * 3 floats, linear RGB. */
   rgb: Float32Array;
+  /** LUT_SIZE floats: how far from the freestream (0 .. 1). */
+  emphasis: Float32Array;
 }
 
 const cache = new Map<ColorBy, ColorLut>();
@@ -26,16 +40,23 @@ export function getColorLut(mode: ColorBy): ColorLut {
   const hit = cache.get(mode);
   if (hit) return hit;
   const rgb = new Float32Array(LUT_SIZE * 3);
+  const emphasis = new Float32Array(LUT_SIZE);
   const tmp: RGB = [0, 0, 0];
   for (let i = 0; i < LUT_SIZE; i++) {
     const s = (i / (LUT_SIZE - 1)) * LUT_MAX_SPEED;
-    if (mode === 'pressure') pressureColor(cpFromSpeed(s), tmp);
-    else speedColor(s, tmp);
-    rgb[i * 3] = tmp[0];
-    rgb[i * 3 + 1] = tmp[1];
-    rgb[i * 3 + 2] = tmp[2];
+    if (mode === 'pressure') {
+      const cp = cpFromSpeed(s);
+      flowPressureColor(cp, tmp);
+      emphasis[i] = flowEmphasis(cp);
+    } else {
+      flowSpeedColor(s, tmp);
+      emphasis[i] = speedEmphasis(s);
+    }
+    rgb[i * 3] = srgbToLinear(tmp[0]);
+    rgb[i * 3 + 1] = srgbToLinear(tmp[1]);
+    rgb[i * 3 + 2] = srgbToLinear(tmp[2]);
   }
-  const lut = { rgb };
+  const lut = { rgb, emphasis };
   cache.set(mode, lut);
   return lut;
 }

@@ -21,14 +21,27 @@ import { CameraTween, DEFAULT_TWEEN_SECONDS } from './util/cameraTween';
 import { FpsMeter } from './util/fpsMeter';
 import { getFrameTick } from './util/frameTick';
 import { disposeObject3D } from './util/disposal';
+import type { WingFraming } from './util/framing';
 import { computeShot, extentsFromDomain } from './util/shots';
-import type { SceneExtents } from './util/shots';
+import type { CameraPose, SceneExtents } from './util/shots';
 
 // The whole app uses the physics frame as the world frame: Z is up. Must happen before any
 // Object3D (camera included) is constructed so their `up` vectors pick it up.
 THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
 
 export type FrameCallback = (dtSeconds: number, elapsedSeconds: number) => void;
+
+/** CSS pixels of the canvas covered by floating UI on each side (see setViewInsets). */
+export interface ViewInsets {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+const NO_INSETS: ViewInsets = { left: 0, right: 0, top: 0, bottom: 0 };
+/** The visible region never shrinks below this fraction of the canvas on either axis. */
+const MIN_VISIBLE_FRACTION = 0.35;
 
 export interface SceneManagerApi {
   readonly scene: THREE.Scene;
@@ -97,7 +110,8 @@ export class SceneManager implements SceneManagerApi {
   private frameCallbacks: FrameCallback[] = [];
   private extents: SceneExtents;
   private domain: TunnelDomain = tunnelDomain(10, 1.5);
-  private focus: { pivot: Vec3; semispan: number } | null = null;
+  private focus: { pivot: Vec3; semispan: number; framing?: WingFraming } | null = null;
+  private insets: ViewInsets = NO_INSETS;
   private currentShot: CameraShot = 'overview';
   /** True once the user orbited/zoomed since the last programmatic camera move. */
   private userMoved = false;
@@ -222,9 +236,43 @@ export class SceneManager implements SceneManagerApi {
    * physics origin and the semispan is inferred from the domain width (tunnelDomain() makes the
    * width 1.5 x the span). Both are physics meters.
    */
-  setFocus(pivot: Vec3, semispan: number): void {
-    this.focus = { pivot: [pivot[0], pivot[1], pivot[2]], semispan };
+  setFocus(pivot: Vec3, semispan: number, framing?: WingFraming): void {
+    this.focus = { pivot: [pivot[0], pivot[1], pivot[2]], semispan, framing };
     this.refreshExtents();
+  }
+
+  /**
+   * Tell the camera how much of the canvas floating panels cover (CSS px). The projection centre
+   * moves to the middle of the uncovered region and shots are framed to fit inside it, so the
+   * wing is never hidden behind a panel. Re-frames the current shot unless the user took over.
+   */
+  setViewInsets(insets: Partial<ViewInsets>): void {
+    const next: ViewInsets = {
+      left: Math.max(0, insets.left ?? 0),
+      right: Math.max(0, insets.right ?? 0),
+      top: Math.max(0, insets.top ?? 0),
+      bottom: Math.max(0, insets.bottom ?? 0),
+    };
+    const prev = this.insets;
+    if (
+      Math.abs(prev.left - next.left) < 0.5 &&
+      Math.abs(prev.right - next.right) < 0.5 &&
+      Math.abs(prev.top - next.top) < 0.5 &&
+      Math.abs(prev.bottom - next.bottom) < 0.5
+    ) {
+      return;
+    }
+    this.insets = next;
+    this.applyViewOffset();
+    if (!this.userMoved) this.placeCamera(false);
+  }
+
+  /** The visible (uncovered) region of the canvas in CSS px, after clamping the insets. */
+  get visibleRegion(): { x: number; y: number; width: number; height: number } {
+    const w = Math.max(1, this.container.clientWidth);
+    const h = Math.max(1, this.container.clientHeight);
+    const { left, right, top, bottom } = this.clampedInsets(w, h);
+    return { x: left, y: top, width: w - left - right, height: h - top - bottom };
   }
 
   flyTo(shot: CameraShot): void {
@@ -274,6 +322,7 @@ export class SceneManager implements SceneManagerApi {
       this.focus?.pivot ?? [0, 0, 0],
       undefined,
       this.focus?.semispan,
+      this.focus?.framing,
     );
     this.applyExtents();
     if (!this.userMoved) this.placeCamera(this.hasPlacedCamera);
@@ -295,7 +344,7 @@ export class SceneManager implements SceneManagerApi {
 
   /** Move the camera to the current shot, with a tween when `animate` and motion is allowed. */
   private placeCamera(animate: boolean): void {
-    const pose = computeShot(this.currentShot, this.extents, this.camera.fov, this.camera.aspect);
+    const pose = this.shotPose();
     const toPos = new THREE.Vector3(...pose.position);
     const toTarget = new THREE.Vector3(...pose.target);
     if (animate && !prefersReducedMotion() && this.hasPlacedCamera) {
@@ -325,13 +374,60 @@ export class SceneManager implements SceneManagerApi {
     this.labelRenderer.setSize(w, h);
     const changed = Math.abs(this.camera.aspect - w / h) > 1e-6;
     this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this.applyViewOffset();
     // The very first real size arrives after construction: re-frame so shots fit the aspect.
     if (changed && !this.userMoved && !this.tween.isActive) {
-      const pose = computeShot(this.currentShot, this.extents, this.camera.fov, this.camera.aspect);
+      const pose = this.shotPose();
       this.camera.position.set(...pose.position);
       this.controls.target.set(...pose.target);
     }
+  }
+
+  private clampedInsets(w: number, h: number): ViewInsets {
+    const { left, right, top, bottom } = this.insets;
+    const fit = (a: number, b: number, size: number): [number, number] => {
+      const room = (1 - MIN_VISIBLE_FRACTION) * size;
+      const k = a + b > room ? room / (a + b) : 1;
+      return [a * k, b * k];
+    };
+    const [l, r] = fit(left, right, w);
+    const [t, b] = fit(top, bottom, h);
+    return { left: l, right: r, top: t, bottom: b };
+  }
+
+  /** Shift the projection centre to the middle of the visible region (no-op without insets). */
+  private applyViewOffset(): void {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    if (w < 2 || h < 2) {
+      this.camera.updateProjectionMatrix();
+      return;
+    }
+    const { left, right, top, bottom } = this.clampedInsets(w, h);
+    const ox = -0.5 * (left - right);
+    const oy = -0.5 * (top - bottom);
+    if (Math.abs(ox) < 0.5 && Math.abs(oy) < 0.5) this.camera.clearViewOffset();
+    else this.camera.setViewOffset(w, h, ox, oy, w, h);
+    this.camera.updateProjectionMatrix();
+  }
+
+  /** The current shot framed for the visible region (vertical fov and aspect of that region). */
+  private shotPose(): CameraPose {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    let fov = this.camera.fov;
+    let aspect = this.camera.aspect;
+    if (w >= 2 && h >= 2) {
+      const { left, right, top, bottom } = this.clampedInsets(w, h);
+      const visW = w - left - right;
+      const visH = h - top - bottom;
+      if (visH < h - 0.5) {
+        const tanV = Math.tan((fov * Math.PI) / 360) * (visH / h);
+        fov = (360 / Math.PI) * Math.atan(tanV);
+      }
+      aspect = visW / visH;
+    }
+    return computeShot(this.currentShot, this.extents, fov, aspect);
   }
 
   private readonly tick = (): void => {

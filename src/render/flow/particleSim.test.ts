@@ -37,10 +37,10 @@ function makeSim(grid: FlowFieldGrid, count = 3000): ParticleSim {
 }
 
 describe('particle budget', () => {
-  it('is ~14000 * density, capped at 30000', () => {
+  it('is ~7000 * density, capped at 14000', () => {
     expect(particleCountFor(1)).toBe(BASE_PARTICLES);
-    expect(particleCountFor(0.25)).toBe(3500);
-    expect(particleCountFor(2)).toBe(28000);
+    expect(particleCountFor(0.25)).toBe(1750);
+    expect(particleCountFor(2)).toBe(14000);
     expect(particleCountFor(2.5)).toBe(MAX_PARTICLES);
     expect(particleCountFor(10)).toBe(MAX_PARTICLES);
     expect(particleCountFor(0)).toBe(0);

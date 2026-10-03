@@ -1,8 +1,10 @@
 /**
- * Wind-tunnel "dust": tens of thousands of tiny particles carried through the 3D velocity field,
- * drawn as soft round sprites plus short fading motion trails (so the swirl of the tip vortex
- * reads clearly). Simulation lives in ParticleSim (pure CPU, typed arrays); this class only owns
- * the three.js objects and copies/flags the attributes each frame without allocating.
+ * Wind-tunnel smoke: a few thousand particles released as a thin sheet at wing height and round
+ * the tips (see spawn.ts), carried through the 3D velocity field and drawn as small soft sprites
+ * with fading motion trails, so the split over and under the wing, the downwash behind it and the
+ * curl of the tip vortices read clearly. Undisturbed smoke is dim; smoke the wing has sped up or
+ * slowed down is bright. Simulation lives in ParticleSim (pure CPU, typed arrays); this class only
+ * owns the three.js objects and copies/flags the attributes each frame without allocating.
  */
 import {
   BufferAttribute,
@@ -17,15 +19,15 @@ import type { TunnelDomain } from '../../physics/domain';
 import type { FlowFieldGrid, WingGeometry } from '../../physics/types';
 import type { ColorBy } from '../../state/params';
 import { MAX_PARTICLES, ParticleSim, particleCountFor } from './particleSim';
-import { makeSpawnRegion, type SpawnRegion } from './spawn';
+import { makeSmokeSources, makeSpawnRegion, type SpawnRegion } from './spawn';
 import { bindSpriteViewport, createSpriteMaterial, createTrailMaterial } from './sprites';
 
 /** Particle sprite diameter relative to the tunnel length. */
-const SPRITE_SIZE_FRACTION = 0.005;
-const SPRITE_MIN_PX = 1.8;
-const SPRITE_MAX_PX = 7;
+const SPRITE_SIZE_FRACTION = 0.0032;
+const SPRITE_MIN_PX = 1.5;
+const SPRITE_MAX_PX = 4.5;
 /** Opacity of the trail at the head end (the tail end is transparent). */
-const TRAIL_HEAD_ALPHA = 0.55;
+const TRAIL_HEAD_ALPHA = 0.8;
 
 export interface ParticleSystemOptions {
   /** Additive blending (suits dark backgrounds); default normal blending. */
@@ -50,6 +52,9 @@ export class ParticleSystem {
 
   private visible = true;
   private trailsOn = true;
+  private domain: TunnelDomain | null = null;
+  private geometry: WingGeometry | null = null;
+  private alpha = 0;
   private density = 1;
   private hasField = false;
   /** GPU attributes need a refresh even though the simulation did not advance. */
@@ -65,7 +70,7 @@ export class ParticleSystem {
       minPx: SPRITE_MIN_PX,
       maxPx: SPRITE_MAX_PX,
       core: 0,
-      opacity: 0.75,
+      opacity: 0.9,
       additive,
     });
     this.trailMaterial = createTrailMaterial(additive);
@@ -138,15 +143,24 @@ export class ParticleSystem {
     this.applyVisibility();
   }
 
-  /** Set the spawn region: the tunnel inlet plane, concentrated around the wing's footprint. */
+  /**
+   * Set the spawn region: smoke sources on the tunnel inlet plane, shaped to the wing (a sheet at
+   * leading-edge height across the span plus disks round the tips).
+   */
   setDomain(domain: TunnelDomain, geometry: WingGeometry | null): void {
-    const halfWidth = 0.5 * (domain.max[1] - domain.min[1]);
-    // tunnelDomain() sizes the half-width as 1.5 semispans, which is the fallback without geometry.
-    const semispan = geometry ? 0.5 * geometry.overallSpan : halfWidth / 1.5;
-    const centerZ = geometry ? geometry.pivot[2] : 0;
-    this.sim.setSpawnRegion(makeSpawnRegion(domain, semispan, centerZ));
+    this.domain = domain;
+    this.geometry = geometry;
+    this.updateSpawnRegion();
     const lengthMeters = domain.max[0] - domain.min[0];
     this.material.uniforms['uWorldSize']!.value = SPRITE_SIZE_FRACTION * lengthMeters;
+  }
+
+  /** The wing's pitch (rad): the smoke sheet follows its leading-edge height. */
+  setAlpha(alphaRad: number): void {
+    const a = Number.isFinite(alphaRad) ? alphaRad : 0;
+    if (Math.abs(a - this.alpha) < 1e-4) return;
+    this.alpha = a;
+    if (this.domain) this.updateSpawnRegion();
   }
 
   /** Particle budget multiplier (0.25 .. 2); base budget is ~14000, capped at 30000. */
@@ -188,6 +202,18 @@ export class ParticleSystem {
   }
 
   /* ---------------------------------------------------------------------------------------- */
+
+  private updateSpawnRegion(): void {
+    const domain = this.domain;
+    if (!domain) return;
+    const geometry = this.geometry;
+    const halfWidth = 0.5 * (domain.max[1] - domain.min[1]);
+    // tunnelDomain() sizes the half-width as 1.5 semispans, which is the fallback without geometry.
+    const semispan = geometry ? 0.5 * geometry.overallSpan : halfWidth / 1.5;
+    const centerZ = geometry ? geometry.pivot[2] : 0;
+    const smoke = geometry?.surfaces ? makeSmokeSources(geometry, this.alpha) : null;
+    this.sim.setSpawnRegion(makeSpawnRegion(domain, semispan, centerZ, undefined, smoke));
+  }
 
   private applyVisibility(): void {
     this.object.visible = this.visible && this.hasField;

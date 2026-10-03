@@ -11,11 +11,11 @@
  * Buffers are rebuilt only in setStreamlines; update() only rewrites small per-puff arrays.
  */
 import {
+  AdditiveBlending,
   BufferAttribute,
   BufferGeometry,
   DynamicDrawUsage,
   Group,
-  LineSegments,
   Points,
   Vector2,
   type InterleavedBufferAttribute,
@@ -29,10 +29,10 @@ import type { Streamline3D } from '../../physics/types';
 import type { ColorBy } from '../../state/params';
 import { getColorLut, lutIndex, type ColorLut } from './flowColors';
 import { pathDuration, pathLength, sampleLineAtTime } from './pathSampling';
-import { bindSpriteViewport, createSpriteMaterial, createTrailMaterial } from './sprites';
+import { bindSpriteViewport, createSpriteMaterial } from './sprites';
 
 /** Puffs released per freestream transit of the tunnel (sets the puff spacing in still air). */
-export const PUFFS_PER_TRANSIT = 40;
+export const PUFFS_PER_TRANSIT = 18;
 /** Hard cap on puffs per line (very slow lines, e.g. near a stagnation point). */
 const MAX_PUFFS_PER_LINE = 4 * PUFFS_PER_TRANSIT;
 /** Timelines that may exist at once; firing more drops the oldest. */
@@ -42,15 +42,22 @@ const PULSE_MAX_TRANSITS = 2.5;
 /** After reaching the end of its line a pulse marker fades over this fraction of a transit. */
 const PULSE_FADE_TRANSITS = 0.18;
 /** Pulse markers are washed this far toward white so they read as "bright". */
-const PULSE_WHITEN = 0.55;
+const PULSE_WHITEN = 0.35;
 
 /** Neighbouring lines are joined by a timeline connector if their seeds are at most this many median spacings apart. */
 const LINK_DISTANCE_FACTOR = 2.5;
 /** Opacity of the connector joining two timeline markers. */
-const CONNECTOR_ALPHA = 0.7;
+const CONNECTOR_ALPHA = 0.85;
+/** Width of the timeline connector (CSS px) and its colour (linear RGB, a cool white). */
+const CONNECTOR_WIDTH_PX = 2.6;
+const CONNECTOR_RGB: readonly [number, number, number] = [0.92, 0.96, 1.0];
 
-const LINE_WIDTH_PX = 2;
+const LINE_WIDTH_PX = 1.6;
 const LINE_OPACITY = 0.9;
+/** Brightness of a line where the air is undisturbed (1 where the wing changes it most). */
+const LINE_FREESTREAM_BRIGHTNESS = 0.42;
+/** Opacity of a puff in undisturbed air relative to a puff in strongly disturbed air. */
+const PUFF_FREESTREAM_ALPHA = 0.35;
 
 export interface StreamlineRendererOptions {
   /** Additive blending for puffs (suits dark backgrounds); default normal blending. */
@@ -101,9 +108,8 @@ export class StreamlineRenderer {
   private pulseColor: Float32Array = new Float32Array(0);
   private pulseAlpha: Float32Array = new Float32Array(0);
 
-  private readonly connectorMaterial: ShaderMaterial;
-  private readonly connectorLines: LineSegments;
-  private connectorGeometry = new BufferGeometry();
+  private readonly connectorMaterial: LineMaterial;
+  private connectorLines: LineSegments2 | null = null;
   private connectorPos: Float32Array = new Float32Array(0);
   private connectorAlpha: Float32Array = new Float32Array(0);
   /** linkNext[i] = 1 when line i and line i+1 are neighbours in the same seed group. */
@@ -128,6 +134,7 @@ export class StreamlineRenderer {
     const additive = options.additive ?? false;
     this.object.name = 'StreamlineRenderer';
 
+    // Colours are linear and already tuned for the dark scene: no tone mapping.
     this.lineMaterial = new LineMaterial({
       color: 0xffffff,
       linewidth: LINE_WIDTH_PX,
@@ -137,41 +144,48 @@ export class StreamlineRenderer {
       opacity: LINE_OPACITY,
       depthWrite: false,
     });
+    this.lineMaterial.toneMapped = false;
 
     this.puffMaterial = createSpriteMaterial({
       worldSize: 1,
-      minPx: 4,
-      maxPx: 22,
+      minPx: 2.5,
+      maxPx: 9,
       core: 0,
-      opacity: 0.85,
+      opacity: 0.9,
       additive,
     });
     this.puffPoints = new Points(this.puffGeometry, this.puffMaterial);
     this.puffPoints.frustumCulled = false;
     this.puffPoints.renderOrder = 2;
-    bindSpriteViewport(this.puffPoints, this.puffMaterial, 4, 22);
+    bindSpriteViewport(this.puffPoints, this.puffMaterial, 2.5, 9);
     this.object.add(this.puffPoints);
 
     this.pulseMaterial = createSpriteMaterial({
       worldSize: 1,
-      minPx: 9,
-      maxPx: 36,
-      core: 0.9,
+      minPx: 7,
+      maxPx: 24,
+      core: 0.85,
       opacity: 1,
       additive,
     });
     this.pulsePoints = new Points(this.pulseGeometry, this.pulseMaterial);
     this.pulsePoints.frustumCulled = false;
-    this.pulsePoints.renderOrder = 3;
-    bindSpriteViewport(this.pulsePoints, this.pulseMaterial, 9, 36);
+    this.pulsePoints.renderOrder = 4;
+    bindSpriteViewport(this.pulsePoints, this.pulseMaterial, 7, 24);
     this.object.add(this.pulsePoints);
 
-    // Thin connectors between neighbouring timeline markers draw the timeline as a curve.
-    this.connectorMaterial = createTrailMaterial(additive);
-    this.connectorLines = new LineSegments(this.connectorGeometry, this.connectorMaterial);
-    this.connectorLines.frustumCulled = false;
-    this.connectorLines.renderOrder = 3;
-    this.object.add(this.connectorLines);
+    // Bold connectors between neighbouring timeline markers draw the timeline as a curve
+    // (additive, so a fading connector simply dims to nothing).
+    this.connectorMaterial = new LineMaterial({
+      color: 0xffffff,
+      linewidth: CONNECTOR_WIDTH_PX,
+      worldUnits: false,
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      blending: AdditiveBlending,
+    });
+    this.connectorMaterial.toneMapped = false;
   }
 
   /** Number of puff slots currently allocated (for tests/diagnostics). */
@@ -193,6 +207,14 @@ export class StreamlineRenderer {
   /** Timelines currently in flight. */
   get activePulses(): number {
     return this.pulses.length;
+  }
+
+  /**
+   * The timeline connectors: two vertices per segment (xyz each) and their opacity, laid out as
+   * pulse-major slots (pulse s, line i -> segment s * lines + i joining line i to line i + 1).
+   */
+  get timelineConnectors(): { positions: Float32Array; alpha: Float32Array } {
+    return { positions: this.connectorPos, alpha: this.connectorAlpha };
   }
 
   setStreamlines(lines: Streamline3D[] | null, vInf: number): void {
@@ -305,7 +327,7 @@ export class StreamlineRenderer {
     this.lineMaterial.dispose();
     this.puffGeometry.dispose();
     this.pulseGeometry.dispose();
-    this.connectorGeometry.dispose();
+    this.disposeConnectors();
     this.puffMaterial.dispose();
     this.pulseMaterial.dispose();
     this.connectorMaterial.dispose();
@@ -350,6 +372,7 @@ export class StreamlineRenderer {
     geometry.setPositions(pos);
     geometry.setColors(this.lineColors);
     const mesh = new LineSegments2(geometry, this.lineMaterial);
+    mesh.name = 'StreamlineLines';
     mesh.frustumCulled = false;
     mesh.renderOrder = 1;
     mesh.onBeforeRender = (renderer: WebGLRenderer) => {
@@ -365,6 +388,8 @@ export class StreamlineRenderer {
     const mesh = this.lineMesh;
     if (!mesh) return;
     const lut = this.lut.rgb;
+    const emphasis = this.lut.emphasis;
+    const dim = LINE_FREESTREAM_BRIGHTNESS;
     const col = this.lineColors;
     let o = 0;
     for (const info of this.infos) {
@@ -372,14 +397,16 @@ export class StreamlineRenderer {
       const speed = info.line.speed;
       const hasSpeed = speed.length >= info.n;
       for (let i = 0; i < info.n - 1; i++) {
-        const c0 = lutIndex(hasSpeed ? speed[i]! : 1) * 3;
-        const c1 = lutIndex(hasSpeed ? speed[i + 1]! : 1) * 3;
-        col[o++] = lut[c0]!;
-        col[o++] = lut[c0 + 1]!;
-        col[o++] = lut[c0 + 2]!;
-        col[o++] = lut[c1]!;
-        col[o++] = lut[c1 + 1]!;
-        col[o++] = lut[c1 + 2]!;
+        const i0 = lutIndex(hasSpeed ? speed[i]! : 1);
+        const i1 = lutIndex(hasSpeed ? speed[i + 1]! : 1);
+        const b0 = dim + (1 - dim) * emphasis[i0]!;
+        const b1 = dim + (1 - dim) * emphasis[i1]!;
+        col[o++] = lut[i0 * 3]! * b0;
+        col[o++] = lut[i0 * 3 + 1]! * b0;
+        col[o++] = lut[i0 * 3 + 2]! * b0;
+        col[o++] = lut[i1 * 3]! * b1;
+        col[o++] = lut[i1 * 3 + 1]! * b1;
+        col[o++] = lut[i1 * 3 + 2]! * b1;
       }
     }
     const attr = mesh.geometry.getAttribute('instanceColorStart') as InterleavedBufferAttribute;
@@ -398,8 +425,8 @@ export class StreamlineRenderer {
     this.puffPoints.geometry = this.puffGeometry;
     // Sprite sizes are in metres, relative to the tunnel length the lines span.
     const lengthMeters = this.transit * this.vInf;
-    this.puffMaterial.uniforms['uWorldSize']!.value = 0.012 * lengthMeters;
-    this.pulseMaterial.uniforms['uWorldSize']!.value = 0.024 * lengthMeters;
+    this.puffMaterial.uniforms['uWorldSize']!.value = 0.0065 * lengthMeters;
+    this.pulseMaterial.uniforms['uWorldSize']!.value = 0.02 * lengthMeters;
 
     this.pulseGeometry.dispose();
     const pulse = makeSpriteBuffers(this.infos.length * MAX_PULSES);
@@ -409,13 +436,32 @@ export class StreamlineRenderer {
     this.pulseAlpha = pulse.alpha;
     this.pulsePoints.geometry = this.pulseGeometry;
 
-    this.connectorGeometry.dispose();
-    const vertices = this.infos.length * MAX_PULSES * 2;
-    const connector = makeConnectorBuffers(vertices);
-    this.connectorGeometry = connector.geometry;
-    this.connectorPos = connector.pos;
-    this.connectorAlpha = connector.alpha;
-    this.connectorLines.geometry = this.connectorGeometry;
+    this.disposeConnectors();
+    const segments = this.infos.length * MAX_PULSES;
+    this.connectorPos = new Float32Array(segments * 6);
+    this.connectorAlpha = new Float32Array(segments * 2);
+    if (segments > 0) {
+      const geometry = new LineSegmentsGeometry();
+      geometry.setPositions(this.connectorPos);
+      geometry.setColors(new Float32Array(segments * 6));
+      const lines = new LineSegments2(geometry, this.connectorMaterial);
+      lines.name = 'TimelineConnectors';
+      lines.frustumCulled = false;
+      lines.renderOrder = 3;
+      lines.onBeforeRender = (renderer: WebGLRenderer) => {
+        renderer.getSize(this.scratchSize);
+        this.connectorMaterial.resolution.set(this.scratchSize.x, this.scratchSize.y);
+      };
+      this.connectorLines = lines;
+      this.object.add(lines);
+    }
+  }
+
+  private disposeConnectors(): void {
+    if (!this.connectorLines) return;
+    this.object.remove(this.connectorLines);
+    this.connectorLines.geometry.dispose();
+    this.connectorLines = null;
   }
 
   /** Decide which neighbouring lines (same seed group, nearby seeds) get a timeline connector. */
@@ -441,6 +487,7 @@ export class StreamlineRenderer {
 
   private updatePuffs(simTime: number): void {
     const lut = this.lut.rgb;
+    const emphasis = this.lut.emphasis;
     const interval = this.puffInterval;
     const pos = this.puffPos;
     const col = this.puffColor;
@@ -461,14 +508,16 @@ export class StreamlineRenderer {
           alpha[slot] = 0;
           continue;
         }
-        const c = lutIndex(speed) * 3;
+        const li = lutIndex(speed);
+        const c = li * 3;
         col[o] = lut[c]!;
         col[o + 1] = lut[c + 1]!;
         col[o + 2] = lut[c + 2]!;
         let a = age * fadeInInv;
         const fo = (duration - age) * fadeOutInv;
         if (fo < a) a = fo;
-        alpha[slot] = a < 0 ? 0 : a > 1 ? 1 : a;
+        a = a < 0 ? 0 : a > 1 ? 1 : a;
+        alpha[slot] = a * (PUFF_FREESTREAM_ALPHA + (1 - PUFF_FREESTREAM_ALPHA) * emphasis[li]!);
         // Smoke spreads as it ages.
         size[slot] = 0.75 + 0.5 * (duration > 0 ? age / duration : 0);
       }
@@ -564,7 +613,26 @@ export class StreamlineRenderer {
         alpha[v + 1] = CONNECTOR_ALPHA * a;
       }
     }
-    flag(this.connectorGeometry, ['position', 'aAlpha']);
+    this.uploadConnectors();
+  }
+
+  /** Copy the connector positions and (alpha-premultiplied) colours into the line buffers. */
+  private uploadConnectors(): void {
+    const lines = this.connectorLines;
+    if (!lines) return;
+    const start = lines.geometry.getAttribute('instanceStart') as InterleavedBufferAttribute;
+    const color = lines.geometry.getAttribute('instanceColorStart') as InterleavedBufferAttribute;
+    (start.data.array as Float32Array).set(this.connectorPos);
+    start.data.needsUpdate = true;
+    const col = color.data.array as Float32Array;
+    const alpha = this.connectorAlpha;
+    for (let v = 0; v < alpha.length; v++) {
+      const a = alpha[v]!;
+      col[v * 3] = CONNECTOR_RGB[0] * a;
+      col[v * 3 + 1] = CONNECTOR_RGB[1] * a;
+      col[v * 3 + 2] = CONNECTOR_RGB[2] * a;
+    }
+    color.data.needsUpdate = true;
   }
 
   private disposeLineMesh(): void {
@@ -603,23 +671,6 @@ function makeSpriteBuffers(count: number): {
   geometry.setAttribute('aSize', new BufferAttribute(size, 1).setUsage(DynamicDrawUsage));
   geometry.setDrawRange(0, count);
   return { geometry, pos, color, alpha, size };
-}
-
-/** Line-segment geometry (two vertices per connector) with white colour and per-vertex alpha. */
-function makeConnectorBuffers(vertices: number): {
-  geometry: BufferGeometry;
-  pos: Float32Array;
-  alpha: Float32Array;
-} {
-  const geometry = new BufferGeometry();
-  const pos: Float32Array = new Float32Array(vertices * 3);
-  const color: Float32Array = new Float32Array(vertices * 3).fill(1);
-  const alpha: Float32Array = new Float32Array(vertices);
-  geometry.setAttribute('position', new BufferAttribute(pos, 3).setUsage(DynamicDrawUsage));
-  geometry.setAttribute('aColor', new BufferAttribute(color, 3));
-  geometry.setAttribute('aAlpha', new BufferAttribute(alpha, 1).setUsage(DynamicDrawUsage));
-  geometry.setDrawRange(0, vertices);
-  return { geometry, pos, alpha };
 }
 
 function flag(geometry: BufferGeometry, names: string[]): void {

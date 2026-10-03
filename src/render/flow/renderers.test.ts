@@ -3,7 +3,7 @@
  * the CPU-side attribute arrays; nothing here needs a WebGL context.
  */
 import { describe, expect, it } from 'vitest';
-import type { BufferAttribute, BufferGeometry, LineSegments, Object3D, Points } from 'three';
+import type { BufferAttribute, BufferGeometry, Object3D, Points } from 'three';
 import type { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { StreamlineRenderer, MAX_PULSES, PUFFS_PER_TRANSIT } from './StreamlineRenderer';
 import { ParticleSystem } from './ParticleSystem';
@@ -27,15 +27,6 @@ function findPoints(root: Object3D, index: number): Points {
     if ((o as Points).isPoints) found.push(o as Points);
   });
   return found[index]!;
-}
-function findLineSegments(root: Object3D): LineSegments {
-  let found: LineSegments | null = null;
-  root.traverse((o) => {
-    if ((o as LineSegments).isLineSegments && !(o as LineSegments2).isLineSegments2) {
-      found = o as LineSegments;
-    }
-  });
-  return found!;
 }
 function attr(geometry: BufferGeometry, name: string): Float32Array {
   return (geometry.getAttribute(name) as BufferAttribute).array as Float32Array;
@@ -72,7 +63,8 @@ describe('StreamlineRenderer', () => {
     r.setStreamlines(lines, vInf);
     const meshes: LineSegments2[] = [];
     r.object.traverse((o) => {
-      if ((o as LineSegments2).isLineSegments2) meshes.push(o as LineSegments2);
+      if ((o as LineSegments2).isLineSegments2 && o.name === 'StreamlineLines')
+        meshes.push(o as LineSegments2);
     });
     expect(meshes.length).toBe(1);
     const segs = lines.reduce((a, l) => a + (l.time.length - 1), 0);
@@ -89,8 +81,8 @@ describe('StreamlineRenderer', () => {
     const pos = attr(puffs.geometry, 'position');
     const alpha = attr(puffs.geometry, 'aAlpha');
     let visible = 0;
-    for (let s = 0; s < alpha.length; s++) if (alpha[s]! > 0.5) visible++;
-    expect(visible).toBeGreaterThan(lines.length * 20);
+    for (let s = 0; s < alpha.length; s++) if (alpha[s]! > 0.1) visible++;
+    expect(visible).toBeGreaterThan(lines.length * 8);
 
     const index = lines.length - 1; // z = +2.5: above the wing
     const line = lines[index]!;
@@ -104,7 +96,7 @@ describe('StreamlineRenderer', () => {
       const x = pos[s * 3]!;
       ages.push({ age: arrivalTime(line, x), x });
     }
-    expect(ages.length).toBeGreaterThan(30);
+    expect(ages.length).toBeGreaterThan(12);
     ages.sort((p, q) => p.age - q.age);
     const gaps = ages.slice(1).map((v, i) => v.x - ages[i]!.x);
     for (let i = 1; i < ages.length; i++) {
@@ -177,9 +169,7 @@ describe('StreamlineRenderer', () => {
     r.update(0, 0);
     r.firePulse();
     r.update(0.05, 0.05);
-    const connectors = findLineSegments(r.object);
-    const cAlpha = attr(connectors.geometry, 'aAlpha');
-    const cPos = attr(connectors.geometry, 'position');
+    const { alpha: cAlpha, positions: cPos } = r.timelineConnectors;
     const mPos = attr(findPoints(r.object, 1).geometry, 'position');
     // Pulse 0: 3 connectors (0-1, 1-2, 2-3) = segments 0..2; segment 3 (last line) is unused.
     for (let seg = 0; seg < 3; seg++) {
@@ -203,7 +193,7 @@ describe('StreamlineRenderer', () => {
     r2.update(0, 0);
     r2.firePulse();
     r2.update(0.05, 0.05);
-    const a2 = attr(findLineSegments(r2.object).geometry, 'aAlpha');
+    const a2 = r2.timelineConnectors.alpha;
     expect(a2[0]!).toBeGreaterThan(0); // 0-1 same group
     expect(a2[2]!).toBe(0); // 1-2 crosses groups
     expect(a2[4]!).toBeGreaterThan(0); // 2-3 same group
@@ -254,9 +244,7 @@ describe('StreamlineRenderer', () => {
   it('recolours in place when the colour mode changes, and hides with setVisible', () => {
     const r = new StreamlineRenderer();
     r.setStreamlines(lines, vInf);
-    const mesh = r.object.children.find(
-      (c) => (c as LineSegments2).isLineSegments2,
-    ) as LineSegments2;
+    const mesh = r.object.getObjectByName('StreamlineLines') as LineSegments2;
     const colors = (
       mesh.geometry.getAttribute('instanceColorStart') as unknown as {
         data: { array: Float32Array };
@@ -314,7 +302,7 @@ describe('StreamlineRenderer', () => {
 describe('ParticleSystem', () => {
   const grid = makeAnalyticFlowGrid(domain, params, [60, 40, 30]);
 
-  it('is hidden until it has a field, then simulates ~14000 particles', () => {
+  it('is hidden until it has a field, then simulates ~7000 particles', () => {
     const ps = new ParticleSystem();
     expect(ps.object.visible).toBe(false);
     ps.setDomain(domain, null);
@@ -322,10 +310,10 @@ describe('ParticleSystem', () => {
     expect(ps.object.visible).toBe(true);
     ps.update(0.003);
     const points = findPoints(ps.object, 0);
-    expect(ps.count).toBe(14000);
-    expect(points.geometry.drawRange.count).toBe(14000);
+    expect(ps.count).toBe(7000);
+    expect(points.geometry.drawRange.count).toBe(7000);
     const pos = attr(points.geometry, 'position');
-    for (let i = 0; i < 14000 * 3; i++) expect(Number.isFinite(pos[i]!)).toBe(true);
+    for (let i = 0; i < 7000 * 3; i++) expect(Number.isFinite(pos[i]!)).toBe(true);
     ps.setField(null);
     expect(ps.object.visible).toBe(false);
     ps.dispose();
@@ -349,12 +337,12 @@ describe('ParticleSystem', () => {
     ps.setField(grid);
     ps.setDensity(0.25);
     ps.update(0.003);
-    expect(findPoints(ps.object, 0).geometry.drawRange.count).toBe(3500);
+    expect(findPoints(ps.object, 0).geometry.drawRange.count).toBe(1750);
     ps.setDensity(2);
     ps.update(0.003);
-    expect(ps.count).toBe(28000);
+    expect(ps.count).toBe(14000);
     ps.setDensity(99);
-    expect(ps.count).toBe(28000);
+    expect(ps.count).toBe(14000);
     ps.dispose();
   });
 

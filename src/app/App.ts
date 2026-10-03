@@ -10,6 +10,7 @@ import { StreamlineRenderer } from '../render/flow/StreamlineRenderer';
 import { ForceArrows } from '../render/forces/ForceArrows';
 import { SpanLoadViz } from '../render/forces/SpanLoadViz';
 import { SceneManager } from '../render/SceneManager';
+import { wingFraming } from '../render/util/framing';
 import { WindTunnel } from '../render/tunnel/WindTunnel';
 import { WingMesh } from '../render/wing/WingMesh';
 import { DEFAULT_STATE, INITIAL_PRESET_ID, type AppState } from '../state/params';
@@ -33,6 +34,10 @@ const STANDARD_GRAVITY = 9.80665;
 const IDLE_STAGE_DELAY_MS = 220;
 const IDLE_STAGES: readonly PhysicsStage[] = ['polar', 'field'];
 const DEFAULT_COMPARE: [string, string] = ['b747-400', 'b737-800'];
+/** Same breakpoint as the shell's floating-panel layout (ui/AppShell.ts). */
+const WIDE_LAYOUT_QUERY = '(min-width: 1100px)';
+/** Breathing room kept between a floating panel and the framed scene (CSS px). */
+const PANEL_GAP_PX = 8;
 
 function initialState(): AppState {
   const fallback = getPreset(INITIAL_PRESET_ID)
@@ -87,6 +92,40 @@ export async function startApp(root: HTMLElement): Promise<void> {
     streamlines.object,
     particles.object,
   );
+
+  /* ---------------------------------------------------------------- framing around the panels */
+  // The panels float over the full-bleed canvas; tell the camera which part is really visible so
+  // the wing is centred and framed in the gap between them rather than hidden behind them.
+  const shellRoot = shell.viewport.parentElement ?? root;
+  const leftPanel = shell.controls.closest<HTMLElement>('.panel');
+  const rightPanel = shell.readouts.closest<HTMLElement>('.panel');
+  const tabBar = shellRoot.querySelector<HTMLElement>('.shell__tabs');
+  const wideLayout = window.matchMedia?.(WIDE_LAYOUT_QUERY);
+  const measureInsets = () => {
+    const vp = shell.viewport.getBoundingClientRect();
+    if (vp.width < 2 || vp.height < 2) return;
+    const bar = shell.topBar.getBoundingClientRect();
+    const insets = { left: 0, right: 0, top: 0, bottom: 0 };
+    if (bar.height > 0) insets.top = Math.max(0, bar.bottom - vp.top + PANEL_GAP_PX);
+    if (wideLayout?.matches ?? vp.width >= 1100) {
+      const l = leftPanel?.getBoundingClientRect();
+      const r = rightPanel?.getBoundingClientRect();
+      if (l && l.width > 0) insets.left = Math.max(0, l.right - vp.left + PANEL_GAP_PX);
+      if (r && r.width > 0) insets.right = Math.max(0, vp.right - r.left + PANEL_GAP_PX);
+    } else if (tabBar) {
+      const t = tabBar.getBoundingClientRect();
+      if (t.height > 0 && t.top < vp.bottom) insets.bottom = Math.max(0, vp.bottom - t.top);
+    }
+    scene.setViewInsets(insets);
+  };
+  const insetObserver =
+    typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => measureInsets()) : null;
+  for (const el of [shell.viewport, shell.topBar, leftPanel, rightPanel, tabBar]) {
+    if (el) insetObserver?.observe(el);
+  }
+  wideLayout?.addEventListener?.('change', measureInsets);
+  requestAnimationFrame(measureInsets);
+  measureInsets();
 
   /* ---------------------------------------------------------------- physics worker */
   const physics = new PhysicsClient();
@@ -256,16 +295,30 @@ export async function startApp(root: HTMLElement): Promise<void> {
         }
       }
       tunnel.setMountPoint(g.pivot);
-      scene.setFocus(g.pivot, g.overallSpan / 2);
+      focusCamera();
       particles.setDomain(next, g);
     },
   );
+
+  // Side / section shots look at the smoke-rake station (or the 2D section's station).
+  const focusEta = (s: AppState) =>
+    s.view.rake.mode === 'vertical' ? s.view.rake.eta : s.view.sectionEta;
+  function focusCamera(): void {
+    if (!geometry) return;
+    scene.setFocus(
+      geometry.pivot,
+      geometry.overallSpan / 2,
+      wingFraming(geometry, focusEta(store.get())),
+    );
+  }
+  store.select(focusEta, () => focusCamera());
 
   results.select(
     (r) => r.aero,
     (aero) => {
       if (!aero) return;
       wingMesh.setAlpha(aero.alpha);
+      particles.setAlpha(aero.alpha);
       wingMesh.setStrips(aero.strips);
       forces.update(aero, geometry, weightN());
       spanLoad.update(aero, geometry);
@@ -359,6 +412,8 @@ export async function startApp(root: HTMLElement): Promise<void> {
   }
 
   window.addEventListener('pagehide', () => {
+    insetObserver?.disconnect();
+    wideLayout?.removeEventListener?.('change', measureInsets);
     for (const p of panels) p.destroy();
     physics.dispose();
     for (const r of [tunnel, wingMesh, forces, spanLoad, streamlines, particles]) r.dispose();

@@ -9,20 +9,29 @@
 import type { FlowFieldGrid, Vec3 } from '../../physics/types';
 import type { ColorBy } from '../../state/params';
 import { getColorLut, lutIndex } from './flowColors';
+import type { ColorLut } from './flowColors';
 import { FlowSampler, SAMPLE_SOLID } from './gridSampler';
-import { makeRng, makeSpawnRegion, spawnAnywhere, spawnOnInlet } from './spawn';
+import { KIND_AMBIENT, makeRng, makeSpawnRegion, spawnAnywhere, spawnOnInlet } from './spawn';
 import type { SpawnRegion } from './spawn';
 
-/** Particle budget at density 1. */
-export const BASE_PARTICLES = 14000;
+/** Particle budget at density 1 (smoke is released where it tells the story, so few suffice). */
+export const BASE_PARTICLES = 7000;
 /** Hard cap (density 2 would otherwise exceed it). */
-export const MAX_PARTICLES = 30000;
+export const MAX_PARTICLES = 14000;
 
 /** Number of particles for a density multiplier (0.25 .. 2). */
 export function particleCountFor(density: number): number {
   if (!(density > 0)) return 0;
   return Math.min(MAX_PARTICLES, Math.round(BASE_PARTICLES * density));
 }
+
+/**
+ * Opacity of smoke in undisturbed air, relative to strongly disturbed air: the freestream
+ * recedes and the flow the wing changes stands out.
+ */
+export const FREESTREAM_ALPHA = 0.26;
+/** Extra opacity factor for the ambient dust (the sheet and tip smoke are the story). */
+export const AMBIENT_ALPHA = 0.45;
 
 /** Particle lifetime as a multiple of the freestream transit time (min, max). */
 const LIFE_MIN = 1.6;
@@ -33,7 +42,7 @@ const FADE_OUT = 0.12;
 /** Fade out over this fraction of the tunnel length before the outlet. */
 const OUTLET_FADE = 0.07;
 /** Motion-trail length: how far behind (in sim time) the tail point lags, as a fraction of transit time. */
-export const TRAIL_TRANSIT_FRACTION = 0.028;
+export const TRAIL_TRANSIT_FRACTION = 0.045;
 /** Never move a particle further than this fraction of a grid cell per sub-step... */
 const MAX_STEP_CELLS = 0.9;
 /** ...using at most this many sub-steps per update (longer frames just run slow). */
@@ -53,6 +62,8 @@ export class ParticleSim {
   readonly color: Float32Array;
   /** Per-particle opacity 0..1 including fades (updated by update()). */
   readonly alpha: Float32Array;
+  /** What each particle was released as (spawn.ts KIND_*). */
+  readonly kind: Uint8Array;
   /** Number of active particles. */
   count = 0;
 
@@ -61,7 +72,7 @@ export class ParticleSim {
   private grid: FlowFieldGrid | null = null;
   private region: SpawnRegion | null = null;
   private explicitRegion = false;
-  private lut: Float32Array = getColorLut('pressure').rgb;
+  private lut: ColorLut = getColorLut('pressure');
   private transit = 1; // freestream transit time (s)
   private invVInf = 0;
   private dtMax = 0;
@@ -76,6 +87,7 @@ export class ParticleSim {
     this.maxAge = new Float32Array(capacity);
     this.color = new Float32Array(capacity * 3);
     this.alpha = new Float32Array(capacity);
+    this.kind = new Uint8Array(capacity);
     this.rng = makeRng(seed);
   }
 
@@ -93,7 +105,7 @@ export class ParticleSim {
   }
 
   setColorMode(mode: ColorBy): void {
-    this.lut = getColorLut(mode).rgb;
+    this.lut = getColorLut(mode);
     this.dirty = true;
   }
 
@@ -140,7 +152,7 @@ export class ParticleSim {
     const pos = this.pos;
     for (let i = from; i < to; i++) {
       const o = i * 3;
-      spawnAnywhere(region, rng, pos, o);
+      this.kind[i] = spawnAnywhere(region, rng, pos, o);
       this.tail[o] = pos[o]!;
       this.tail[o + 1] = pos[o + 1]!;
       this.tail[o + 2] = pos[o + 2]!;
@@ -181,7 +193,9 @@ export class ParticleSim {
     const maxAgeArr = this.maxAge;
     const color = this.color;
     const alpha = this.alpha;
-    const lut = this.lut;
+    const kind = this.kind;
+    const lut = this.lut.rgb;
+    const emphasis = this.lut.emphasis;
     const invVInf = this.invVInf;
     const transit = this.transit;
     const [xMin, yMin, zMin] = region.min;
@@ -231,7 +245,7 @@ export class ParticleSim {
       }
 
       if (!alive) {
-        spawnOnInlet(region, rng, jitterX, pos, o);
+        kind[i] = spawnOnInlet(region, rng, jitterX, pos, o);
         x = pos[o]!;
         y = pos[o + 1]!;
         z = pos[o + 2]!;
@@ -256,7 +270,8 @@ export class ParticleSim {
       tail[o + 1] = tail[o + 1]! + (y - tail[o + 1]!) * tailK;
       tail[o + 2] = tail[o + 2]! + (z - tail[o + 2]!) * tailK;
 
-      const c = lutIndex(speed) * 3;
+      const li = lutIndex(speed);
+      const c = li * 3;
       color[o] = lut[c]!;
       color[o + 1] = lut[c + 1]!;
       color[o + 2] = lut[c + 2]!;
@@ -266,7 +281,11 @@ export class ParticleSim {
       if (fo < a) a = fo;
       const fx = (xMax - x) * outletInv;
       if (fx < a) a = fx;
-      alpha[i] = a < 0 ? 0 : a > 1 ? 1 : a;
+      a = a < 0 ? 0 : a > 1 ? 1 : a;
+      // Undisturbed air recedes; ambient dust stays in the background.
+      a *= FREESTREAM_ALPHA + (1 - FREESTREAM_ALPHA) * emphasis[li]!;
+      if (kind[i] === KIND_AMBIENT) a *= AMBIENT_ALPHA;
+      alpha[i] = a;
     }
     return true;
   }

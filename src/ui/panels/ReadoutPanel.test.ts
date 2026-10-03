@@ -8,7 +8,7 @@ import { EMPTY_RESULTS } from '../../state/results';
 import type { ResultsState } from '../../state/results';
 import { Store } from '../../state/store';
 import { GRAVITY } from '../../shared/units';
-import { ReadoutPanel, machLevel } from './ReadoutPanel';
+import { ReadoutPanel, liftViewsText, machLevel } from './ReadoutPanel';
 
 const preset = PRESETS[0]!;
 
@@ -313,6 +313,39 @@ describe('ReadoutPanel engineer mode', () => {
       (r) => r.querySelector('th')?.firstChild?.textContent === 'e',
     );
     expect(eRow?.querySelector('td')?.textContent).toBe('–');
+  });
+});
+
+describe('Same lift, two views', () => {
+  it('shows the pressure push and the air thrown down once there is a result', () => {
+    setup({ view: { ...DEFAULT_STATE.view, units: 'metric' } }, { aero: makeAero(), geometry });
+    expect(visible('.lift-views')).toBe(true);
+    // 152.3 kN on 124.6 m² = 1222 Pa = 125 kg/m², 1.2% of 101.3 kPa.
+    expect(text('.lift-view--pressure')).toContain(
+      'Each square metre of wing is pushed up with about 120 kg',
+    );
+    expect(text('.lift-view--pressure')).toContain('1.2% of the air pressure at the ground');
+    // ṁ = 1.225 × 60 × π × 35.8² / 4 = 74 t/s; w = 152300 / 73970 = 2.1 m/s.
+    expect(text('.lift-view--newton')).toContain('74 tonnes of air thrown down every second');
+    expect(text('.lift-view--newton')).toContain('2.1 m/s');
+  });
+
+  it('is hidden without geometry, and words negative and zero lift', () => {
+    setup({}, { aero: makeAero() });
+    expect(visible('.lift-views')).toBe(false);
+    const down = liftViewsText(makeAero({ lift: -20000, CL: -0.1 }), geometry, 'aviation');
+    expect(down.pressure).toContain('pushed down');
+    expect(down.newton).toContain('thrown up every second');
+    const none = liftViewsText(makeAero({ lift: 10, CL: 0.0001 }), geometry, 'aviation');
+    expect(none.newton).toBe('With no lift, the wing throws no air down.');
+  });
+
+  it('follows the unit system', () => {
+    const t = liftViewsText(makeAero(), geometry, 'imperial');
+    expect(t.pressure).toContain('Each square foot');
+    expect(t.pressure).toContain('psi');
+    expect(t.newton).toContain('lb of air');
+    expect(t.newton).toContain('mph');
   });
 });
 

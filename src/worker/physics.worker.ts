@@ -14,6 +14,7 @@ import type {
   PhysicsRequest,
   PhysicsResponse,
   PhysicsStage,
+  ProbeRequest,
 } from './protocol';
 import { STAGE_ORDER } from './protocol';
 import {
@@ -25,6 +26,7 @@ import {
 } from '../physics/aero';
 import { buildFlowFieldGrid, seedStreamlines, traceStreamlines } from '../physics/flow/index';
 import { domainForGeometry } from '../physics/domain';
+import { probeFlow } from '../physics/flow/probe';
 
 /** Flow-field grid node budget at fieldQuality = 1 (the flow module's default). */
 export const DEFAULT_FIELD_NODES = 120_000;
@@ -106,6 +108,10 @@ export async function handleRequest(
     handleCompare(req, post, state);
     return;
   }
+  if (req.type === 'probe') {
+    handleProbe(req, post, state);
+    return;
+  }
   await handleCompute(req, post, isStale, state);
 }
 
@@ -118,6 +124,17 @@ function handleCompare(req: CompareRequest, post: PostFn, state: WorkerState): v
     post({ type: 'compare', requestId: req.requestId, results });
   } catch (err) {
     post({ type: 'error', requestId: req.requestId, stage: 'compare', message: errorMessage(err) });
+  }
+}
+
+/** The 3D probe: the exact flow model at one point around the last solved live wing. */
+function handleProbe(req: ProbeRequest, post: PostFn, state: WorkerState): void {
+  const last = state.last;
+  try {
+    const sample = last ? probeFlow(last.geometry, last.aero, req.point) : null;
+    post({ type: 'probe', requestId: req.requestId, sample });
+  } catch (err) {
+    post({ type: 'error', requestId: req.requestId, stage: 'probe', message: errorMessage(err) });
   }
 }
 

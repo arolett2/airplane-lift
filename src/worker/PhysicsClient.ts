@@ -5,7 +5,13 @@
  */
 import type { AeroResult, WingGeometry } from '../physics/types';
 import type { FlowConditions, WingConfig } from '../state/params';
-import type { CompareRequest, ComputeRequest, PhysicsResponse } from './protocol';
+import type {
+  CompareRequest,
+  ComputeRequest,
+  FlowProbeSample,
+  PhysicsResponse,
+  ProbeRequest,
+} from './protocol';
 
 /** Give up on a compare request after this long (ms). */
 export const COMPARE_TIMEOUT_MS = 20_000;
@@ -46,6 +52,10 @@ export class PhysicsClient {
   /** Newest requestId delivered per stage (errors count toward their stage). */
   private readonly newestDelivered = new Map<string, number>();
   private readonly pendingCompares = new Map<number, PendingCompare>();
+  private readonly pendingProbes = new Map<
+    number,
+    { resolve: (s: FlowProbeSample | null) => void; reject: (err: Error) => void }
+  >();
 
   constructor(createWorker: () => Worker = createPhysicsWorker) {
     this.worker = createWorker();
@@ -106,6 +116,28 @@ export class PhysicsClient {
       }
     });
 
+  /**
+   * Evaluate the exact 3D flow at a tunnel-frame point around the latest solved wing (the 3D
+   * probe). Resolves with null before the first solve; rejects on a worker error.
+   */
+  probe(point: [number, number, number]): Promise<FlowProbeSample | null> {
+    return new Promise((resolve, reject) => {
+      if (this.disposed) {
+        reject(new Error('PhysicsClient has been disposed'));
+        return;
+      }
+      const requestId = this.nextRequestId++;
+      this.pendingProbes.set(requestId, { resolve, reject });
+      const req: ProbeRequest = { type: 'probe', requestId, point: [point[0], point[1], point[2]] };
+      try {
+        this.worker.postMessage(req);
+      } catch (err) {
+        this.pendingProbes.delete(requestId);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -114,6 +146,7 @@ export class PhysicsClient {
     this.worker.removeEventListener('messageerror', this.handleMessageError);
     this.worker.terminate();
     this.rejectAllCompares(new Error('PhysicsClient has been disposed'));
+    this.rejectAllProbes(new Error('PhysicsClient has been disposed'));
     this.listeners.clear();
   }
 
@@ -138,6 +171,14 @@ export class PhysicsClient {
     }
     if (msg.type === 'error' && msg.stage === 'compare') {
       this.settleCompare(msg.requestId, new Error(msg.message));
+      return;
+    }
+    if (msg.type === 'probe' || (msg.type === 'error' && msg.stage === 'probe')) {
+      const pending = this.pendingProbes.get(msg.requestId);
+      if (!pending) return;
+      this.pendingProbes.delete(msg.requestId);
+      if (msg.type === 'probe') pending.resolve(msg.sample);
+      else pending.reject(new Error(msg.message));
       return;
     }
     const stage = msg.type === 'error' ? msg.stage : msg.type;
@@ -170,10 +211,17 @@ export class PhysicsClient {
     for (const id of [...this.pendingCompares.keys()]) this.settleCompare(id, err);
   }
 
+  private rejectAllProbes(err: Error): void {
+    const all = [...this.pendingProbes.values()];
+    this.pendingProbes.clear();
+    for (const p of all) p.reject(err);
+  }
+
   /** A worker-level failure: fail pending compares and report it against the latest compute. */
   private failEverything(message: string): void {
     if (this.disposed) return;
     this.rejectAllCompares(new Error(message));
+    this.rejectAllProbes(new Error(message));
     if (this.latestComputeId > 0) {
       this.emit({ type: 'error', requestId: this.latestComputeId, stage: 'aero', message });
     }

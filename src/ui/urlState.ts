@@ -10,7 +10,8 @@
  * Format (JSON, positional arrays to stay compact; bump `VERSION` when the layout changes):
  *   { v, p: presetId|null, w: [20 wing numbers], t: tipKindIndex, b: bitflags,
  *     f: [alpha, airspeed, altitude], o: [flowMode, colorBy, rakeMode, rakeEta, rakeHeight,
- *     rakeCount, sectionEta, units, camera] }
+ *     rakeCount, sectionEta, units, camera], s?: [sectionBackdrop, sectionFrame] }
+ * `s` was added later and is optional: links without it keep the default cross-section view.
  */
 import type {
   AppState,
@@ -18,6 +19,8 @@ import type {
   ColorBy,
   FlowVizMode,
   RakeMode,
+  SectionBackdrop,
+  SectionFrame,
   TipDeviceKind,
   UnitSystem,
 } from '../state/params';
@@ -64,6 +67,8 @@ const TIP_KINDS: readonly TipDeviceKind[] = [
 const FLOW_MODES: readonly FlowVizMode[] = ['streamlines', 'particles', 'both', 'off'];
 const COLOR_BYS: readonly ColorBy[] = ['pressure', 'speed'];
 const RAKE_MODES: readonly RakeMode[] = ['vertical', 'horizontal', 'tip-vortex'];
+const SECTION_BACKDROPS: readonly SectionBackdrop[] = ['tint', 'terrain'];
+const SECTION_FRAMES: readonly SectionFrame[] = ['wing', 'air'];
 const UNIT_SYSTEMS_ORDER: readonly UnitSystem[] = ['aviation', 'metric', 'imperial'];
 const CAMERAS: readonly CameraShot[] = [
   'overview',
@@ -152,6 +157,10 @@ export function encodeState(state: AppState): string {
       indexOrZero(UNIT_SYSTEMS_ORDER, view.units),
       indexOrZero(CAMERAS, view.camera),
     ],
+    s: [
+      indexOrZero(SECTION_BACKDROPS, view.sectionBackdrop),
+      indexOrZero(SECTION_FRAMES, view.sectionFrame),
+    ],
   };
   return toBase64Url(JSON.stringify(payload));
 }
@@ -232,6 +241,11 @@ function decodeUnsafe(payloadText: string, fallback: AppState): AppState {
   next = setPath(next, 'view.sectionEta', clampTo(asNumber(o[6]), ...SECTION_ETA_RANGE));
   next = setPath(next, 'view.units', asEnum(o[7], UNIT_SYSTEMS_ORDER));
   next = setPath(next, 'view.camera', asEnum(o[8], CAMERAS));
+  if (root.s !== undefined) {
+    const sv = asArray(root.s, 2);
+    next = setPath(next, 'view.sectionBackdrop', asEnum(sv[0], SECTION_BACKDROPS));
+    next = setPath(next, 'view.sectionFrame', asEnum(sv[1], SECTION_FRAMES));
+  }
 
   // A preset id is only kept when it names a preset we know; otherwise the wing is "Custom".
   let presetId: string | null = null;

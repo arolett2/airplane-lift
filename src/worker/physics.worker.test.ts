@@ -65,6 +65,14 @@ vi.mock('../physics/aero', async (importOriginal) => ({
   computePolarSweep: fakes.computePolarSweep,
   computeSection: fakes.computeSection,
 }));
+vi.mock('../physics/flow/probe', () => ({
+  probeFlow: vi.fn((_g: WingGeometry, aero: AeroResult, point: [number, number, number]) => ({
+    point,
+    inside: false,
+    speedRatio: 1.1,
+    vInf: aero.velocity,
+  })),
+}));
 vi.mock('../physics/flow/index', () => ({
   seedStreamlines: fakes.seedStreamlines,
   traceStreamlines: fakes.traceStreamlines,
@@ -289,6 +297,31 @@ describe('handleRequest (compare)', () => {
     expect(posted.map((p) => p.msg)).toEqual([
       { type: 'error', requestId: 2, stage: 'compare', message: 'bad wing' },
     ]);
+  });
+});
+
+describe('handleRequest (probe)', () => {
+  it('answers null before any wing is solved', async () => {
+    const { posted, post } = recorder();
+    await handleRequest(
+      { type: 'probe', requestId: 4, point: [1, 2, 3] },
+      post,
+      never,
+      createWorkerState(),
+    );
+    expect(posted.map((p) => p.msg)).toEqual([{ type: 'probe', requestId: 4, sample: null }]);
+  });
+
+  it('probes the last solved live wing', async () => {
+    const state = createWorkerState();
+    const { posted, post } = recorder();
+    await handleRequest(request(1, ['aero']), post, never, state);
+    await handleRequest({ type: 'probe', requestId: 2, point: [0, 1, 0.2] }, post, never, state);
+    const last = posted[posted.length - 1]!.msg;
+    expect(last.type).toBe('probe');
+    if (last.type !== 'probe') return;
+    expect(last.sample?.point).toEqual([0, 1, 0.2]);
+    expect(last.sample?.vInf).toBe(DEFAULT_FLOW.airspeed);
   });
 });
 

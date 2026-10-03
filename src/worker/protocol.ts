@@ -15,7 +15,10 @@ import type {
   Streamline3D,
   WingGeometry,
 } from '../physics/types';
+import type { FlowProbeSample } from '../physics/flow/probe';
 import type { FlowConditions, RakeConfig, WingConfig } from '../state/params';
+
+export type { FlowProbeSample };
 
 export type PhysicsStage = 'aero' | 'section' | 'polar' | 'streamlines' | 'field';
 
@@ -47,7 +50,18 @@ export interface CompareRequest {
   cases: { id: string; wing: WingConfig; flow: FlowConditions }[];
 }
 
-export type PhysicsRequest = ComputeRequest | CompareRequest;
+/**
+ * Evaluate the exact 3D flow model at one tunnel-frame point (m) around the most recently solved
+ * live wing (the 3D probe). Answered with a 'probe' response; `sample` is null when no wing has
+ * been solved yet.
+ */
+export interface ProbeRequest {
+  type: 'probe';
+  requestId: number;
+  point: [number, number, number];
+}
+
+export type PhysicsRequest = ComputeRequest | CompareRequest | ProbeRequest;
 
 export type PhysicsResponse =
   | { type: 'aero'; requestId: number; geometry: WingGeometry; aero: AeroResult }
@@ -61,9 +75,19 @@ export type PhysicsResponse =
       results: { id: string; geometry: WingGeometry; aero: AeroResult }[];
     }
   | {
+      type: 'probe';
+      requestId: number;
+      sample: FlowProbeSample | null;
+    }
+  | {
       type: 'done';
       requestId: number;
       /** Wall time each stage of this request took in the worker (ms), for profiling. */
       timingsMs?: Partial<Record<PhysicsStage, number>>;
     }
-  | { type: 'error'; requestId: number; stage: PhysicsStage | 'compare'; message: string };
+  | {
+      type: 'error';
+      requestId: number;
+      stage: PhysicsStage | 'compare' | 'probe';
+      message: string;
+    };

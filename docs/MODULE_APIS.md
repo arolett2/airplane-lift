@@ -259,6 +259,79 @@ export function isApproachingStall(aero: AeroResult): boolean; // any strip abov
 // SectionFlow.separated?: Uint8Array and SectionFlow.fieldCl?: number (stall bubble rendering)
 ```
 
+## Additions: making pressure intuitive
+
+The probe, the pressure terrain, the air's view and the "same lift, two views" readouts. All
+optional extras; App wires them.
+
+```ts
+// state/params.ts — ViewSettings gains (defaults in DEFAULT_VIEW; lessons set them):
+sectionBackdrop: 'tint' | 'terrain';      // cross-section background: colours or pressure relief
+sectionFrame: 'wing' | 'air';             // wing's view (tunnel) or air's view (wind subtracted)
+sectionProbe: { x: number; y: number } | null; // 2D probe, display frame (chords from the LE)
+// ui/urlState.ts shares backdrop + frame in an optional `s` entry; the probe is session-only.
+
+// worker/protocol.ts
+interface ProbeRequest { type: 'probe'; requestId: number; point: [number, number, number] }
+// response: { type: 'probe'; requestId; sample: FlowProbeSample | null } (null before any solve);
+// errors arrive as { type: 'error', stage: 'probe' }. The worker probes its last solved wing.
+
+// worker/PhysicsClient.ts
+probe(point: [number, number, number]): Promise<FlowProbeSample | null>; // never broadcast
+
+// physics/flow/probe.ts — exact vortex-lattice flow + thickness sources at one point
+interface FlowProbeSample { point; inside; velocity; speedRatio; pressure; deltaPressure;
+  pressureFraction; pInf; vInf }
+function probeFlow(geometry: WingGeometry, aero: AeroResult, point: Vec3): FlowProbeSample;
+
+// physics/everyday.ts — pure, SI
+function staticPressureFromSpeed(speedRatio, mach, pInf): number; // isentropic
+function pressureAtSpeed(speedRatio, mach, pInf): PointPressure;  // { pressure, delta, fraction }
+function pressureFromCp(cp, q, pInf): PointPressure;
+function prandtlGlauertFactor(mach): number;
+function pressurePush(lift, area, pInf): PressurePush; // wing loading as Pa, kg/m², share of p∞
+function momentumEstimate(lift, density, velocity, span): MomentumEstimate;
+// ṁ = ρ V π b² / 4, downwash = L / ṁ (lifting-line momentum estimate; signed)
+
+// shared/everydayFormat.ts — wording shared by the 2D card, the 3D label and the Numbers card
+probeText(input, system): ProbeText; describeSpeedRatio; describePressureFraction;
+describeDirection; formatPressureChange (kPa, psi for imperial); formatPressure;
+formatPushPerArea → { amount, area }; formatAirMass; formatDownwashSpeed; formatPercent; roundSig
+
+// ui/charts/sectionFields.ts — pure helpers over SectionFlow (display frame)
+sampleSection(section, X, Y): SectionSample;  probeSection(section, X, Y, free): ProbeReading;
+sampleCpRaster(...); terrainHeight(cp); terrainHeights(cp, fade?); terrainColor(cp, out);
+fillTerrainImage(cp, w, h, relief, out, fade?); smoothField(field, w, h, passes);
+contourSegments(field, w, h, level); TERRAIN_LEVELS; TERRAIN_STEP;
+disturbanceArrows(section, win, spacing); farFieldDisturbance(section, X, Y);
+disturbanceGain(arrows, targetLength); niceFloor(x); circulationAround(section, box);
+
+// ui/panels/SectionView.ts
+toggleProbe(): void;                                   // probe on (default spot) / off
+export const DEFAULT_SECTION_PROBE: SectionProbe;
+export function sectionCaption(backdrop, frame, cl): string; // worded for the sign of the lift
+
+// ui/panels/ReadoutPanel.ts
+export function liftViewsText(aero, geometry, system): { pressure: string; newton: string };
+
+// ui/panels/TopBar.ts
+interface TopBarActions { onToggleProbe?(on: boolean): void }  // optional Probe button
+setProbeActive(on: boolean): void;
+
+// render/probe/ProbeMarker.ts — ball, flow arrow, slice outline and CSS2D readout card
+class ProbeMarker { object; setVisible; setSize; setPoint; setFlow(velocity | null, vInf, len);
+  setSlice(slice | null); setReadout({ title, lines, tone }); dispose }
+
+// app/flowProbe3d.ts — pointer / keyboard / worker glue for the 3D probe
+class FlowProbe3D { constructor(deps); isActive(); setActive(on); dispose() }
+// pure helpers: defaultProbePoint, probeSlice, clampToDomain, nudgeProbe, flowAngles, probeReadout
+
+// content/lessons.ts
+export const EXTRA_HIGHLIGHTS: readonly string[]; // non-slider controls a step may highlight
+```
+
+The dev handle `window.__tunnel` also carries `flowProbe` (the FlowProbe3D) for snapshots.
+
 ## Visual integration checks
 
 `npm run snapshot` (with `npm run dev` running) drives headless Chrome over the DevTools protocol

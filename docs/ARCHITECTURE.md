@@ -53,6 +53,11 @@ Defined once in `src/physics/types.ts` and used by every layer, including three.
 Stages stream back to the UI cheapest-first: aero → section → polar → streamlines → field.
 A newer request cancels the remaining stages of an older one.
 
+A separate `probe` message evaluates the same exact flow (step 6) at one point around the last
+solved wing, for the 3D flow probe; the local pressure comes from the isentropic relation
+(`physics/everyday.ts`). The 2D probe, the pressure terrain and the air's view work from the
+section's velocity grid on the main thread (`ui/charts/sectionFields.ts`).
+
 ## Colour language
 
 `shared/colormaps.ts` is shared by 3D and 2D views. Blue means low pressure (suction, fast air),

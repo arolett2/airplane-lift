@@ -12,6 +12,8 @@ import { getPreset } from '../state/presets';
 import { LESSONS } from '../content/lessons';
 import { applyLessonUpTo } from '../content/applyStep';
 import { computeAero, computePolarSweep, computeSection, createAeroCache } from './aero';
+import { buildWingGeometry } from './wing/geometry';
+import { momentumEstimate, pressurePush } from './everyday';
 
 const G = 9.80665;
 const KNOT = 0.514444;
@@ -62,6 +64,43 @@ describe('lesson claims hold in the tunnel (real solvers)', { timeout: 120_000 }
       let k = 0;
       for (let i = 1; i < mid.cp.upper.length; i++) if (mid.cp.upper[i]! < mid.cp.upper[k]!) k = i;
       expect(mid.cp.xc[k]!).toBeLessThan(0.15);
+    });
+
+    it('probe: the strongest suction is only about 2% of normal air pressure; ~120 kg per m²', () => {
+      const s = stateAt('what-is-lift', 'what-is-lift-probe');
+      const r = at(s);
+      let minCp = 0;
+      for (const strip of r.strips) for (const cp of strip.cp.upper) minCp = Math.min(minCp, cp);
+      const strongest = (-minCp * r.dynamicPressure) / r.atmosphere.pressure;
+      expect(strongest).toBeGreaterThan(0.015);
+      expect(strongest).toBeLessThan(0.03);
+      const area = buildWingGeometry(s.wing).referenceArea;
+      const push = pressurePush(r.lift, area, r.atmosphere.pressure);
+      expect(push.massPerArea).toBeGreaterThan(105);
+      expect(push.massPerArea).toBeLessThan(135);
+    });
+
+    it('terrain: a stagnation hill at the nose and a suction valley over the top', () => {
+      const s = stateAt('what-is-lift', 'what-is-lift-fast-air');
+      expect(s.view.sectionBackdrop).toBe('terrain');
+      const sec = computeSection(s.wing, s.flow, s.view.sectionEta, cache);
+      const all = [...sec.cp.upper, ...sec.cp.lower];
+      expect(Math.max(...all)).toBeGreaterThan(0.9);
+      expect(Math.min(...sec.cp.upper)).toBeLessThan(-0.6);
+    });
+
+    it("air's view: about 6 tonnes of air thrown down each second, at about 3 m/s", () => {
+      const s = stateAt('what-is-lift', 'what-is-lift-air-view');
+      expect(s.view.sectionFrame).toBe('air');
+      const r = at(s);
+      const span = buildWingGeometry(s.wing).referenceSpan;
+      const m = momentumEstimate(r.lift, r.atmosphere.density, r.velocity, span);
+      expect(m.massFlow / 1000).toBeGreaterThan(5.5);
+      expect(m.massFlow / 1000).toBeLessThan(6.5);
+      expect(m.downwash).toBeGreaterThan(2.5);
+      expect(m.downwash).toBeLessThan(3.5);
+      // Negative angle: everything reverses.
+      expect(at(s, { alphaDeg: -6 }).lift).toBeLessThan(0);
     });
 
     it('raising the angle makes more lift (both-views step)', () => {

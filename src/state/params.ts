@@ -93,6 +93,20 @@ export type ColorBy = 'pressure' | 'speed';
 export type RakeMode = 'vertical' | 'horizontal' | 'tip-vortex';
 export type CameraShot = 'overview' | 'side' | 'front' | 'top' | 'tip' | 'behind' | 'section';
 export type UnitSystem = 'aviation' | 'metric' | 'imperial';
+/** Background of the 2D cross-section: pressure colours, or pressure as hills and valleys. */
+export type SectionBackdrop = 'tint' | 'terrain';
+/**
+ * Whose point of view the 2D cross-section shows the air from: the wing's (the tunnel: air
+ * streams past) or the air's (the freestream subtracted: what the passing wing does to still air).
+ */
+export type SectionFrame = 'wing' | 'air';
+
+/** Probe position in the 2D cross-section, display frame (chords; air flows along +x, y up,
+ * origin at the leading edge). */
+export interface SectionProbe {
+  x: number;
+  y: number;
+}
 
 export interface RakeConfig {
   mode: RakeMode;
@@ -125,6 +139,12 @@ export interface ViewSettings {
   /** Show the full engineering readouts (coefficients, Reynolds, Mach, ...). */
   engineerMode: boolean;
   camera: CameraShot;
+  /** Cross-section background (see SectionBackdrop). */
+  sectionBackdrop: SectionBackdrop;
+  /** Cross-section point of view (see SectionFrame). */
+  sectionFrame: SectionFrame;
+  /** Probe in the cross-section, or null when it is not placed. Not shared in links. */
+  sectionProbe: SectionProbe | null;
 }
 
 export interface LessonProgress {
@@ -232,6 +252,9 @@ export const DEFAULT_VIEW: ViewSettings = {
   units: 'aviation',
   engineerMode: false,
   camera: 'overview',
+  sectionBackdrop: 'tint',
+  sectionFrame: 'wing',
+  sectionProbe: null,
 };
 
 /** The id of the preset loaded on first visit (see presets.ts). */

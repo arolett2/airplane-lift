@@ -18,6 +18,8 @@ export interface TopBarActions {
   onPulse(): void;
   onOpenLessons(): void;
   onOpenCompare(): void;
+  /** Switch the 3D flow probe on or off (optional: no button without it). */
+  onToggleProbe?(on: boolean): void;
 }
 
 export const TOP_BAR_TITLE = 'Wind Tunnel — How Wings Lift';
@@ -44,6 +46,8 @@ export class TopBar {
   private readonly buttons: IconButtonControl[] = [];
   private readonly camera: HTMLSelectElement;
   private readonly share: IconButtonControl;
+  private readonly probe: IconButtonControl | null = null;
+  private probeOn = false;
   private readonly panelButtons = new Map<DrawerPanel, IconButtonControl>();
   private shareTimer: ReturnType<typeof setTimeout> | null = null;
   private localPanel: DrawerPanel | null = null;
@@ -109,6 +113,19 @@ export class TopBar {
       }),
     );
     const share = add(this.share);
+    let probe: HTMLButtonElement | null = null;
+    if (actions.onToggleProbe) {
+      const toggle = actions.onToggleProbe;
+      this.probe = createIconButton({
+        icon: 'probe',
+        label: 'Probe the air: click a point in the tunnel to read its speed and pressure',
+        text: 'Probe',
+        pressed: false,
+        class: 'topbar__probe',
+        onClick: () => toggle(!this.probeOn),
+      });
+      probe = add(this.probe);
+    }
 
     root.classList.add('topbar');
     root.append(
@@ -124,6 +141,7 @@ export class TopBar {
         lessons,
         compare,
         pulse,
+        probe,
         h('label', { class: 'topbar__camera', for: cameraId }, icon('camera', 18), this.camera),
         share,
         readoutsToggle,
@@ -147,6 +165,12 @@ export class TopBar {
       disposables.add(() => observer.disconnect());
     }
     this.syncPanelButtons();
+  }
+
+  /** Reflect whether the 3D probe is on (the app owns that state). */
+  setProbeActive(on: boolean): void {
+    this.probeOn = on;
+    this.probe?.set(on);
   }
 
   destroy(): void {

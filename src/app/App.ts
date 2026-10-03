@@ -421,6 +421,11 @@ export async function startApp(root: HTMLElement): Promise<void> {
       history.replaceState(null, '', `#${encodeState(s)}`);
     }, 400);
   });
+  // A shared link pasted into this tab (or Back / Forward between links) only changes the hash;
+  // the page does not reload, so load the linked state here. Our own replaceState writes do not
+  // fire 'hashchange'. Session-only state (lesson, comparison) is kept.
+  const onHashChange = () => store.set((s) => decodeState(window.location.hash, s));
+  window.addEventListener('hashchange', onHashChange);
 
   /* ---------------------------------------------------------------- go */
   scheduler.invalidate(STAGE_ORDER);
@@ -433,6 +438,7 @@ export async function startApp(root: HTMLElement): Promise<void> {
   window.addEventListener('pagehide', (event: PageTransitionEvent) => {
     // A page kept in the back/forward cache comes back as it was: tear down only on a real unload.
     if (event.persisted) return;
+    window.removeEventListener('hashchange', onHashChange);
     insetObserver?.disconnect();
     wideLayout?.removeEventListener?.('change', measureInsets);
     for (const p of panels) p.destroy();

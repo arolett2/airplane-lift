@@ -537,6 +537,9 @@
 }
 
 .collapsible__clip {
+  /* Positioned so absolutely placed bits inside (visually hidden inputs, toggle knobs) are
+     clipped with the rest of a closed section instead of stretching the panel's scroll area. */
+  position: relative;
   min-height: 0;
   overflow: hidden;
 }

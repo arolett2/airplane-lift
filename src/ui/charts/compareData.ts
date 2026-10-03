@@ -278,7 +278,7 @@ export function compareRows(a: CaseSummary, b: CaseSummary, units: UnitSystem): 
     row(
       'efficiency',
       'Span efficiency',
-      'How close the lift sharing is to the ideal ellipse (1.00 is perfect).',
+      'How close the lift sharing is to the ideal ellipse (1.00); tip devices can push it a little higher.',
       a.spanEfficiency,
       b.spanEfficiency,
       (v) => fixed(v, 2),

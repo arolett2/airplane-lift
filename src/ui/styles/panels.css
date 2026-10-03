@@ -157,23 +157,35 @@
 /* ------------------------------------------------------------------------------------------ */
 
 .readouts {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
+/* A small chip over the lift card's empty top-right corner: it never pushes the cards around
+   while the person drags a slider. */
 .readouts__status {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  right: 10px;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
+  padding: 2px 8px;
   color: var(--muted);
-  font-size: var(--fs-sm);
+  background: var(--surface-solid);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
+  pointer-events: none;
 }
 
 .readouts.is-computing .readouts__status::before {
   content: '';
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--accent);
   animation: pulse-dot 1s ease-in-out infinite;
@@ -189,7 +201,7 @@
 .readouts.is-computing .metric__number,
 .readouts.is-computing .gauge,
 .readouts.is-computing .engineer__value {
-  opacity: 0.6;
+  opacity: 0.72;
 }
 
 /* ---- Banners ---- */

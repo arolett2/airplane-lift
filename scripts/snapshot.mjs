@@ -120,7 +120,10 @@ const evaluate = async (expression) => {
 const settle = async (extraMs) => {
   // Wait until the physics worker reports nothing pending, then let animation run.
   for (let i = 0; i < 100; i++) {
-    const busy = await evaluate(`(window.__tunnel?.results.get().pending.length ?? 1) > 0`);
+    // Production builds have no dev handle: nothing to poll, just wait.
+    const busy = await evaluate(
+      `!!window.__tunnel && window.__tunnel.results.get().pending.length > 0`,
+    );
     if (!busy) break;
     await sleep(150);
   }
@@ -137,13 +140,17 @@ try {
     mobile: false,
   });
   await send('Page.navigate', { url: baseUrl });
-  for (let i = 0; i < 100 && !(await evaluate('!!window.__tunnel')); i++) await sleep(200);
+  // Wait for the dev handle (or, in a production build, for the canvas to appear).
+  for (let i = 0; i < 100; i++) {
+    if (await evaluate(`!!window.__tunnel || !!document.querySelector('canvas')`)) break;
+    await sleep(200);
+  }
   const report = [];
   for (const sc of scenarios) {
     if (sc.setup) await evaluate(`(async () => { const t = window.__tunnel; ${sc.setup} })()`);
     await settle(sc.wait ?? 1500);
-    const stats =
-      await evaluate(`(() => { const r = window.__tunnel.results.get(); const a = r.aero;
+    const stats = await evaluate(`(() => { if (!window.__tunnel) return null;
+      const r = window.__tunnel.results.get(); const a = r.aero;
       return a ? { CL: +a.CL.toFixed(3), LD: +a.liftToDrag.toFixed(1), liftKN: +(a.lift/1000).toFixed(0),
       stall: a.stall.any, alphaDeg: +(a.alpha*180/Math.PI).toFixed(1), fps: window.__tunnel.scene.fps,
       lines: r.streamlines?.length ?? 0 } : null })()`);

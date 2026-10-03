@@ -359,7 +359,10 @@ export class ChartsPanel {
     const xAxis = {
       label: 'Root → tip',
       short: 'Along wing',
-      includeZero: true,
+      // End the axis at the last strip (a little past the tip with a tip device), not at the
+      // next round number: 150% of the half-span wasted a third of the chart.
+      min: 0,
+      max: Math.max(1, Math.ceil(data.etaMax * 20) / 20),
       tickCount: 6,
       format: (v: number) => percentTick(v),
       tooltipFormat: percentTip,
@@ -397,7 +400,7 @@ export class ChartsPanel {
     loadFig.show(
       {
         x: xAxis,
-        y: { label: 'Lift per metre (× average)', short: 'Load', includeZero: true },
+        y: { label: 'Lift per metre', short: 'Load (× average)', includeZero: true },
         series: loadSeries,
         vlines: tipLine,
         xInclude: [1],

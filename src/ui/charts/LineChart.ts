@@ -328,10 +328,12 @@ export class LineChart {
     ctx.rect(layout.left, layout.top - 2, plotW, plotH + 4);
     ctx.clip();
     this.drawBands(ctx, cfg, layout, theme);
-    this.drawAnnotationLines(ctx, cfg, layout, theme, font);
+    this.drawAnnotationLines(ctx, cfg, layout, theme);
     this.drawSeries(ctx, cfg, layout, theme);
-    this.drawMarkers(ctx, cfg, layout, theme, font);
+    this.drawMarkers(ctx, cfg, layout, theme);
     ctx.restore();
+    // Labels last, each placed where it covers the fewest curves and no other label.
+    this.drawLabels(ctx, cfg, layout, theme, font);
 
     if (this.hover.active) this.drawHover(ctx, cfg, layout, theme, font);
     this.drawCount++;
@@ -579,15 +581,11 @@ export class LineChart {
     cfg: ChartConfig,
     layout: Layout,
     theme: ChartTheme,
-    font: (px: number, weight?: string) => string,
   ): void {
-    ctx.font = font(10.5, '600');
-    ctx.textBaseline = 'top';
     for (const v of cfg.vlines ?? []) {
       if (!Number.isFinite(v.x)) continue;
       const x = Math.round(layout.xScale.map(v.x)) + 0.5;
-      const color = v.color ? resolveColor(v.color, theme) : theme.textMuted;
-      ctx.strokeStyle = color;
+      ctx.strokeStyle = v.color ? resolveColor(v.color, theme) : theme.textMuted;
       ctx.lineWidth = 1.25;
       ctx.setLineDash(v.dash ?? [5, 4]);
       ctx.beginPath();
@@ -595,18 +593,11 @@ export class LineChart {
       ctx.lineTo(x, layout.bottom);
       ctx.stroke();
       ctx.setLineDash([]);
-      if (v.label) {
-        const w = ctx.measureText(v.label).width;
-        const rightSide = x + 4 + w <= layout.right;
-        ctx.textAlign = rightSide ? 'left' : 'right';
-        haloText(ctx, theme, v.label, rightSide ? x + 4 : x - 4, layout.top + 3, color);
-      }
     }
     for (const h of cfg.hlines ?? []) {
       if (!Number.isFinite(h.y)) continue;
       const y = Math.round(layout.yScale.map(h.y)) + 0.5;
-      const color = h.color ? resolveColor(h.color, theme) : theme.textMuted;
-      ctx.strokeStyle = color;
+      ctx.strokeStyle = h.color ? resolveColor(h.color, theme) : theme.textMuted;
       ctx.lineWidth = 1.25;
       ctx.setLineDash(h.dash ?? [5, 4]);
       ctx.beginPath();
@@ -614,16 +605,113 @@ export class LineChart {
       ctx.lineTo(layout.right, y);
       ctx.stroke();
       ctx.setLineDash([]);
-      if (h.label) {
-        ctx.textAlign = 'right';
-        // Sit just above the line (or below if it would leave the plot).
-        const above = y - 12 > layout.top;
-        ctx.textBaseline = above ? 'bottom' : 'top';
-        haloText(ctx, theme, h.label, layout.right - 4, above ? y - 2 : y + 3, color);
-        ctx.textBaseline = 'top';
-      }
     }
     ctx.lineWidth = 1;
+  }
+
+  /**
+   * Text for annotation lines and markers. Each label tries a few spots around its anchor and
+   * takes the one that crosses the fewest curve segments, stays inside the plot and does not
+   * overlap a label already placed, so "You are here" never sits on top of a curve.
+   */
+  private drawLabels(
+    ctx: CanvasRenderingContext2D,
+    cfg: ChartConfig,
+    layout: Layout,
+    theme: ChartTheme,
+    font: (px: number, weight?: string) => string,
+  ): void {
+    const curves = seriesPixels(cfg, layout);
+    const placed: Box[] = [];
+    const plot: Box = {
+      x: layout.left,
+      y: layout.top,
+      w: layout.right - layout.left,
+      h: layout.bottom - layout.top,
+    };
+    const H = LABEL_HEIGHT;
+    ctx.font = font(10.5, '600');
+    const place = (text: string, candidates: [number, number][]): Box => {
+      const w = ctx.measureText(text).width + 6;
+      let best: Box | null = null;
+      let bestScore = Infinity;
+      candidates.forEach(([x, y], order) => {
+        const box = { x, y, w, h: H };
+        const outside =
+          box.x < plot.x - 1 ||
+          box.y < plot.y - 1 ||
+          box.x + box.w > plot.x + plot.w + 1 ||
+          box.y + box.h > plot.y + plot.h + 1;
+        let overlap = 0;
+        for (const p of placed) if (boxesOverlap(box, p)) overlap++;
+        const score =
+          crossings(curves, box) * 10 + (outside ? 400 : 0) + overlap * 200 + order * 0.5;
+        if (score < bestScore) {
+          bestScore = score;
+          best = box;
+        }
+      });
+      placed.push(best!);
+      return best!;
+    };
+    const draw = (box: Box, text: string, color: string): void => {
+      ctx.font = font(10.5, '600');
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      haloText(ctx, theme, text, box.x + 3, box.y + H / 2, color);
+    };
+
+    // Markers first: they matter most and get the first pick of the free space.
+    for (const m of cfg.markers ?? []) {
+      if (!m.label || !Number.isFinite(m.x) || !Number.isFinite(m.y)) continue;
+      const px = layout.xScale.map(m.x);
+      const py = layout.yScale.map(m.y);
+      const r = (m.radius ?? 5) + 5;
+      ctx.font = font(10.5, '600');
+      const w = ctx.measureText(m.label).width + 6;
+      const box = place(m.label, [
+        [px - r - w, py - r - H],
+        [px + r, py + r],
+        [px + r, py - r - H],
+        [px - r - w, py + r],
+        [px + r + 2, py - H / 2],
+        [px - r - 2 - w, py - H / 2],
+        [px - w / 2, py - r - H - 4],
+        [px - w / 2, py + r + 4],
+      ]);
+      draw(box, m.label, theme.text);
+    }
+    for (const v of cfg.vlines ?? []) {
+      if (!v.label || !Number.isFinite(v.x)) continue;
+      const x = Math.round(layout.xScale.map(v.x)) + 0.5;
+      ctx.font = font(10.5, '600');
+      const w = ctx.measureText(v.label).width + 6;
+      const box = place(v.label, [
+        [x + 3, layout.top + 2],
+        [x - 3 - w, layout.top + 2],
+        [x + 3, layout.top + 2 + H],
+        [x - 3 - w, layout.top + 2 + H],
+        [x + 3, layout.bottom - H - 2],
+        [x - 3 - w, layout.bottom - H - 2],
+      ]);
+      draw(box, v.label, v.color ? resolveColor(v.color, theme) : theme.textMuted);
+    }
+    for (const hl of cfg.hlines ?? []) {
+      if (!hl.label || !Number.isFinite(hl.y)) continue;
+      const y = Math.round(layout.yScale.map(hl.y)) + 0.5;
+      ctx.font = font(10.5, '600');
+      const w = ctx.measureText(hl.label).width + 6;
+      const mid = (layout.left + layout.right - w) / 2;
+      const box = place(hl.label, [
+        [layout.right - 3 - w, y - H - 1],
+        [layout.right - 3 - w, y + 2],
+        [layout.left + 4, y - H - 1],
+        [layout.left + 4, y + 2],
+        [mid, y - H - 1],
+        [mid, y + 2],
+      ]);
+      draw(box, hl.label, hl.color ? resolveColor(hl.color, theme) : theme.textMuted);
+    }
   }
 
   private drawSeries(
@@ -685,7 +773,6 @@ export class LineChart {
     cfg: ChartConfig,
     layout: Layout,
     theme: ChartTheme,
-    font: (px: number, weight?: string) => string,
   ): void {
     for (const m of cfg.markers ?? []) {
       if (!Number.isFinite(m.x) || !Number.isFinite(m.y)) continue;
@@ -708,22 +795,6 @@ export class LineChart {
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = theme.halo;
       ctx.stroke();
-      if (m.label) {
-        ctx.font = font(10.5, '600');
-        ctx.textBaseline = 'middle';
-        const w = ctx.measureText(m.label).width;
-        // Prefer the upper left, where rising curves leave room; flip if that leaves the plot.
-        let tx = px - r - 6;
-        let align: CanvasTextAlign = 'right';
-        if (tx - w < layout.left) {
-          tx = px + r + 6;
-          align = 'left';
-        }
-        let ty = py - r - 9;
-        if (ty < layout.top + 6) ty = py + r + 9;
-        ctx.textAlign = align;
-        haloText(ctx, theme, m.label, tx, ty, theme.text);
-      }
     }
   }
 
@@ -819,6 +890,85 @@ interface HeaderItem {
   text: string;
   width: number;
   series: ChartSeries;
+}
+
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+const LABEL_HEIGHT = 15;
+
+const boxesOverlap = (a: Box, b: Box): boolean =>
+  a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+
+/** Every series as a flat pixel polyline (NaN breaks the line), for label placement. */
+function seriesPixels(cfg: ChartConfig, layout: Layout): Float32Array[] {
+  return cfg.series.map((s) => {
+    const n = Math.min(s.x.length, s.y.length);
+    const out = new Float32Array(2 * n);
+    for (let i = 0; i < n; i++) {
+      const xv = s.x[i]!;
+      const yv = s.y[i]!;
+      const ok = Number.isFinite(xv) && Number.isFinite(yv);
+      out[2 * i] = ok ? layout.xScale.map(xv) : NaN;
+      out[2 * i + 1] = ok ? layout.yScale.map(yv) : NaN;
+    }
+    return out;
+  });
+}
+
+/** Does the segment (x0, y0)-(x1, y1) touch the box (grown by 2 px)? */
+function segmentHitsBox(x0: number, y0: number, x1: number, y1: number, b: Box): boolean {
+  const pad = 2;
+  const left = b.x - pad;
+  const right = b.x + b.w + pad;
+  const top = b.y - pad;
+  const bottom = b.y + b.h + pad;
+  // Liang-Barsky clipping: the segment hits the box if some part survives the clip.
+  let t0 = 0;
+  let t1 = 1;
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const edges: [number, number][] = [
+    [-dx, x0 - left],
+    [dx, right - x0],
+    [-dy, y0 - top],
+    [dy, bottom - y0],
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q < 0) return false;
+    } else {
+      const r = q / p;
+      if (p < 0) {
+        if (r > t1) return false;
+        if (r > t0) t0 = r;
+      } else {
+        if (r < t0) return false;
+        if (r < t1) t1 = r;
+      }
+    }
+  }
+  return true;
+}
+
+/** Number of curve segments that cross a box. */
+function crossings(curves: readonly Float32Array[], box: Box): number {
+  let hits = 0;
+  for (const c of curves) {
+    for (let i = 2; i + 1 < c.length; i += 2) {
+      const x0 = c[i - 2]!;
+      const y0 = c[i - 1]!;
+      const x1 = c[i]!;
+      const y1 = c[i + 1]!;
+      if (!Number.isFinite(x0 + y0 + x1 + y1)) continue;
+      if (segmentHitsBox(x0, y0, x1, y1, box)) hits++;
+    }
+  }
+  return hits;
 }
 
 /** Shorten `text` with an ellipsis so it fits `maxWidth` in the context's current font. */

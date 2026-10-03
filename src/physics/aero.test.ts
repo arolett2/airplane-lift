@@ -321,6 +321,7 @@ import {
   computePolarSweep,
   computeSection,
   createAeroCache,
+  machBrackets,
   machBucketIndex,
   MACH_BUCKET,
   POLAR_ALPHA_MAX_DEG,
@@ -349,6 +350,13 @@ function lastSolution(): CoupledSolution {
 function lastModel(): VlmModel {
   return fakes.buildVlmModel.mock.results.at(-1)!.value as VlmModel;
 }
+/**
+ * DEFAULT_FLOW (60 m/s at sea level, Mach 0.176) lies between the Mach buckets 0.16 and 0.18:
+ * every condition is solved on both and interpolated with this weight on the upper one.
+ */
+const DEFAULT_MACH = DEFAULT_FLOW.airspeed / fakes.isaAtmosphere(0).speedOfSound;
+const DEFAULT_BLEND = machBrackets(DEFAULT_MACH).weight;
+const lerpBlend = (lo: number, hi: number, w = DEFAULT_BLEND) => lo + (hi - lo) * w;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -369,6 +377,20 @@ describe('machBucketIndex', () => {
     expect(machBucketIndex(0.176)).toBe(9);
     expect(machBucketIndex(0.18)).toBe(9);
     expect(machBucketIndex(0.79)).toBe(40);
+  });
+});
+
+describe('machBrackets', () => {
+  it('finds the buckets below and above a Mach number and the weight of the upper one', () => {
+    const b = machBrackets(0.176);
+    expect([b.lo, b.hi]).toEqual([8, 9]);
+    expect(b.weight).toBeCloseTo(0.8, 9);
+    expect(machBrackets(0.79)).toMatchObject({ lo: 39, hi: 40 });
+    expect(machBrackets(0.79).weight).toBeCloseTo(0.5, 9);
+    // On a bucket, and from the Prandtl-Glauert clamp up, one model is enough.
+    expect(machBrackets(0.2)).toEqual({ lo: 10, hi: 10, weight: 0 });
+    expect(machBrackets(0.9)).toMatchObject({ hi: machBrackets(0.9).lo, weight: 0 });
+    expect(machBrackets(0)).toEqual({ lo: 0, hi: 0, weight: 0 });
   });
 });
 
@@ -451,7 +473,10 @@ describe('computeAero', () => {
 
   it('reports NaN span efficiency when the wing carries no lift', () => {
     const real = fakes.solveCoupled.getMockImplementation()!;
-    fakes.solveCoupled.mockImplementationOnce((m, a, p) => ({ ...real(m, a, p), CL: 0 }));
+    // Both Mach buckets around DEFAULT_FLOW are solved.
+    for (let i = 0; i < 2; i++) {
+      fakes.solveCoupled.mockImplementationOnce((m, a, p) => ({ ...real(m, a, p), CL: 0 }));
+    }
     const { aero } = computeAero(DEFAULT_WING, DEFAULT_FLOW, 1, createAeroCache());
     expect(aero.spanEfficiency).toBeNaN();
   });
@@ -592,21 +617,25 @@ describe('AeroCache', () => {
     computeAero(DEFAULT_WING, { alphaDeg: 6, airspeed: 60, altitude: 0 }, 2, cache);
     computeAero(DEFAULT_WING, { alphaDeg: 6, airspeed: 61, altitude: 0 }, 3, cache);
     expect(fakes.buildWingGeometry).toHaveBeenCalledTimes(1);
-    expect(fakes.buildVlmModel).toHaveBeenCalledTimes(1);
-    expect(fakes.buildVlmModel.mock.calls[0]![1]).toEqual({ mach: 9 * MACH_BUCKET });
-    expect(fakes.solveCoupled).toHaveBeenCalledTimes(3);
-    // A new Mach bucket needs a new (Prandtl-Glauert) model, but not new geometry.
-    computeAero(DEFAULT_WING, { alphaDeg: 6, airspeed: 120, altitude: 0 }, 4, cache);
+    // The Mach buckets on either side (0.16 and 0.18), built once and shared.
     expect(fakes.buildVlmModel).toHaveBeenCalledTimes(2);
+    expect(fakes.buildVlmModel.mock.calls.map((c) => c[1])).toEqual([
+      { mach: 8 * MACH_BUCKET },
+      { mach: 9 * MACH_BUCKET },
+    ]);
+    expect(fakes.solveCoupled).toHaveBeenCalledTimes(6);
+    // New Mach buckets need new (Prandtl-Glauert) models, but not new geometry.
+    computeAero(DEFAULT_WING, { alphaDeg: 6, airspeed: 120, altitude: 0 }, 4, cache);
+    expect(fakes.buildVlmModel).toHaveBeenCalledTimes(4);
     expect(fakes.buildWingGeometry).toHaveBeenCalledTimes(1);
-    expect(cache.stats.modelBuilds).toBe(2);
+    expect(cache.stats.modelBuilds).toBe(4);
   });
 
   it('returns the cached solution for unchanged inputs, echoing the new requestId', () => {
     const cache = createAeroCache();
     const a = computeAero(DEFAULT_WING, DEFAULT_FLOW, 1, cache);
     const b = computeAero({ ...DEFAULT_WING }, { ...DEFAULT_FLOW }, 2, cache);
-    expect(fakes.solveCoupled).toHaveBeenCalledTimes(1);
+    expect(fakes.solveCoupled).toHaveBeenCalledTimes(2); // once per Mach bucket
     expect(b.aero.requestId).toBe(2);
     expect(a.aero.requestId).toBe(1);
     expect(b.aero.strips).toBe(a.aero.strips);
@@ -619,14 +648,14 @@ describe('AeroCache', () => {
     const reordered = Object.fromEntries(Object.entries(DEFAULT_WING).reverse()) as WingConfig;
     computeAero(reordered, DEFAULT_FLOW, 2, cache);
     expect(fakes.buildWingGeometry).toHaveBeenCalledTimes(1);
-    expect(fakes.solveCoupled).toHaveBeenCalledTimes(1);
+    expect(fakes.solveCoupled).toHaveBeenCalledTimes(2); // once per Mach bucket
   });
 
   it('resolves each distinct strip airfoil once per model, despite float noise', () => {
     const wing = { ...flapsDown, tipDevice: withWinglets.tipDevice, supercritical: true };
     computeAero(wing, DEFAULT_FLOW, 1, createAeroCache());
-    // Flapped wing, clean wing and winglet sections.
-    expect(fakes.getAirfoilModel).toHaveBeenCalledTimes(3);
+    // Flapped wing, clean wing and winglet sections, for each of the two Mach-bucket models.
+    expect(fakes.getAirfoilModel).toHaveBeenCalledTimes(2 * 3);
     const keys = fakes.getAirfoilModel.mock.calls.map((c) => c[0]);
     expect(keys.every((k) => k.supercritical)).toBe(true);
     const flapped = keys.find((k) => k.flap !== null)!;
@@ -658,13 +687,16 @@ describe('computePolarSweep', () => {
     expect(polar.alphaDeg).toHaveLength(n);
     expect(polar.alphaDeg[0]).toBe(-6);
     expect(polar.alphaDeg[n - 1]).toBe(24);
-    expect(fakes.solveCoupled).toHaveBeenCalledTimes(n);
-    fakes.solveCoupled.mock.calls.forEach(([, a], k) => {
-      expect(a).toBeCloseTo((polar.alphaDeg[k]! * Math.PI) / 180, 12);
-      const sol = fakes.solveCoupled.mock.results[k]!.value as CoupledSolution;
-      expect(polar.CL[k]).toBeCloseTo(sol.CL, 5);
-      expect(polar.CD[k]).toBeGreaterThan(sol.CDi);
-    });
+    // Each angle is solved on both Mach buckets around DEFAULT_FLOW and interpolated.
+    expect(fakes.solveCoupled).toHaveBeenCalledTimes(2 * n);
+    for (let k = 0; k < n; k++) {
+      const [lo, hi] = [2 * k, 2 * k + 1].map((i) => {
+        expect(fakes.solveCoupled.mock.calls[i]![1]).toBeCloseTo(polar.alphaDeg[k]! * DEG, 12);
+        return fakes.solveCoupled.mock.results[i]!.value as CoupledSolution;
+      });
+      expect(polar.CL[k]).toBeCloseTo(lerpBlend(lo!.CL, hi!.CL), 5);
+      expect(polar.CD[k]).toBeGreaterThan(lerpBlend(lo!.CDi, hi!.CDi));
+    }
     const max = Math.max(...polar.CL);
     expect(polar.CLmax).toBe(max);
     expect(polar.alphaStallDeg).toBe(polar.alphaDeg[polar.CL.indexOf(max)]);
@@ -676,8 +708,12 @@ describe('computePolarSweep', () => {
   it('adds the root airfoil 2D lift curve at alpha + root incidence', () => {
     const polar = computePolarSweep(wing, DEFAULT_FLOW, 1, createAeroCache());
     const k = polar.alphaDeg.indexOf(4);
-    // Fake polar: cl = 2 pi (alpha + 0.03) below stall, times Prandtl-Glauert at Mach 0.18.
-    const pg = prandtlGlauertFactor(9 * MACH_BUCKET);
+    // Fake polar: cl = 2 pi (alpha + 0.03) below stall, times the Prandtl-Glauert factor of the
+    // Mach buckets 0.16 / 0.18, interpolated like the 3D solution.
+    const pg = lerpBlend(
+      prandtlGlauertFactor(8 * MACH_BUCKET),
+      prandtlGlauertFactor(9 * MACH_BUCKET),
+    );
     expect(polar.sectionCl[k]).toBeCloseTo(2 * Math.PI * (6 * DEG + 0.03) * pg, 5);
     // The finite wing makes less lift than its 2D section at the same angle.
     expect(polar.CL[k]).toBeLessThan(polar.sectionCl[k]!);
@@ -686,12 +722,15 @@ describe('computePolarSweep', () => {
   it('applies the clamped Prandtl-Glauert factor to the 2D curve at high Mach', () => {
     const fast = { alphaDeg: 2, airspeed: 250, altitude: 10668 };
     const polar = computePolarSweep(wing, fast, 1, createAeroCache());
-    const machModel = (fakes.buildVlmModel.mock.calls[0]![1] as { mach: number }).mach;
-    expect(machModel).toBeGreaterThan(0.8);
-    expect(prandtlGlauertFactor(machModel)).toBeCloseTo(1 / Math.sqrt(1 - machModel ** 2), 12);
+    const machs = fakes.buildVlmModel.mock.calls.map((c) => (c[1] as { mach: number }).mach);
+    expect(machs[0]).toBeGreaterThan(0.8);
+    expect(prandtlGlauertFactor(machs[0]!)).toBeCloseTo(1 / Math.sqrt(1 - machs[0]! ** 2), 12);
+    const mach = fast.airspeed / fakes.isaAtmosphere(fast.altitude).speedOfSound;
+    const { weight } = machBrackets(mach);
+    const pg = lerpBlend(prandtlGlauertFactor(machs[0]!), prandtlGlauertFactor(machs[1]!), weight);
     const k = polar.alphaDeg.indexOf(4);
     const cl2d = 2 * Math.PI * (6 * DEG + 0.03);
-    expect(polar.sectionCl[k]).toBeCloseTo(cl2d * prandtlGlauertFactor(machModel), 5);
+    expect(polar.sectionCl[k]).toBeCloseTo(cl2d * pg, 5);
     expect(prandtlGlauertFactor(0.95)).toBe(prandtlGlauertFactor(0.85));
     expect(prandtlGlauertFactor(0)).toBe(1);
   });
@@ -701,8 +740,8 @@ describe('computePolarSweep', () => {
     computeAero(wing, DEFAULT_FLOW, 1, cache);
     const p1 = computePolarSweep(wing, DEFAULT_FLOW, 1, cache);
     const p2 = computePolarSweep(wing, { ...DEFAULT_FLOW, alphaDeg: 9 }, 2, cache);
-    expect(fakes.buildVlmModel).toHaveBeenCalledTimes(1);
-    expect(fakes.solveCoupled).toHaveBeenCalledTimes(1 + 31);
+    expect(fakes.buildVlmModel).toHaveBeenCalledTimes(2); // the two Mach buckets
+    expect(fakes.solveCoupled).toHaveBeenCalledTimes(2 * (1 + 31));
     expect(p2.requestId).toBe(2);
     expect(p2.CL).toBe(p1.CL);
     computePolarSweep(wing, { ...DEFAULT_FLOW, airspeed: 30 }, 3, cache);
@@ -714,24 +753,27 @@ describe('computeSection', () => {
   it('interpolates the right base-wing strips at eta and reuses the 3D solution', () => {
     const cache = createAeroCache();
     computeAero(tapered, DEFAULT_FLOW, 1, cache);
-    const sol = lastSolution();
+    const [solLo, solHi] = fakes.solveCoupled.mock.results.map((r) => r.value as CoupledSolution);
     const model = lastModel();
     const atm = fakes.isaAtmosphere(0);
     computeSection(tapered, DEFAULT_FLOW, 0.45, cache);
-    expect(fakes.solveCoupled).toHaveBeenCalledTimes(1);
+    expect(fakes.solveCoupled).toHaveBeenCalledTimes(2);
     // Right strips sit at eta 0.125, 0.375, 0.625, 0.875 => between strips 1 and 2, t = 0.3.
     const t = 0.3;
     const lerp = (a: number, b: number) => a + (b - a) * t;
     const [airfoilModel, input] = fakes.computeSectionFlow.mock.calls[0]!;
     const alpha = DEFAULT_FLOW.alphaDeg * DEG;
-    const alphaEff = lerp(sol.stripAlphaEffective[1]!, sol.stripAlphaEffective[2]!);
+    const eff = (i: number) =>
+      lerpBlend(solLo!.stripAlphaEffective[i]!, solHi!.stripAlphaEffective[i]!);
+    const alphaEff = lerp(eff(1), eff(2));
     const reAt = (i: number) => (atm.density * 60 * model.strips[i]!.chord) / atm.dynamicViscosity;
     expect(input.eta).toBe(0.45);
     expect(input.alphaGeometric).toBeCloseTo(alpha, 12);
     expect(input.alphaInduced).toBeCloseTo(alpha - alphaEff, 12);
     expect(input.reynolds).toBeCloseTo(lerp(reAt(1), reAt(2)), 3);
     expect(input.alphaInduced).toBeGreaterThan(0);
-    expect(airfoilModel).toBe(fakes.getAirfoilModel.mock.results[0]!.value);
+    // The airfoil of the nearer Mach bucket's model (0.18, resolved second).
+    expect(airfoilModel).toBe(fakes.getAirfoilModel.mock.results.at(-1)!.value);
   });
 
   it('reuses the last section flow for an unchanged wing, flow and eta', () => {

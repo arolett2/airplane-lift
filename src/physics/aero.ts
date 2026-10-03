@@ -7,7 +7,9 @@
  * Everything expensive is memoised in an `AeroCache`:
  *   - wing geometry, keyed by the wing config;
  *   - the VLM model (its factorised influence matrix), keyed by wing + Mach bucket (0.02), since
- *     Prandtl-Glauert makes the matrix Mach dependent;
+ *     Prandtl-Glauert makes the matrix Mach dependent. A flight condition is solved on the two
+ *     buckets around its Mach number and the solutions are interpolated, so lift and drag change
+ *     smoothly with speed instead of in steps at every bucket boundary;
  *   - the airfoil model of every strip (the airfoil module memoises too; this skips its lookup),
  *     plus its lift-limited view for the current Mach number (sweep + buffet, see
  *     compressibility.wingLiftLimit);
@@ -89,7 +91,15 @@ export interface SolvedState {
   wing: WingConfig;
   flow: FlowConditions;
   geometry: WingGeometry;
+  /** Model of the Mach bucket nearest the flight Mach number (strip layout and lattice). */
   entry: ModelEntry;
+  /**
+   * The two bucket models the solution interpolates between, and the upper one's weight; null
+   * when the Mach number sits on a bucket (or above the Prandtl-Glauert clamp).
+   */
+  machBlend: { lo: ModelEntry; hi: ModelEntry; weight: number } | null;
+  /** Prandtl-Glauert lift factor 1 / beta of the (interpolated) solution. */
+  liftScale: number;
   atmosphere: AtmosphereState;
   velocity: number;
   mach: number;
@@ -162,9 +172,48 @@ export function prandtlGlauertFactor(mach: number): number {
   return 1 / Math.sqrt(1 - m * m);
 }
 
-/** Mach bucket index: the model is built at `machBucketIndex(m) * MACH_BUCKET`. */
+/** Index of the Mach bucket nearest `mach` (models are built at `index * MACH_BUCKET`). */
 export function machBucketIndex(mach: number): number {
   return Math.max(0, Math.round(mach / MACH_BUCKET));
+}
+
+/**
+ * The Mach buckets just below and above `mach` and the weight of the upper one, for linear
+ * interpolation between their solutions. `hi === lo` (weight 0) on a bucket and from the
+ * Prandtl-Glauert clamp up, where every bucket gives the same model.
+ */
+export function machBrackets(mach: number): { lo: number; hi: number; weight: number } {
+  const pos = Math.max(0, Number.isFinite(mach) ? mach : 0) / MACH_BUCKET;
+  const lo = Math.floor(pos + 1e-9);
+  const weight = pos - lo;
+  if (weight < 1e-9 || lo * MACH_BUCKET >= MACH_PG_LIMIT) return { lo, hi: lo, weight: 0 };
+  return { lo, hi: lo + 1, weight };
+}
+
+/** Interpolate two coupled solutions on the same strip layout: (1 - w) a + w b. */
+function blendSolutions(a: CoupledSolution, b: CoupledSolution, w: number): CoupledSolution {
+  const out: Record<string, unknown> = {};
+  const src = a as unknown as Record<string, unknown>;
+  const other = b as unknown as Record<string, unknown>;
+  for (const key of Object.keys(src)) {
+    const va = src[key];
+    const vb = other[key];
+    if (va instanceof Float64Array && vb instanceof Float64Array && va.length === vb.length) {
+      const v = new Float64Array(va.length);
+      for (let i = 0; i < v.length; i++) v[i] = va[i]! + (vb[i]! - va[i]!) * w;
+      out[key] = v;
+    } else if (typeof va === 'number' && typeof vb === 'number') {
+      out[key] = key === 'iterations' ? Math.max(va, vb) : va + (vb - va) * w;
+    } else if (typeof va === 'boolean' && typeof vb === 'boolean') {
+      out[key] = va && vb;
+    } else if (Array.isArray(va) && Array.isArray(vb) && va.length === vb.length) {
+      out[key] = va.map((x: number, i) => x + ((vb[i] as number) - x) * w);
+    } else {
+      // Flags and anything else: the nearer bucket's.
+      out[key] = w < 0.5 ? va : vb;
+    }
+  }
+  return out as unknown as CoupledSolution;
 }
 
 function lruGet<V>(map: Map<string, V>, key: string): V | undefined {
@@ -373,9 +422,12 @@ export function solveState(wing: WingConfig, flow: FlowConditions, cache: AeroCa
   const alpha = flow.alphaDeg * DEG;
 
   const geometry = getGeometry(wing, wingKey, cache);
-  const entry = getModelEntry(geometry, wingKey, machBucketIndex(mach), cache);
+  const brackets = machBrackets(mach);
+  const lo = getModelEntry(geometry, wingKey, brackets.lo, cache);
+  const hi =
+    brackets.hi === brackets.lo ? lo : getModelEntry(geometry, wingKey, brackets.hi, cache);
+  const entry = brackets.weight < 0.5 ? lo : hi;
   const { model } = entry;
-  const airfoils = limitedStripAirfoils(entry, wing, geometry, mach);
 
   const n = model.strips.length;
   const stripReynolds = new Float64Array(n);
@@ -386,14 +438,28 @@ export function solveState(wing: WingConfig, flow: FlowConditions, cache: AeroCa
     stripAlphaGeometric[i] = stripGeometricAlpha(strip, alpha);
   }
 
-  const solution = solveCoupled(model, alpha, makeProvider(model, airfoils, stripReynolds));
-  cache.stats.coupledSolves++;
+  const solveOn = (e: ModelEntry): CoupledSolution => {
+    const airfoilsOf = limitedStripAirfoils(e, wing, geometry, mach);
+    cache.stats.coupledSolves++;
+    return solveCoupled(e.model, alpha, makeProvider(e.model, airfoilsOf, stripReynolds));
+  };
+  const blended = hi !== lo && hi.model.strips.length === n && lo.model.strips.length === n;
+  const solution = blended
+    ? blendSolutions(solveOn(lo), solveOn(hi), brackets.weight)
+    : solveOn(entry);
+  const airfoils = limitedStripAirfoils(entry, wing, geometry, mach);
+  const machBlend = blended ? { lo, hi, weight: brackets.weight } : null;
+  const liftScale = machBlend
+    ? (1 - machBlend.weight) / lo.model.beta + machBlend.weight / hi.model.beta
+    : 1 / model.beta;
 
   const state: SolvedState = {
     wing,
     flow,
     geometry,
     entry,
+    machBlend,
+    liftScale,
     atmosphere,
     velocity,
     mach,
@@ -582,9 +648,12 @@ function assembleAero(state: SolvedState, requestId: number): AeroResult {
 
   // Linear (attached-flow) lift slope by central difference of the inviscid solution.
   const dA = 1 * DEG;
-  const liftSlope =
-    (solveVlm(model, { alpha: alpha + dA }).CL - solveVlm(model, { alpha: alpha - dA }).CL) /
-    (2 * dA);
+  const slopeOf = (m: VlmModel): number =>
+    (solveVlm(m, { alpha: alpha + dA }).CL - solveVlm(m, { alpha: alpha - dA }).CL) / (2 * dA);
+  const blend = state.machBlend;
+  const liftSlope = blend
+    ? (1 - blend.weight) * slopeOf(blend.lo.model) + blend.weight * slopeOf(blend.hi.model)
+    : slopeOf(model);
 
   const stall = summarizeStall(model, sol, entry.isBaseWing);
 
@@ -594,7 +663,8 @@ function assembleAero(state: SolvedState, requestId: number): AeroResult {
   const reynoldsMac = reynoldsNumber(state.atmosphere, velocity, geometry.meanAeroChord);
 
   // Problems met while building the lattice (e.g. tip devices left out of the calculation).
-  const warnings: string[] = [...(model.warnings ?? [])];
+  const lattices = blend ? [blend.lo.model, blend.hi.model] : [model];
+  const warnings: string[] = [...new Set(lattices.flatMap((m) => m.warnings ?? []))];
   if (mach > MACH_ROUGH_LIMIT) {
     warnings.push(
       `At Mach ${mach.toFixed(2)} the simple compressibility corrections used here are pushed ` +
@@ -702,18 +772,32 @@ export function computePolarSweep(
   const velocity = Math.max(flow.airspeed, MIN_AIRSPEED);
   const mach = velocity / atmosphere.speedOfSound;
   const geometry = getGeometry(wing, wingKey, cache);
-  const machIndex = machBucketIndex(mach);
-  const entry = getModelEntry(geometry, wingKey, machIndex, cache);
+  // Solved on the two Mach buckets around the flight Mach number and interpolated, like the
+  // aero stage (see solveState), so the current point sits on this curve.
+  const brackets = machBrackets(mach);
+  const lo = getModelEntry(geometry, wingKey, brackets.lo, cache);
+  const hi =
+    brackets.hi === brackets.lo ? lo : getModelEntry(geometry, wingKey, brackets.hi, cache);
+  const n0 = lo.model.strips.length;
+  const blended = hi !== lo && hi.model.strips.length === n0;
+  const w = blended ? brackets.weight : 0;
+  const entry = w < 0.5 ? lo : hi;
   const { model } = entry;
   const airfoils = limitedStripAirfoils(entry, wing, geometry, mach);
-  // The VLM applies Prandtl-Glauert at the bucketed Mach (clamped); scale the 2D curve alike so
-  // the finite-vs-infinite wing comparison stays fair at airliner speeds.
-  const pgFactor = prandtlGlauertFactor(machIndex * MACH_BUCKET);
+  // The VLM applies Prandtl-Glauert at the bucket Mach numbers (clamped); scale the 2D curve
+  // alike so the finite-vs-infinite wing comparison stays fair at airliner speeds.
+  const pgFactor =
+    (1 - w) * prandtlGlauertFactor(brackets.lo * MACH_BUCKET) +
+    w * prandtlGlauertFactor((blended ? brackets.hi : brackets.lo) * MACH_BUCKET);
   const reynolds = new Float64Array(model.strips.length);
   for (let i = 0; i < model.strips.length; i++) {
     reynolds[i] = reynoldsNumber(atmosphere, velocity, model.strips[i]!.chord);
   }
-  const provider = makeProvider(model, airfoils, reynolds);
+  const sweepOn = (e: ModelEntry) => ({
+    model: e.model,
+    provider: makeProvider(e.model, limitedStripAirfoils(e, wing, geometry, mach), reynolds),
+  });
+  const sweeps = blended ? [sweepOn(lo), sweepOn(hi)] : [sweepOn(entry)];
 
   // Root section: the innermost right base-wing strip (carries the root flap/slat state).
   const rootIndex = entry.rightWingStrips[0] ?? 0;
@@ -729,21 +813,27 @@ export function computePolarSweep(
   for (let k = 0; k < n; k++) {
     const aDeg = POLAR_ALPHA_MIN_DEG + k * POLAR_ALPHA_STEP_DEG;
     const a = aDeg * DEG;
-    const sol = solveCoupled(model, a, provider);
-    cache.stats.coupledSolves++;
-    const comp = compressibilityEstimate({
-      mach,
-      sweep: geometry.sweepQuarterChord,
-      thicknessRatio: wing.airfoil.thickness,
-      cl: sol.CL,
-      supercritical: wing.supercritical,
+    const point = sweeps.map(({ model: m, provider }) => {
+      const sol = solveCoupled(m, a, provider);
+      cache.stats.coupledSolves++;
+      const comp = compressibilityEstimate({
+        mach,
+        sweep: geometry.sweepQuarterChord,
+        thicknessRatio: wing.airfoil.thickness,
+        cl: sol.CL,
+        supercritical: wing.supercritical,
+      });
+      const cd =
+        profileDrag(m, sol.stripCd, geometry.referenceArea) +
+        sol.CDi +
+        lockWaveDrag(mach, comp.machCritical);
+      return { cl: sol.CL, cd };
     });
+    const p0 = point[0]!;
+    const p1 = point[point.length - 1]!;
     alphaDeg[k] = aDeg;
-    CL[k] = sol.CL;
-    CD[k] =
-      profileDrag(model, sol.stripCd, geometry.referenceArea) +
-      sol.CDi +
-      lockWaveDrag(mach, comp.machCritical);
+    CL[k] = p0.cl + (p1.cl - p0.cl) * w;
+    CD[k] = p0.cd + (p1.cd - p0.cd) * w;
     sectionCl[k] = rootPolar ? rootPolar.cl(a + rootIncidence, rootRe) * pgFactor : NaN;
   }
   const best = stallPeakIndex(CL);
@@ -841,7 +931,7 @@ export function computeSection(
     alphaInduced: alphaGeometric - alphaEffective,
     reynolds,
     // Same Prandtl-Glauert factor as the strips, so the section's cl and Cp match the 3D wing.
-    liftScale: 1 / model.beta,
+    liftScale: state.liftScale,
   });
   state.section = { eta: etaClamped, flow: flowResult };
   return flowResult;

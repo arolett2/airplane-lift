@@ -1,16 +1,17 @@
 /**
- * Planform sliders through the REAL solvers: moving the tip-device size, the taper or the
- * inboard trailing-edge kink one step must change lift, drag and span efficiency smoothly.
+ * Sliders through the REAL solvers: moving the tip-device size, the taper, the inboard
+ * trailing-edge kink or the airspeed one step must change lift, drag and span efficiency smoothly.
  * Slivers in the vortex lattice used to make these jump: small devices on a long tip chord and
  * fences on a wide one (lift off by 10-16 %, a false stall, span efficiency from 0.1 to 8, or
  * a device dropped from the lift calculation while still drawn), and a Yehudi kink right next
- * to the root (lift 22 % too high).
+ * to the root (lift 22 % too high). Airspeed used to step the lift every 0.02 Mach, where the
+ * Prandtl-Glauert factor of the lattice jumped to the next bucket.
  */
 import { describe, expect, it } from 'vitest';
 import type { FlowConditions, TipDeviceKind, WingConfig } from '../state/params';
 import { DEFAULT_FLOW, DEFAULT_WING, TIP_DEVICE_DEFAULTS } from '../state/params';
 import { getPreset } from '../state/presets';
-import { computeAero, createAeroCache } from './aero';
+import { computeAero, computePolarSweep, createAeroCache } from './aero';
 
 const solve = (wing: WingConfig, flow: FlowConditions) =>
   computeAero(wing, flow, 1, createAeroCache()).aero;
@@ -117,6 +118,37 @@ describe('inboard trailing-edge kink slider (real solvers)', { timeout: 120_000 
           0.01,
         );
       }
+    }
+  });
+});
+
+describe('airspeed slider near cruise Mach (real solvers)', { timeout: 120_000 }, () => {
+  it('737-800: every 1 m/s adds about the same lift, with no step at Mach-bucket edges', () => {
+    const p = getPreset('b737-800')!;
+    const cache = createAeroCache();
+    const lift = (v: number) => computeAero(p.wing, { ...p.cruise, airspeed: v }, 1, cache).aero;
+    const gains: number[] = [];
+    let prev = lift(220);
+    for (let v = 221; v <= 240; v++) {
+      const aero = lift(v);
+      gains.push(aero.lift - prev.lift);
+      prev = aero;
+    }
+    const mean = gains.reduce((a, b) => a + b, 0) / gains.length;
+    // Bucket edges used to add four times the usual gain in one step (2.3 t instead of 0.6 t).
+    for (let i = 1; i < gains.length; i++) {
+      expect(Math.abs(gains[i]! - gains[i - 1]!), `${221 + i} m/s`).toBeLessThan(0.25 * mean);
+    }
+  });
+
+  it('the current lift sits on the lift curve the charts draw', () => {
+    const p = getPreset('b737-800')!;
+    for (const airspeed of [229, 231.6, 234]) {
+      const flow = { ...p.cruise, airspeed, alphaDeg: 4 };
+      const cache = createAeroCache();
+      const aero = computeAero(p.wing, flow, 1, cache).aero;
+      const polar = computePolarSweep(p.wing, flow, 1, cache);
+      expect(aero.CL, `${airspeed} m/s`).toBeCloseTo(polar.CL[polar.alphaDeg.indexOf(4)]!, 4);
     }
   });
 });

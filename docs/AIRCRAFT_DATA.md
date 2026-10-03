@@ -56,7 +56,9 @@ attitude in cruise is smaller than these wing-root angles.
 | `glider-18m` | 4.7                | 0.108 | 0.612 | 1.002         | 47.9     | 0.611  | 0.719 | 1.44 (15)                    | 1.42 (14)                     | 2.66                   | 0.97                             |
 | `f16`        | 3.4                | 0.849 | 0.272 | 1.000         | 20.1     | 0.860  | 0.967 | 0.58 (8)                     | 0.57 (10)                     | 1.48                   | 0.47                             |
 
-How to read it:
+How to read it (lift coefficients use the app's reference area, the trapezoid without the inboard
+trailing-edge extension, e.g. 114.5 m2 for the 737-800 against the published 124.6 m2, so they
+read about 8 % higher than coefficients based on the published area):
 
 - **Mach margins.** Every airliner cruises above its critical Mach number (weak shocks, a little
   wave drag: normal) and at or just below its drag-divergence Mach number, as real airliners do.

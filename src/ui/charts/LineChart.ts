@@ -678,7 +678,23 @@ export class LineChart {
         [px - r - 2 - w, py - H / 2],
         [px - w / 2, py - r - H - 4],
         [px - w / 2, py + r + 4],
+        // A second, farther ring for crowded spots (a short leader line joins them).
+        [px - r - w - 6, py - r - H - 12],
+        [px + r + 6, py + r + 12],
+        [px + r + 6, py - r - H - 12],
+        [px - r - w - 6, py + r + 12],
       ]);
+      const far = Math.hypot(box.x + box.w / 2 - px, box.y + H / 2 - py) > r + w / 2 + 14;
+      if (far) {
+        ctx.strokeStyle = theme.textMuted;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        const tx = Math.min(Math.max(px, box.x), box.x + box.w);
+        const ty = Math.min(Math.max(py, box.y), box.y + H);
+        ctx.moveTo(px + Math.sign(tx - px) * (r + 1), py + Math.sign(ty - py) * (r + 1));
+        ctx.lineTo(tx, ty);
+        ctx.stroke();
+      }
       draw(box, m.label, theme.text);
     }
     for (const v of cfg.vlines ?? []) {

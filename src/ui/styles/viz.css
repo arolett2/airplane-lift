@@ -1,0 +1,593 @@
+/*
+ * Styles for the visualisation panels: charts, 2D cross-section view and aircraft comparison.
+ * Everything is scoped under .viz-* classes. Colours come from the shell's custom properties
+ * (--text, --text-muted, --border, --accent, --chart-grid, --series-1..4, --lift, --drag) with
+ * fallbacks so the panels also look right on their own, in light or dark.
+ */
+
+.viz-root,
+.viz-compare {
+  --viz-fg: var(--text, #e6ebf2);
+  --viz-muted: var(--text-muted, #9aa8ba);
+  --viz-surface: var(--panel-bg, rgba(17, 24, 36, 0.9));
+  --viz-surface-2: var(--panel-bg-2, rgba(255, 255, 255, 0.06));
+  --viz-border: var(--border, rgba(255, 255, 255, 0.14));
+  --viz-accent: var(--accent, #4aa3ff);
+  --viz-series-1: var(--series-1, #5aa9ff);
+  --viz-series-2: var(--series-2, #ffb454);
+  --viz-lift: var(--lift, #4ade80);
+  --viz-drag: var(--drag, #ff8a5c);
+  color: var(--viz-fg);
+  font-size: 13px;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+@media (prefers-color-scheme: light) {
+  .viz-root,
+  .viz-compare {
+    --viz-fg: var(--text, #17202c);
+    --viz-muted: var(--text-muted, #566274);
+    --viz-surface: var(--panel-bg, rgba(255, 255, 255, 0.94));
+    --viz-surface-2: var(--panel-bg-2, rgba(20, 30, 50, 0.05));
+    --viz-border: var(--border, rgba(20, 30, 50, 0.16));
+    --viz-accent: var(--accent, #1f6feb);
+    --viz-series-1: var(--series-1, #1f6feb);
+    --viz-series-2: var(--series-2, #d9730d);
+    --viz-lift: var(--lift, #1a9b55);
+    --viz-drag: var(--drag, #d9480f);
+  }
+}
+
+:root[data-theme='dark'] .viz-root,
+:root[data-theme='dark'] .viz-compare {
+  --viz-fg: var(--text, #e6ebf2);
+  --viz-muted: var(--text-muted, #9aa8ba);
+  --viz-surface: var(--panel-bg, rgba(17, 24, 36, 0.9));
+  --viz-surface-2: var(--panel-bg-2, rgba(255, 255, 255, 0.06));
+  --viz-border: var(--border, rgba(255, 255, 255, 0.14));
+  --viz-accent: var(--accent, #4aa3ff);
+  --viz-series-1: var(--series-1, #5aa9ff);
+  --viz-series-2: var(--series-2, #ffb454);
+  --viz-lift: var(--lift, #4ade80);
+  --viz-drag: var(--drag, #ff8a5c);
+}
+
+:root[data-theme='light'] .viz-root,
+:root[data-theme='light'] .viz-compare {
+  --viz-fg: var(--text, #17202c);
+  --viz-muted: var(--text-muted, #566274);
+  --viz-surface: var(--panel-bg, rgba(255, 255, 255, 0.94));
+  --viz-surface-2: var(--panel-bg-2, rgba(20, 30, 50, 0.05));
+  --viz-border: var(--border, rgba(20, 30, 50, 0.16));
+  --viz-accent: var(--accent, #1f6feb);
+  --viz-series-1: var(--series-1, #1f6feb);
+  --viz-series-2: var(--series-2, #d9730d);
+  --viz-lift: var(--lift, #1a9b55);
+  --viz-drag: var(--drag, #d9480f);
+}
+
+.viz-root *,
+.viz-compare * {
+  box-sizing: border-box;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Charts panel                                                                              */
+/* ---------------------------------------------------------------------------------------- */
+
+.viz-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.viz-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid var(--viz-border);
+  padding-bottom: 6px;
+}
+
+.viz-tab {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--viz-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.viz-tab:hover {
+  color: var(--viz-fg);
+  background: var(--viz-surface-2);
+}
+
+.viz-tab:focus-visible {
+  outline: 2px solid var(--viz-accent);
+  outline-offset: 1px;
+}
+
+.viz-tab.is-active {
+  color: var(--viz-fg);
+  background: var(--viz-surface-2);
+  border-color: var(--viz-border);
+}
+
+.viz-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.viz-pane[hidden] {
+  display: none;
+}
+
+.viz-figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  transition: opacity 0.2s ease;
+}
+
+.viz-figure.is-stale {
+  opacity: 0.6;
+}
+
+.viz-chart-host {
+  position: relative;
+  width: 100%;
+  height: 190px;
+  min-height: 150px;
+}
+
+.viz-pane-stacked .viz-chart-host {
+  height: 150px;
+  min-height: 130px;
+}
+
+.viz-chart-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: pan-y;
+}
+
+.viz-chart-canvas[hidden] {
+  display: none;
+}
+
+.viz-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  text-align: center;
+  color: var(--viz-muted);
+  border: 1px dashed var(--viz-border);
+  border-radius: 8px;
+}
+
+.viz-empty[hidden] {
+  display: none;
+}
+
+.viz-caption {
+  margin: 0;
+  font-size: 12px;
+  color: var(--viz-muted);
+}
+
+.viz-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--viz-fg);
+}
+
+.viz-note[hidden] {
+  display: none;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Cross-section view                                                                        */
+/* ---------------------------------------------------------------------------------------- */
+
+.viz-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.viz-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.viz-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--viz-muted);
+}
+
+.viz-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.viz-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--viz-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.viz-toggle input {
+  accent-color: var(--viz-accent);
+  margin: 0;
+}
+
+.viz-button {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--viz-fg);
+  background: var(--viz-surface-2);
+  border: 1px solid var(--viz-border);
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+
+.viz-button:hover {
+  border-color: var(--viz-accent);
+}
+
+.viz-button:focus-visible {
+  outline: 2px solid var(--viz-accent);
+  outline-offset: 1px;
+}
+
+.viz-section-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 150px;
+  border-radius: 8px;
+  overflow: hidden;
+  /* The cross-section is always drawn on a dark "tunnel window" so white smoke is visible. */
+  background: var(--section-bg, #0c1420);
+  border: 1px solid var(--viz-border);
+}
+
+.viz-section-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.viz-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-slider label {
+  font-size: 12px;
+  color: var(--viz-fg);
+}
+
+.viz-slider input[type='range'] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--viz-accent);
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Compare panel                                                                             */
+/* ---------------------------------------------------------------------------------------- */
+
+.viz-compare {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.viz-compare[hidden] {
+  display: none;
+}
+
+.viz-compare-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 8, 14, 0.62);
+  backdrop-filter: blur(2px);
+}
+
+.viz-compare-card {
+  position: relative;
+  width: min(980px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px 18px;
+  background: var(--viz-surface);
+  background-color: var(--panel-solid, var(--viz-surface));
+  border: 1px solid var(--viz-border);
+  border-radius: 12px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+}
+
+.viz-compare-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.viz-compare-head h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.viz-close {
+  appearance: none;
+  border: 1px solid var(--viz-border);
+  background: var(--viz-surface-2);
+  color: var(--viz-fg);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.viz-close:hover {
+  border-color: var(--viz-accent);
+}
+
+.viz-close:focus-visible {
+  outline: 2px solid var(--viz-accent);
+  outline-offset: 2px;
+}
+
+.viz-compare-pickers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.viz-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--viz-muted);
+}
+
+.viz-picker select {
+  font: inherit;
+  font-size: 14px;
+  color: var(--viz-fg);
+  background: var(--viz-surface-2);
+  border: 2px solid var(--picker-color, var(--viz-border));
+  border-radius: 8px;
+  padding: 6px 8px;
+  min-width: 0;
+}
+
+.viz-picker select option,
+.viz-picker select optgroup {
+  color: #17202c;
+  background: #ffffff;
+}
+
+.viz-picker-a {
+  --picker-color: var(--viz-series-1);
+}
+
+.viz-picker-b {
+  --picker-color: var(--viz-series-2);
+}
+
+.viz-compare-blurbs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  font-size: 12px;
+  color: var(--viz-muted);
+}
+
+.viz-compare-blurbs p {
+  margin: 0;
+}
+
+.viz-compare-planform {
+  border: 1px solid var(--viz-border);
+  border-radius: 10px;
+  background: var(--viz-surface-2);
+  padding: 8px;
+}
+
+.viz-planform {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 340px;
+}
+
+.viz-planform text {
+  font-family: inherit;
+  fill: var(--viz-fg);
+  font-size: 11px;
+}
+
+.viz-planform .viz-plan-muted {
+  fill: var(--viz-muted);
+}
+
+.viz-planform .viz-plan-dim {
+  stroke: var(--viz-muted);
+  fill: none;
+}
+
+.viz-compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.viz-compare-table caption {
+  text-align: left;
+  font-size: 12px;
+  color: var(--viz-muted);
+  padding-bottom: 4px;
+}
+
+.viz-compare-table th,
+.viz-compare-table td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--viz-border);
+  vertical-align: middle;
+}
+
+.viz-compare-table thead th {
+  font-size: 12px;
+  color: var(--viz-muted);
+  font-weight: 600;
+}
+
+.viz-compare-table tbody th {
+  font-weight: 500;
+  color: var(--viz-muted);
+  width: 34%;
+}
+
+.viz-compare-hint {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.3;
+  color: var(--viz-muted);
+  opacity: 0.9;
+}
+
+.viz-compare-table td {
+  position: relative;
+  font-variant-numeric: tabular-nums;
+}
+
+.viz-compare-table .viz-cell {
+  display: block;
+  position: relative;
+  z-index: 1;
+  white-space: nowrap;
+}
+
+.viz-compare-table .viz-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 2px;
+  height: 3px;
+  border-radius: 2px;
+  background: transparent;
+  overflow: hidden;
+}
+
+.viz-compare-table .viz-bar::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: calc(var(--frac, 0) * 100%);
+  border-radius: 2px;
+  background: var(--bar-color, var(--viz-accent));
+  opacity: 0.8;
+}
+
+.viz-compare-table td.viz-col-a {
+  --bar-color: var(--viz-series-1);
+}
+
+.viz-compare-table td.viz-col-b {
+  --bar-color: var(--viz-series-2);
+}
+
+.viz-compare-table thead .viz-col-a {
+  color: var(--viz-series-1);
+}
+
+.viz-compare-table thead .viz-col-b {
+  color: var(--viz-series-2);
+}
+
+.viz-compare-why h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.viz-compare-why ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.viz-compare-status {
+  margin: 0;
+  color: var(--viz-muted);
+  font-size: 12px;
+}
+
+.viz-compare-status[hidden] {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .viz-compare-pickers,
+  .viz-compare-blurbs {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viz-figure {
+    transition: none;
+  }
+}

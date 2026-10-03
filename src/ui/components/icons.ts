@@ -28,7 +28,8 @@ export type IconName =
   | 'flaps'
   | 'eye'
   | 'gear'
-  | 'expand';
+  | 'expand'
+  | 'probe';
 
 /** SVG path data per icon. Several sub-paths are joined with spaces. */
 const PATHS: Record<IconName, string[]> = {
@@ -59,6 +60,7 @@ const PATHS: Record<IconName, string[]> = {
     'M12 9.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6z',
   ],
   expand: ['M4 9V4h5', 'M20 9V4h-5', 'M4 15v5h5', 'M20 15v5h-5'],
+  probe: ['M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12z', 'M10 9.2v1.6', 'M14.5 14.5L20 20'],
   gear: [
     'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
     'M19.5 12h1.5M3 12h1.5M12 3v1.5M12 19.5V21M17.3 6.7l1-1M5.7 18.3l1-1M17.3 17.3l1 1M5.7 5.7l1 1',

@@ -133,4 +133,25 @@ describe('TopBar', () => {
     bar.destroy();
     expect(lone.children).toHaveLength(0);
   });
+
+  it('offers a probe toggle only when the app provides one, and reflects its state', () => {
+    setup();
+    expect(button('probe the air')).toBeUndefined();
+    document.body.replaceChildren();
+    const onToggleProbe = vi.fn();
+    shell = document.createElement('div');
+    host = document.createElement('header');
+    shell.append(host);
+    document.body.append(shell);
+    const bar = new TopBar(host, new Store<AppState>(DEFAULT_STATE), { ...actions, onToggleProbe });
+    const probe = button('probe the air');
+    expect(probe.getAttribute('aria-pressed')).toBe('false');
+    probe.click();
+    expect(onToggleProbe).toHaveBeenCalledWith(true);
+    bar.setProbeActive(true);
+    expect(probe.getAttribute('aria-pressed')).toBe('true');
+    probe.click();
+    expect(onToggleProbe).toHaveBeenLastCalledWith(false);
+    bar.destroy();
+  });
 });

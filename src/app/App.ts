@@ -10,6 +10,7 @@ import { StreamlineRenderer } from '../render/flow/StreamlineRenderer';
 import { ForceArrows } from '../render/forces/ForceArrows';
 import { SpanLoadViz } from '../render/forces/SpanLoadViz';
 import { PressureLegend } from '../render/overlay/PressureLegend';
+import { ProbeMarker } from '../render/probe/ProbeMarker';
 import { SceneManager } from '../render/SceneManager';
 import { crossCutX, wingFraming, type WingFraming } from '../render/util/framing';
 import { WindTunnel } from '../render/tunnel/WindTunnel';
@@ -29,6 +30,7 @@ import { TopBar } from '../ui/panels/TopBar';
 import { decodeState, encodeState } from '../ui/urlState';
 import { PhysicsClient } from '../worker/PhysicsClient';
 import { STAGE_ORDER, type PhysicsResponse, type PhysicsStage } from '../worker/protocol';
+import { FlowProbe3D } from './flowProbe3d';
 import { RequestScheduler } from './requestScheduler';
 
 const STANDARD_GRAVITY = 9.80665;
@@ -89,6 +91,7 @@ export async function startApp(root: HTMLElement): Promise<void> {
   const streamlines = new StreamlineRenderer();
   const particles = new ParticleSystem();
   const legend = new PressureLegend(shell.viewport);
+  const probeMarker = new ProbeMarker();
   scene.modelRoot.add(
     tunnel.object,
     wingMesh.object,
@@ -96,6 +99,7 @@ export async function startApp(root: HTMLElement): Promise<void> {
     forces.object,
     streamlines.object,
     particles.object,
+    probeMarker.object,
   );
 
   /* ---------------------------------------------------------------- framing around the panels */
@@ -156,15 +160,28 @@ export async function startApp(root: HTMLElement): Promise<void> {
   /* ---------------------------------------------------------------- panels */
   const lessons = new LessonPanel(shell.lesson, store);
   const section = new SectionView(shell.section, store, results);
+  // The 3D flow probe: the exact flow model evaluated in the worker at a point in the scene.
+  let topBar: TopBar | null = null;
+  const flowProbe = new FlowProbe3D({
+    scene,
+    marker: probeMarker,
+    store,
+    results,
+    probe: (point) => physics.probe(point),
+    domainOf: domainForGeometry,
+    onActiveChange: (on) => topBar?.setProbeActive(on),
+  });
+  topBar = new TopBar(shell.topBar, store, {
+    onPulse: () => {
+      streamlines.firePulse();
+      section.firePulse();
+    },
+    onOpenLessons: () => lessons.open(),
+    onOpenCompare: () => store.set((s) => ({ ...s, compare: s.compare ?? DEFAULT_COMPARE })),
+    onToggleProbe: (on) => flowProbe.setActive(on),
+  });
   const panels = [
-    new TopBar(shell.topBar, store, {
-      onPulse: () => {
-        streamlines.firePulse();
-        section.firePulse();
-      },
-      onOpenLessons: () => lessons.open(),
-      onOpenCompare: () => store.set((s) => ({ ...s, compare: s.compare ?? DEFAULT_COMPARE })),
-    }),
+    topBar,
     new ControlsPanel(shell.controls, store),
     new ReadoutPanel(shell.readouts, store, results),
     new ChartsPanel(shell.charts, store, results),
@@ -438,7 +455,7 @@ export async function startApp(root: HTMLElement): Promise<void> {
 
   // Dev-only handle for debugging and browser-driven integration checks.
   if (import.meta.env.DEV) {
-    (window as unknown as { __tunnel?: unknown }).__tunnel = { store, results, scene };
+    (window as unknown as { __tunnel?: unknown }).__tunnel = { store, results, scene, flowProbe };
   }
 
   window.addEventListener('pagehide', (event: PageTransitionEvent) => {
@@ -448,9 +465,19 @@ export async function startApp(root: HTMLElement): Promise<void> {
     insetObserver?.disconnect();
     wideLayout?.removeEventListener?.('change', measureInsets);
     for (const p of panels) p.destroy();
+    flowProbe.dispose();
     scheduler.dispose();
     physics.dispose();
-    for (const r of [tunnel, wingMesh, forces, spanLoad, streamlines, particles, legend])
+    for (const r of [
+      tunnel,
+      wingMesh,
+      forces,
+      spanLoad,
+      streamlines,
+      particles,
+      legend,
+      probeMarker,
+    ])
       r.dispose();
     scene.dispose();
   });

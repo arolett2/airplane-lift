@@ -328,6 +328,7 @@ export class SectionView {
     this.probeButton = make('button', 'viz-button viz-section-probe-toggle');
     this.probeButton.type = 'button';
     this.probeButton.setAttribute('aria-pressed', 'false');
+    this.probeButton.dataset.param = 'view.sectionProbe';
     this.probeButton.title =
       'Place a probe in the air: it reads the speed, the pressure and the direction of the air there';
     this.probeButton.append(make('span', 'viz-probe-dot'), make('span', undefined, 'Probe'));
@@ -343,6 +344,7 @@ export class SectionView {
     this.backdropControl = createSegmented<SectionBackdrop>({
       label: 'Show pressure as',
       hideLabel: true,
+      param: 'view.sectionBackdrop',
       value: 'tint',
       options: [
         { value: 'tint', label: 'Colours', title: 'Pressure as colour: blue low, red high' },
@@ -357,6 +359,7 @@ export class SectionView {
     this.frameControl = createSegmented<SectionFrame>({
       label: 'Point of view',
       hideLabel: true,
+      param: 'view.sectionFrame',
       value: 'wing',
       options: [
         {

@@ -316,6 +316,25 @@ describe.skipIf(!physicsReady)('aero end-to-end (real solvers)', { timeout: 60_0
     expect(section.cl).toBeLessThan(1.15 * near.cl);
   });
 
+  it('reports the section lift with the same compressibility factor as the strips', () => {
+    const cache = createAeroCache();
+    const { aero } = computeAero(B737_LIKE, CRUISE, 1, cache);
+    const section = computeSection(B737_LIKE, CRUISE, 0.35, cache);
+    const near = aero.strips
+      .filter((s) => s.side === 'right' && s.eta <= 1)
+      .reduce((a, b) => (Math.abs(b.eta - 0.35) < Math.abs(a.eta - 0.35) ? b : a));
+    expect(aero.mach).toBeGreaterThan(0.75);
+    expect(section.cl).toBeGreaterThan(0.85 * near.cl);
+    expect(section.cl).toBeLessThan(1.15 * near.cl);
+    let cpLift = 0;
+    const { xc, upper, lower } = section.cp;
+    for (let k = 1; k < xc.length; k++) {
+      const dx = xc[k]! - xc[k - 1]!;
+      cpLift += 0.5 * dx * (lower[k]! - upper[k]! + lower[k - 1]! - upper[k - 1]!);
+    }
+    expect(cpLift).toBeCloseTo(section.cl, 1);
+  });
+
   it('runs the full worker pipeline without errors', async () => {
     const posted: PhysicsResponse[] = [];
     await handleRequest(

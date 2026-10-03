@@ -838,6 +838,8 @@ export function computeSection(
     alphaGeometric,
     alphaInduced: alphaGeometric - alphaEffective,
     reynolds,
+    // Same Prandtl-Glauert factor as the strips, so the section's cl and Cp match the 3D wing.
+    liftScale: 1 / model.beta,
   });
   state.section = { eta: etaClamped, flow: flowResult };
   return flowResult;

@@ -11,6 +11,11 @@
  *  - `step.highlight` adds `is-highlighted` to every `[data-param="<path>"]` element.
  *  - Left/right arrow keys move between steps (ignored while typing or dragging a slider).
  *  - Completed lessons are remembered in localStorage (every access is wrapped in try/catch).
+ *  - The step card can be folded down to its title and buttons ("Hide text") so the tunnel
+ *    behind it is visible; a new step unfolds it again.
+ *  - The card's height is published as `--lesson-card-h` on the shell, so other overlays (the
+ *    comparison a lesson opens) can leave room for it.
+ *  - A step that frames the cross-section camera also brings the 2D cross-section card into view.
  */
 import '../styles/lesson.css';
 import type { AppState } from '../../state/params';
@@ -21,6 +26,9 @@ import type { Lesson } from '../../content/types';
 
 export const LESSON_STORAGE_KEY = 'airplane-lift:lessons:v1';
 export const HIGHLIGHT_CLASS = 'is-highlighted';
+/** Briefly added to the 2D cross-section card when a step talks about it. */
+export const ATTENTION_CLASS = 'is-lesson-focus';
+const ATTENTION_MS = 2600;
 
 type Mode = 'closed' | 'picker' | 'step';
 
@@ -92,7 +100,10 @@ export class LessonPanel {
   private readonly dots: HTMLElement;
   private readonly prevButton: HTMLButtonElement;
   private readonly nextButton: HTMLButtonElement;
+  private readonly foldButton: HTMLButtonElement;
   private readonly live: HTMLElement;
+  private resizeObserver: ResizeObserver | null = null;
+  private attentionTimer: ReturnType<typeof setTimeout> | undefined;
 
   private mode: Mode = 'closed';
   private lesson: Lesson | null = null;
@@ -149,7 +160,11 @@ export class LessonPanel {
     this.kicker = el('p', 'lesson-kicker');
     const stepClose = button('lesson-close', '×', 'Close lesson');
     stepClose.addEventListener('click', () => this.close());
-    stepHead.append(menu, this.kicker, stepClose);
+    this.foldButton = button('lesson-fold', '', 'Hide the lesson text');
+    this.foldButton.title = 'Hide the text to see the tunnel';
+    this.foldButton.setAttribute('aria-expanded', 'true');
+    this.foldButton.addEventListener('click', () => this.setFolded(!this.isFolded()));
+    stepHead.append(menu, this.kicker, this.foldButton, stepClose);
 
     this.title = el('h2', 'lesson-title');
     this.title.tabIndex = -1;
@@ -175,6 +190,12 @@ export class LessonPanel {
 
     this.container.append(this.picker, this.stepView);
     root.append(this.container);
+
+    // Tell the rest of the shell how much room the card takes.
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.publishHeight());
+      this.resizeObserver.observe(this.container);
+    }
 
     document.addEventListener('keydown', this.onKeyDown);
     this.unsubscribe.push(
@@ -202,8 +223,49 @@ export class LessonPanel {
     document.removeEventListener('keydown', this.onKeyDown);
     for (const off of this.unsubscribe.splice(0)) off();
     this.clearHighlights();
+    this.resizeObserver?.disconnect();
+    clearTimeout(this.attentionTimer);
     this.container.remove();
     this.mode = 'closed';
+    this.publishHeight();
+  }
+
+  /* ------------------------------------------------------------------------------------------ */
+  /* Folding and layout                                                                          */
+  /* ------------------------------------------------------------------------------------------ */
+
+  private isFolded(): boolean {
+    return this.container.classList.contains('is-folded');
+  }
+
+  private setFolded(on: boolean): void {
+    this.container.classList.toggle('is-folded', on);
+    this.foldButton.setAttribute('aria-expanded', String(!on));
+    const label = on ? 'Show the lesson text' : 'Hide the lesson text';
+    this.foldButton.setAttribute('aria-label', label);
+    this.foldButton.title = on ? 'Show the text again' : 'Hide the text to see the tunnel';
+    this.publishHeight();
+  }
+
+  /** `--lesson-card-h` on the shell: the card's height while it is open, else 0. */
+  private publishHeight(): void {
+    const host =
+      (this.container.closest('[data-shell]') as HTMLElement | null) ?? document.documentElement;
+    const open = this.container.isConnected && !this.container.hidden;
+    const height = open ? Math.ceil(this.container.getBoundingClientRect().height) : 0;
+    host.style.setProperty('--lesson-card-h', `${height}px`);
+  }
+
+  /** Bring the 2D cross-section card into view and make it glow briefly. */
+  private pointAtSection(): void {
+    const card = document.querySelector<HTMLElement>('[data-card="section"]');
+    if (!card) return;
+    if (typeof card.scrollIntoView === 'function') {
+      card.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
+    card.classList.add(ATTENTION_CLASS);
+    clearTimeout(this.attentionTimer);
+    this.attentionTimer = setTimeout(() => card.classList.remove(ATTENTION_CLASS), ATTENTION_MS);
   }
 
   /* ------------------------------------------------------------------------------------------ */
@@ -220,7 +282,9 @@ export class LessonPanel {
     this.container.hidden = false;
     this.picker.hidden = false;
     this.stepView.hidden = true;
+    this.container.classList.remove('is-folded');
     this.publishProgress(null, 0);
+    this.publishHeight();
     // Move focus to the first card so keyboard users land inside the panel.
     this.cardList.querySelector<HTMLElement>('button')?.focus();
   }
@@ -319,7 +383,9 @@ export class LessonPanel {
     this.picker.hidden = true;
     this.stepView.hidden = false;
     this.renderStep(lesson, i);
+    this.setFolded(false);
     this.setHighlights(step.highlight ?? [], true);
+    if (apply && step.camera === 'section') this.pointAtSection();
     if (i === lesson.steps.length - 1) this.markCompleted(lesson.id);
     if (lessonChanged) this.title.focus({ preventScroll: true });
   }
@@ -368,6 +434,7 @@ export class LessonPanel {
     this.base = null;
     this.container.hidden = true;
     this.publishProgress(null, 0);
+    this.publishHeight();
   }
 
   /* ------------------------------------------------------------------------------------------ */

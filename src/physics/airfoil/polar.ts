@@ -111,8 +111,35 @@ export function softMin(a: number, b: number): number {
 }
 
 const DEG = Math.PI / 180;
-/** Boundary-layer decambering: viscous lift slope / inviscid lift slope. */
-export const VISCOUS_SLOPE_FACTOR = 0.92;
+/** viscousSlopeFactor at zero thickness (a thin plate keeps nearly the full panel slope). */
+export const VISCOUS_SLOPE_FACTOR_THIN = 0.99;
+/** Loss of viscous slope factor per unit thickness ratio (see viscousSlopeFactor). */
+export const VISCOUS_SLOPE_THICKNESS_COEFF = 1.0;
+
+/**
+ * Boundary-layer decambering: viscous lift slope / inviscid (panel) lift slope, as a function of
+ * the thickness ratio t (a straight line, so smooth in t):
+ *
+ *   factor = 0.99 - 1.0 t        (0.93 at 6 %, 0.87 at 12 %, 0.75 at 24 %)
+ *
+ * The panel slope grows with thickness (about 2 pi (1 + 0.77 t)), but the measured slope does
+ * not: a thicker section has a larger trailing-edge angle and a thicker upper-surface boundary
+ * layer near the trailing edge, which decambers the section more. Calibrated on smooth-model
+ * tunnel data at Re 3-9 million (Abbott & von Doenhoff / NACA Report 824; Ladson, NASA TM-4074;
+ * NACA TN 1591): NACA 0006 measures 0.108/deg (model 0.107), the 12 % sections NACA 0012, 2412
+ * and 4412 measure 0.100-0.108/deg (model 0.105). A single fixed factor (0.92, used before)
+ * made the 12 % sections 4-11 % too steep. The intercept stays just below 1 so a thin plate keeps
+ * nearly the full 2 pi; at 6 % the factor is held at 0.93 rather than the 0.94 the 0006 slope
+ * alone suggests, because the thin section's empirical stall angle (clMax / slope + rounding)
+ * would otherwise fall further below the measured one (8.5 vs 9.5 deg at Re 3 million).
+ *
+ * Reynolds number is not an input: the measured rise of the 0012 slope from Re 3 to 9 million
+ * (0.102 to 0.108/deg) is of the size of the scatter between tunnels, and the polar's lift slope
+ * is one number per section (SectionPolar.liftSlope).
+ */
+export function viscousSlopeFactor(thickness: number): number {
+  return VISCOUS_SLOPE_FACTOR_THIN - VISCOUS_SLOPE_THICKNESS_COEFF * clamp(thickness, 0, 0.4);
+}
 
 /** Symmetric-section clMax at Re = 6e6 vs thickness (NACA 00xx, Abbott & von Doenhoff). */
 const CLMAX_TABLE: readonly [number, number][] = [
@@ -243,7 +270,7 @@ export function createSectionPolar(
   const cl90 = solver.solve(Math.PI / 2).cl;
   const inviscidSlope = Math.hypot(cl0, cl90);
   const inviscidA0 = -Math.atan2(cl0, cl90);
-  const a = VISCOUS_SLOPE_FACTOR * inviscidSlope;
+  const a = viscousSlopeFactor(t) * inviscidSlope;
 
   // ---- Flap: inviscid alpha0 shift (thin-airfoil estimate) and viscous losses ----------
   const clean = thinAirfoilTheory(params, null);

@@ -9,6 +9,7 @@ import {
   softMin,
   thinAirfoilTheory,
   TRANSITION_REYNOLDS,
+  viscousSlopeFactor,
 } from './polar';
 
 const DEG = Math.PI / 180;
@@ -29,10 +30,31 @@ describe('thin-airfoil helpers', () => {
   });
 });
 
+describe('viscous lift-slope factor', () => {
+  it('falls linearly with thickness: 0.93 at 6 %, 0.87 at 12 %', () => {
+    expect(viscousSlopeFactor(0.06)).toBeCloseTo(0.93, 9);
+    expect(viscousSlopeFactor(0.12)).toBeCloseTo(0.87, 9);
+    expect(viscousSlopeFactor(0)).toBeLessThanOrEqual(1);
+    expect(viscousSlopeFactor(0.24)).toBeLessThan(viscousSlopeFactor(0.12));
+  });
+
+  it('gives measured-size slopes: 12 % sections 0.100-0.108/deg, 6 % about 0.108/deg', () => {
+    // Abbott & von Doenhoff / Ladson (smooth models, Re 3-9 million).
+    for (const p of [p0012, p2412]) {
+      expect(p.liftSlope * DEG).toBeGreaterThan(0.1);
+      expect(p.liftSlope * DEG).toBeLessThan(0.108);
+    }
+    const p0006 = polarFor(naca(0, 0.06));
+    expect(p0006.liftSlope * DEG).toBeCloseTo(0.108, 2);
+    // Thicker sections no longer get a steeper viscous slope than thinner ones.
+    expect(p0006.liftSlope).toBeGreaterThan(p0012.liftSlope);
+  });
+});
+
 describe('section polar', () => {
   it('is linear with the viscous slope below stall', () => {
     const a = p2412.liftSlope;
-    expect(a / p2412.inviscidLiftSlope).toBeCloseTo(0.92, 6);
+    expect(a / p2412.inviscidLiftSlope).toBeCloseTo(viscousSlopeFactor(0.12), 9);
     let prev = -Infinity;
     for (let deg = -8; deg <= 8; deg += 1) {
       const cl = p2412.cl(deg * DEG, RE);

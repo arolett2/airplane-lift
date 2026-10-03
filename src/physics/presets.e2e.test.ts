@@ -13,6 +13,7 @@ import { DEFAULT_VIEW, TIP_DEVICE_DEFAULTS } from '../state/params';
 import { STAGE_ORDER } from '../worker/protocol';
 import { createWorkerState, handleRequest, STAGE_BUDGET_MS } from '../worker/physics.worker';
 import { computeAero, computePolarSweep, createAeroCache } from './aero';
+import { isaAtmosphere } from './atmosphere';
 
 const G = 9.80665;
 /** Presets that model a real aircraft (the teaching wing has no meaningful weight). */
@@ -97,11 +98,13 @@ describe('maximum lift of the presets (real solvers)', { timeout: 120_000 }, () 
   );
 
   it.each(AIRLINERS.map((p) => [p.id, p] as const))(
-    '%s: at cruise Mach the wing buffets near CL 0.8-1.2, 2-7 deg above cruise',
+    '%s: at cruise Mach the wing buffets near CL 0.7-1.2, 2-7 deg above cruise',
     (_id, p) => {
       const cache = createAeroCache();
       const polar = computePolarSweep(p.wing, p.cruise, 1, cache);
-      expect(polar.CLmax).toBeGreaterThan(0.8);
+      // The 737 family is lowest (about 0.78 on the app's area, 0.72 on the published one: the
+      // external benchmark's buffet-onset estimate for the 737-800 is 0.74).
+      expect(polar.CLmax).toBeGreaterThan(0.7);
       expect(polar.CLmax).toBeLessThan(1.2);
       const margin = polar.alphaStallDeg - p.cruise.alphaDeg;
       expect(margin).toBeGreaterThanOrEqual(2);
@@ -120,9 +123,10 @@ describe('maximum lift of the presets (real solvers)', { timeout: 120_000 }, () 
   it('loses maximum lift smoothly as Mach rises (737-800)', () => {
     const p = getPreset('b737-800')!;
     const cache = createAeroCache(8);
+    const speedOfSound = isaAtmosphere(p.cruise.altitude).speedOfSound;
     let prev = Infinity;
     for (let mach = 0.3; mach <= 0.861; mach += 0.04) {
-      const airspeed = mach * 295.07; // speed of sound at 11 km
+      const airspeed = mach * speedOfSound;
       const { CLmax } = computePolarSweep(p.wing, { ...p.cruise, airspeed }, 1, cache);
       // Rises slightly with Reynolds number at first (and the 1 deg sweep samples the peak),
       // then falls steeply but continuously towards cruise Mach.

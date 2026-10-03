@@ -261,8 +261,8 @@ export const LESSONS: readonly Lesson[] = [
         id: 'speed-and-density-cruise',
         title: 'Why jets fly fast and high',
         body: `
-<p>This is a 737-800 at its normal cruise: 11 km up, moving at 232 m/s (about 830 km/h, 450 knots).</p>
-<p>That sounds absurdly fast, but the air is so thin that the wing feels only the push it would feel at about 126 m/s (245 knots) at sea level. It needs all that speed to hold up roughly 67 tonnes.</p>
+<p>This is a 737-800 at its normal cruise: about 10 km up (34,000 ft), moving at 234 m/s (about 840 km/h, 455 knots).</p>
+<p>That sounds absurdly fast, but the air is so thin that the wing feels only the push it would feel at about 133 m/s (258 knots) at sea level. It needs all that speed to hold up roughly 65 tonnes.</p>
 <p>So why go high at all? Thin air also pushes back less on the whole aircraft, so drag is lower at a given speed, and the engines work efficiently there. Fast and high is the cheapest way to go far.</p>`,
         tryIt:
           'Drag the altitude down to 0 without changing the speed. The lift becomes several times the weight: far more than needed, and with a huge drag bill.',
@@ -379,7 +379,7 @@ export const LESSONS: readonly Lesson[] = [
 <p>If the tip vortex wastes energy, can we weaken it? That is what <strong>wingtip devices</strong> try to do. This 737-800 wears <strong>blended winglets</strong>: small wings, 2.4 m tall, curving smoothly up from the tip.</p>
 <p>A winglet helps in two ways. It blocks some of the air from curling around the tip. And because it stands in the swirling air, it can be angled so the swirl gives it a small forward push, like a sail. Both save fuel without needing a much longer wing.</p>`,
         tryIt:
-          'Drag Tip device size down to 0 and watch the vortex and the drag. Then bring the size back to about 0.14.',
+          'Drag Tip device size down to 0 and watch the vortex and the Efficiency (lift per drag) figure: without the winglet, every unit of lift costs more drag. Then bring the size back to about 0.14.',
         apply: {
           preset: 'b737-800',
           view: view({ flowMode: 'streamlines', rake: { mode: 'tip-vortex' } }),
@@ -451,7 +451,7 @@ export const LESSONS: readonly Lesson[] = [
         id: 'sweep-speed-of-sound',
         title: 'Flying near the speed of sound',
         body: `
-<p>This 737 cruises at about Mach 0.785. <strong>Mach number</strong> is speed divided by the speed of sound, which is about 295 m/s up here where the air is cold. So the plane is moving at roughly 78 percent of the speed of sound.</p>
+<p>This 737 cruises at about Mach 0.785. <strong>Mach number</strong> is speed divided by the speed of sound, which is about 298 m/s up here where the air is cold. So the plane is moving at roughly 78 percent of the speed of sound.</p>
 <p>But the air does not move at the plane's speed everywhere. Over the curved top of the wing it speeds up, and that fast pocket can reach the speed of sound while the plane is still slower. Where it does, a <strong>shock wave</strong> forms and drag climbs steeply. This is called <strong>wave drag</strong>.</p>`,
         tryIt:
           'Raise the airspeed and watch the drag climb. Turn on Engineer mode to see the Mach number and wave drag directly.',
@@ -483,7 +483,7 @@ export const LESSONS: readonly Lesson[] = [
 <p>That is bad for two reasons. The ailerons that roll the plane sit near the tips, so they stop working just when the pilot needs them. And the swept-back tips are behind the plane's balance point, so losing lift there pitches the nose up, which deepens the stall.</p>
 <p>The cure is <strong>washout</strong>: twist the wing so the tips sit at a smaller angle than the root. Then the stall starts further inboard and the ailerons keep working. Here the 747 has slowed to its approach speed, with its washout taken out.</p>`,
         tryIt:
-          'Raise the angle of attack until part of the wing stalls, and note where. Then add washout (try 4° to 6°) and raise the angle again: the stall now starts further inboard.',
+          'Raise the angle of attack until part of the wing stalls, and note where. Then add washout (try 5° to 6°) and raise the angle again: the stall now starts further inboard.',
         apply: { wing: { washoutDeg: 0 }, flow: { alphaDeg: 12, airspeed: 80, altitude: 0 } },
         camera: 'top',
         highlight: ['flow.alphaDeg', 'wing.washoutDeg'],
@@ -528,7 +528,7 @@ export const LESSONS: readonly Lesson[] = [
         id: 'b747-vs-b737-loading',
         title: 'Wing loading',
         body: `
-<p>The 747 is about five times heavier than the 737 at take-off, but its wing has only four times the area. Divide weight by wing area and you get the <strong>wing loading</strong>: about 640 kg per square metre for the 747 in cruise, and about 540 for the 737.</p>
+<p>The 747 is about five times heavier than the 737 at take-off, but its wing has only four times the area. Divide weight by wing area and you get the <strong>wing loading</strong>: about 640 kg per square metre for the 747 in cruise, and about 520 for the 737.</p>
 <p>Weight grows with the volume of the aircraft, but wing area grows only with the square of its size. So simply scaling a plane up loads its wing more heavily, and bigger planes must fly faster or use cleverer wings.</p>`,
         tryIt:
           'In the comparison, notice how similar the lift needed per square metre of wing is, even though the sizes are so different.',
@@ -550,7 +550,7 @@ export const LESSONS: readonly Lesson[] = [
         id: 'b747-vs-b737-speed',
         title: 'Cruising speeds',
         body: `
-<p>Now fly the 747-400 on its own. It cruises at Mach 0.85, about 900 km/h. The 737-800 cruises at about Mach 0.785, around 830 km/h.</p>
+<p>Now fly the 747-400 on its own. It cruises at Mach 0.85, about 900 km/h. The 737-800 cruises at about Mach 0.785, around 840 km/h.</p>
 <p>The 747's greater sweep is the main reason it can go faster before its shock waves grow strong. Different size, different speed, different tip devices, and the same laws of physics underneath.</p>`,
         tryIt:
           'Use the aircraft picker to switch between the two and compare the angle of attack, lift and drag at cruise.',
@@ -571,7 +571,7 @@ export const LESSONS: readonly Lesson[] = [
         id: 'flaps-and-slats-problem',
         title: 'The slow-flight problem',
         body: `
-<p>A wing shaped for cruise at 830 km/h is a poor wing for landing at 260 km/h. At that speed the air pushes only about a third as hard, and a clean wing falls well short of the lift needed.</p>
+<p>A wing shaped for cruise at 840 km/h is a poor wing for landing at 260 km/h. At that speed the air pushes only about a third as hard, and a clean wing falls well short of the lift needed.</p>
 <p>Tilting it further is not the answer: it would stall before it made enough lift, and an airliner's tail would scrape the runway. The answer is to change the wing's shape for landing and take-off.</p>`,
         tryIt:
           'Read the lift now and compare it with the weight of the plane. It falls well short.',
@@ -623,7 +623,7 @@ export const LESSONS: readonly Lesson[] = [
         id: 'flaps-and-slats-cessna',
         title: 'Why a Cessna lands so slowly',
         body: `
-<p>A Cessna 172 stalls at around 47 knots (87 km/h) with full flaps, about a third of a 737's landing speed. It carries far less weight for its wing area: about 70 kg per square metre, against about 540 to 630 for a loaded 737.</p>
+<p>A Cessna 172 stalls at around 47 knots (87 km/h) with full flaps, about a third of a 737's landing speed. It carries far less weight for its wing area: about 70 kg per square metre, against about 520 to 630 for a loaded 737.</p>
 <p>Wing loading decides landing speed. A heavy load on a small wing needs high speed to make enough lift, even with every high-lift device deployed. That is why big jets need long runways and small planes can land in a field.</p>`,
         tryIt:
           'This Cessna is flying at about 64 knots. Raise the airspeed to about 140 knots, the 737 approach speed, and the Cessna wing would make several times its own weight in lift.',

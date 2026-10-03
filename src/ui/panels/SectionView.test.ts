@@ -8,7 +8,7 @@ import {
   installFixedResizeObserver,
   type FakeCanvas,
 } from '../charts/testCanvas';
-import { DEG, ellipseCp, makeSection } from '../charts/testFixtures';
+import { DEG, ellipseCp, makeAero, makeSection } from '../charts/testFixtures';
 import { SectionView } from './SectionView';
 
 let fake: FakeCanvas;
@@ -375,5 +375,84 @@ describe('SectionView lifecycle', () => {
     expect(() => results.set({ section: section({ eta: 0.9 }) })).not.toThrow();
     expect(() => state.set((s) => ({ ...s, view: { ...s.view, paused: true } }))).not.toThrow();
     view = new SectionView(root, state, results); // keep afterEach happy
+  });
+});
+
+describe('SectionView: terrain, air view and probe', () => {
+  const radio = (text: string): HTMLInputElement =>
+    [...root.querySelectorAll<HTMLLabelElement>('.segmented__option')]
+      .find((l) => l.textContent === text)!
+      .querySelector('input')!;
+  const probeButton = (): HTMLButtonElement => root.querySelector('.viz-section-probe-toggle')!;
+  const caption = (): string => root.querySelector('.viz-caption')!.textContent!;
+
+  it('switches the backdrop and the point of view through the store', () => {
+    radio('Terrain').checked = true;
+    radio('Terrain').dispatchEvent(new Event('change', { bubbles: true }));
+    expect(state.get().view.sectionBackdrop).toBe('terrain');
+    expect(caption()).toMatch(/hill/);
+    radio("Air's view").checked = true;
+    radio("Air's view").dispatchEvent(new Event('change', { bubbles: true }));
+    expect(state.get().view.sectionFrame).toBe('air');
+    expect(caption()).toMatch(/circulates/);
+    // Lessons set the same fields; the controls follow.
+    state.set((s) => ({
+      ...s,
+      view: { ...s.view, sectionBackdrop: 'tint', sectionFrame: 'wing' },
+    }));
+    expect(radio('Colours').checked).toBe(true);
+    expect(radio("Wing's view").checked).toBe(true);
+  });
+
+  it('draws the terrain contours and the disturbance key', () => {
+    results.set({ section: section() });
+    state.set((s) => ({
+      ...s,
+      view: { ...s.view, sectionBackdrop: 'terrain', sectionFrame: 'air' },
+    }));
+    runFrames(1);
+    expect(fake.counts.putImageData).toBeGreaterThan(0);
+    expect(fake.texts.some((t) => /of the wind speed/.test(t))).toBe(true);
+    expect(fake.texts).toContain('WING MOVES THROUGH STILL AIR');
+  });
+
+  it('has no timing dots or pressure arrows in the air view', () => {
+    state.set((s) => ({ ...s, view: { ...s.view, sectionFrame: 'air' } }));
+    const pulse = [...root.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Timing dots',
+    )!;
+    expect(pulse.disabled).toBe(true);
+    results.set({ section: section() });
+    view.firePulse();
+    expect(view.isPulseActive()).toBe(false);
+  });
+
+  it('words the captions for negative lift', () => {
+    state.set((s) => ({ ...s, view: { ...s.view, sectionFrame: 'air' } }));
+    results.set({ section: section({ cl: -0.4, fieldCl: -0.4 }) });
+    expect(caption()).toMatch(/other way/);
+  });
+
+  it('places a probe, reads the air there and moves with the arrow keys', () => {
+    results.set({ section: section(), aero: makeAero() });
+    probeButton().click();
+    expect(probeButton().getAttribute('aria-pressed')).toBe('true');
+    expect(state.get().view.sectionProbe).toEqual({ x: 0.3, y: 0.13 });
+    const box = root.querySelector('.viz-probe')!;
+    expect(box.hasAttribute('hidden')).toBe(false);
+    expect(box.querySelector('.viz-probe__cell--speed')!.textContent).toMatch(
+      /faster than the wind/,
+    );
+    expect(box.querySelector('.viz-probe__cell--pressure')!.textContent).toMatch(/lower/);
+    root
+      .querySelector('canvas')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+    expect(state.get().view.sectionProbe!.y).toBeCloseTo(0.03, 9);
+    // Inside the wing: no readings, a clear message instead.
+    state.set((s) => ({ ...s, view: { ...s.view, sectionProbe: { x: 0.5, y: -0.05 } } }));
+    expect(box.querySelector('.viz-probe__inside')!.textContent).toMatch(/Inside the wing/);
+    probeButton().click();
+    expect(state.get().view.sectionProbe).toBeNull();
+    expect(box.hasAttribute('hidden')).toBe(true);
   });
 });

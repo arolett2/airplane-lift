@@ -13,10 +13,20 @@
  * Everything except the animated parts is rendered once into an offscreen layer; the animation
  * loop only blits that layer and draws the streaks, and runs only while the view is visible and
  * the simulation is not paused. The loop allocates nothing per frame.
+ *
+ * Three ways to make pressure intuitive (all driven by AppState.view, so lessons can set them):
+ *  - Backdrop "Colours" (pressure tint) or "Terrain": pressure as a hillshaded landscape with
+ *    contour lines; high pressure is a hill, low pressure a valley, and the smoke on top shows the
+ *    air speeding up as it rolls downhill and slowing as it climbs.
+ *  - Point of view "Wing's view" (the tunnel: air streams past) or "Air's view": the freestream
+ *    is subtracted, and arrows show what the passing wing does to the still air (it circulates).
+ *  - A draggable probe (pointer, or arrow keys on the focused picture) that reads the local
+ *    speed, the pressure as a change from the surrounding air, and the flow direction.
  */
 import { speedColor, rgbToCss, type RGB } from '../../shared/colormaps';
-import type { SectionFlow } from '../../physics/types';
-import type { AppState } from '../../state/params';
+import type { AeroResult, SectionFlow } from '../../physics/types';
+import type { AppState, SectionBackdrop, SectionFrame, SectionProbe } from '../../state/params';
+import { formatPercent, probeText } from '../../shared/everydayFormat';
 import type { ResultsState } from '../../state/results';
 import type { Store } from '../../state/store';
 import { readChartTheme } from '../charts/chartTheme';
@@ -44,7 +54,22 @@ import {
   type SurfaceProfile,
   type ViewTransform,
 } from '../charts/sectionMath';
+import {
+  TERRAIN_LEVELS,
+  contourSegments,
+  disturbanceArrows,
+  disturbanceGain,
+  fillTerrainImage,
+  probeSection,
+  sampleCpRaster,
+  terrainColor,
+  terrainHeights,
+  type DisturbanceArrow,
+  type ProbeFreestream,
+} from '../charts/sectionFields';
+import type { Control } from '../components/control';
 import { icon } from '../components/icons';
+import { createSegmented } from '../components/segmented';
 import '../styles/viz.css';
 
 /** Chord-times (chord / V_inf) that pass per real second at playback speed 1. */
@@ -68,6 +93,56 @@ const TOP_COLOR = '#ffb454';
 const BOTTOM_COLOR = '#67e8f9';
 const SUCTION_ARROW = 'rgb(118, 192, 255)';
 const PRESSURE_ARROW = 'rgb(255, 128, 100)';
+const DISTURBANCE_ARROW = 'rgba(232, 242, 255, 0.86)';
+const PROBE_RING = '#ffffff';
+const PROBE_INSIDE = '#ffb454';
+
+/** Where the probe appears when switched on: a little above the wing's front half (chords). */
+export const DEFAULT_SECTION_PROBE: SectionProbe = { x: 0.3, y: 0.13 };
+/** Arrow-key step for the probe (chords); Shift moves ten times as far. */
+const PROBE_STEP = 0.01;
+/** Probe positions are kept inside this display-frame window (chords). */
+const PROBE_LIMITS = { xMin: -0.7, xMax: 1.9, yMin: -0.7, yMax: 0.7 } as const;
+/** Disturbance arrows: lattice spacing on screen (CSS px) and typical arrow length (spacings). */
+const DISTURBANCE_SPACING_PX = { card: 23, large: 30 } as const;
+const DISTURBANCE_ARROW_SPACINGS = 0.8;
+/** Candidate sizes for the arrow key, as fractions of the wind speed. */
+const KEY_FRACTIONS = [0.02, 0.05, 0.1, 0.2, 0.25, 0.5] as const;
+/** Terrain relief: chords of height per unit of terrain height (for the hillshading slopes). */
+const TERRAIN_RELIEF_CHORDS = 1.1;
+
+/** |cl| below which the slice counts as "not lifting" in the captions. */
+const NO_LIFT_CL = 0.05;
+
+/**
+ * Caption under the picture for a backdrop / point of view, worded for the sign of the slice's
+ * lift so it stays true for negative lift (and for none).
+ */
+export function sectionCaption(
+  backdrop: SectionBackdrop,
+  frame: SectionFrame,
+  cl: number | null,
+): string {
+  const sign =
+    cl === null || !Number.isFinite(cl) ? 1 : Math.abs(cl) < NO_LIFT_CL ? 0 : Math.sign(cl);
+  if (frame === 'air') {
+    const intro =
+      "The air's view: the wind is taken away, so the arrows show only what the passing wing does to still air.";
+    const scale = 'Arrows are exaggerated; the key shows their scale.';
+    if (sign > 0) {
+      return `${intro} Air ahead is lifted, air over the top is pulled back, air underneath is pushed forward and air behind is thrown down: it circulates around the wing. ${scale}`;
+    }
+    if (sign < 0) {
+      return `${intro} This slice pushes down, so the air circulates the other way: pulled back underneath, pushed forward over the top, and thrown up behind. ${scale}`;
+    }
+    return `${intro} With no lift there is almost no circulation: the air is just nudged aside around the wing's thickness. ${scale}`;
+  }
+  if (backdrop === 'terrain') {
+    const where = sign < 0 ? 'under the wing' : 'over the wing';
+    return `Pressure as a landscape: high pressure is a hill, low pressure a valley, and each line joins equal pressure (the bright one is normal air pressure). Air speeds up as it rolls downhill into the low-pressure valley ${where}, and slows as it climbs the hill at the nose.`;
+  }
+  return 'Blue is low pressure pulling the wing up; red is high pressure pushing it up. Watch the smoke speed up over the curved top.';
+}
 
 type ViewMode = 'card' | 'large';
 
@@ -100,6 +175,21 @@ export class SectionView {
   private readonly sliderLabel: HTMLLabelElement;
   private readonly arrowsToggle: HTMLInputElement;
   private readonly expandButton: HTMLButtonElement;
+  private readonly pulseButton: HTMLButtonElement;
+  private readonly probeButton: HTMLButtonElement;
+  private readonly backdropControl: Control<SectionBackdrop>;
+  private readonly frameControl: Control<SectionFrame>;
+  private readonly caption: HTMLElement;
+  private readonly probeBox: HTMLElement;
+  private readonly probeCells: {
+    speed: HTMLElement;
+    speedSub: HTMLElement;
+    pressure: HTMLElement;
+    pressureSub: HTMLElement;
+    direction: HTMLElement;
+    inside: HTMLElement;
+    hint: HTMLElement;
+  };
   private readonly angleValues: { tilt: HTMLElement; down: HTMLElement; feels: HTMLElement };
   /** Operator and label of the induced-angle chip; they flip to "+ Upwash" when it is negative. */
   private readonly downOp: HTMLElement;
@@ -156,6 +246,18 @@ export class SectionView {
   private visible = true;
   private reducedMotion = false;
   private showArrows = true;
+  private backdrop: SectionBackdrop = 'tint';
+  private frame: SectionFrame = 'wing';
+  private probe: SectionProbe | null = null;
+  private dragging = false;
+  /** Terrain: the Cp raster behind the relief image and its contour lines (raster cells). */
+  private terrainCp: Float32Array | null = null;
+  private terrainFade: Float32Array | null = null;
+  private contours: { level: number; segs: Float32Array }[] = [];
+  /** Air's view: the disturbance arrows, their display gain (chords per unit) and key size. */
+  private dArrows: DisturbanceArrow[] = [];
+  private dGain = 1;
+  private dKey = 0.1;
   private destroyed = false;
   private fontFamily = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
@@ -206,6 +308,7 @@ export class SectionView {
     // Toolbar: arrows toggle, timing pulse, enlarge.
     const toolbar = make('div', 'viz-section-toolbar');
     const toggle = make('label', 'viz-toggle');
+    const toggleLabel = toggle;
     this.arrowsToggle = make('input');
     this.arrowsToggle.type = 'checkbox';
     this.arrowsToggle.checked = true;
@@ -220,14 +323,73 @@ export class SectionView {
     pulseButton.type = 'button';
     pulseButton.title = 'Release a line of dots together and watch which side arrives first';
     pulseButton.addEventListener('click', () => this.firePulse());
+    this.pulseButton = pulseButton;
+
+    this.probeButton = make('button', 'viz-button viz-section-probe-toggle');
+    this.probeButton.type = 'button';
+    this.probeButton.setAttribute('aria-pressed', 'false');
+    this.probeButton.title =
+      'Place a probe in the air: it reads the speed, the pressure and the direction of the air there';
+    this.probeButton.append(make('span', 'viz-probe-dot'), make('span', undefined, 'Probe'));
+    this.probeButton.addEventListener('click', () => this.toggleProbe());
+
+    const setView = <K extends 'sectionBackdrop' | 'sectionFrame'>(
+      key: K,
+      value: AppState['view'][K],
+    ): void =>
+      this.store.set((s) =>
+        s.view[key] === value ? s : { ...s, view: { ...s.view, [key]: value } },
+      );
+    this.backdropControl = createSegmented<SectionBackdrop>({
+      label: 'Show pressure as',
+      hideLabel: true,
+      value: 'tint',
+      options: [
+        { value: 'tint', label: 'Colours', title: 'Pressure as colour: blue low, red high' },
+        {
+          value: 'terrain',
+          label: 'Terrain',
+          title: 'Pressure as a landscape: high pressure is a hill, low pressure a valley',
+        },
+      ],
+      onChange: (v) => setView('sectionBackdrop', v),
+    });
+    this.frameControl = createSegmented<SectionFrame>({
+      label: 'Point of view',
+      hideLabel: true,
+      value: 'wing',
+      options: [
+        {
+          value: 'wing',
+          label: "Wing's view",
+          title: 'Ride with the wing: the air streams past it, as in the wind tunnel',
+        },
+        {
+          value: 'air',
+          label: "Air's view",
+          title:
+            'Stand in the still air: take the wind away and see what the passing wing does to the air',
+        },
+      ],
+      onChange: (v) => setView('sectionFrame', v),
+    });
+    const views = make('div', 'viz-section-views');
+    views.append(this.backdropControl.el, this.frameControl.el);
 
     this.expandButton = make('button', 'viz-button viz-section-expand');
     this.expandButton.type = 'button';
     this.expandButton.setAttribute('aria-label', 'Enlarge the cross-section');
     this.expandButton.title = 'Enlarge';
-    this.expandButton.append(icon('expand', 15), make('span', undefined, 'Enlarge'));
+    this.expandButton.append(icon('expand', 15));
     this.expandButton.addEventListener('click', () => this.setExpanded(true));
-    toolbar.append(toggle, pulseButton, make('span', 'viz-spacer'), this.expandButton);
+    toolbar.append(
+      views,
+      toggle,
+      pulseButton,
+      this.probeButton,
+      make('span', 'viz-spacer'),
+      this.expandButton,
+    );
 
     this.stage = make('div', 'viz-section-stage');
     this.canvas = make('canvas', 'viz-section-canvas');
@@ -237,7 +399,50 @@ export class SectionView {
       'Air flowing past a slice of the wing: blue marks low pressure above, red high pressure below.',
     );
     this.stage.appendChild(this.canvas);
-    this.stage.addEventListener('dblclick', () => this.setExpanded(this.mode === 'card'));
+    this.stage.addEventListener('dblclick', () => {
+      if (!this.probe) this.setExpanded(this.mode === 'card');
+    });
+    this.stage.addEventListener('pointerdown', this.onPointerDown);
+    this.stage.addEventListener('pointermove', this.onPointerMove);
+    this.stage.addEventListener('pointerup', this.onPointerUp);
+    this.stage.addEventListener('pointercancel', this.onPointerUp);
+    this.canvas.addEventListener('keydown', this.onCanvasKey);
+    this.canvas.addEventListener('focus', () => this.requestDraw());
+    this.canvas.addEventListener('blur', () => this.requestDraw());
+
+    // Probe readout (shown while the probe is placed).
+    this.probeBox = make('div', 'viz-probe');
+    this.probeBox.hidden = true;
+    this.probeBox.setAttribute('role', 'status');
+    this.probeBox.setAttribute('aria-live', 'polite');
+    const cell = (name: string, cls: string): [HTMLElement, HTMLElement] => {
+      const el = make('div', `viz-probe__cell ${cls}`);
+      const value = make('b', 'viz-probe__value', '–');
+      const sub = make('span', 'viz-probe__sub');
+      el.append(make('span', 'viz-probe__name', name), value, sub);
+      this.probeBox.append(el);
+      return [value, sub];
+    };
+    const [speedValue, speedSub] = cell('Speed', 'viz-probe__cell--speed');
+    const [pressureValue, pressureSub] = cell('Pressure', 'viz-probe__cell--pressure');
+    const [directionValue] = cell('Heading', 'viz-probe__cell--direction');
+    const inside = make('p', 'viz-probe__inside');
+    inside.hidden = true;
+    const hint = make(
+      'p',
+      'viz-probe__hint',
+      'Drag the probe, or click the picture and use the arrow keys.',
+    );
+    this.probeBox.append(inside, hint);
+    this.probeCells = {
+      speed: speedValue,
+      speedSub,
+      pressure: pressureValue,
+      pressureSub,
+      direction: directionValue,
+      inside,
+      hint,
+    };
 
     // Angle bookkeeping: wing tilt - downwash = what the air feels.
     const angles = make('div', 'viz-section-angles');
@@ -282,13 +487,10 @@ export class SectionView {
     this.slider.addEventListener('input', () => this.onSlider());
     sliderBox.append(this.sliderLabel, this.slider);
 
-    const caption = make(
-      'p',
-      'viz-caption',
-      'Blue is low pressure pulling the wing up; red is high pressure pushing it up. Watch the smoke speed up over the curved top.',
-    );
+    const caption = make('p', 'viz-caption', sectionCaption('tint', 'wing', null));
+    this.caption = caption;
 
-    this.el.append(toolbar, this.stage, angles, legend, sliderBox, caption);
+    this.el.append(toolbar, this.stage, this.probeBox, angles, legend, sliderBox, caption);
     root.appendChild(this.el);
 
     // Shown in the card while the picture is enlarged.
@@ -344,6 +546,52 @@ export class SectionView {
         () => this.updateAnimation(),
       ),
       store.select(
+        (s) => s.view.sectionBackdrop,
+        (backdrop) => {
+          this.backdrop = backdrop === 'terrain' ? 'terrain' : 'tint';
+          this.backdropControl.set(this.backdrop);
+          this.syncLegend(this.store.get().view.colorBy);
+          this.syncCaption();
+          this.fieldDirty = true;
+          this.staticDirty = true;
+          this.requestDraw();
+        },
+        { fireNow: true },
+      ),
+      store.select(
+        (s) => s.view.sectionFrame,
+        (frame) => {
+          this.frame = frame === 'air' ? 'air' : 'wing';
+          this.frameControl.set(this.frame);
+          if (this.frame === 'air') this.pulse = null;
+          this.pulseButton.disabled = this.frame === 'air';
+          this.arrowsToggle.disabled = this.frame === 'air';
+          toggleLabel.classList.toggle('is-disabled', this.frame === 'air');
+          this.pulseButton.title =
+            this.frame === 'air'
+              ? "Timing dots ride with the smoke, which the air's view hides"
+              : 'Release a line of dots together and watch which side arrives first';
+          this.syncCaption();
+          this.staticDirty = true;
+          this.requestDraw();
+          this.updateAnimation();
+        },
+        { fireNow: true },
+      ),
+      store.select(
+        (s) => s.view.sectionProbe,
+        (probe) => this.setProbe(probe),
+        { fireNow: true },
+      ),
+      store.select(
+        (s) => s.view.units,
+        () => this.syncProbeReadout(),
+      ),
+      results.select(
+        (r) => r.aero,
+        () => this.syncProbeReadout(),
+      ),
+      store.select(
         (s) => s.view.colorBy,
         (mode) => {
           this.syncLegend(mode);
@@ -384,7 +632,7 @@ export class SectionView {
    */
   firePulse(): void {
     const prep = this.prep;
-    if (!this.section || !prep || prep.lines.length === 0) return;
+    if (!this.section || !prep || prep.lines.length === 0 || this.frame === 'air') return;
     // Start on a line just inside the left edge of the picture, so the markers are seen leaving.
     const startX = this.vt ? Math.max(prep.pulseX, this.vt.worldX(14)) : prep.pulseX;
     if (this.pulseStarts.length !== prep.lines.length) {
@@ -459,6 +707,8 @@ export class SectionView {
     this.resizeObserver?.disconnect();
     this.intersectionObserver?.disconnect();
     this.el.ownerDocument.removeEventListener('visibilitychange', this.onVisibility);
+    this.backdropControl.destroy();
+    this.frameControl.destroy();
     for (const off of this.unsubscribe) off();
     this.unsubscribe.length = 0;
     this.el.remove();
@@ -579,6 +829,26 @@ export class SectionView {
   }
 
   private syncLegend(mode: AppState['view']['colorBy']): void {
+    if (this.backdrop === 'terrain') {
+      this.legendLow.textContent = 'Valley · low';
+      this.legendMid.textContent = 'flat · normal';
+      this.legendHigh.textContent = 'Hill · high';
+      const rgb: [number, number, number] = [0, 0, 0];
+      const stop = (cp: number, at: number): string => {
+        terrainColor(cp, rgb);
+        return `rgb(${rgb.map((v) => Math.round(v)).join(', ')}) ${at}%`;
+      };
+      this.legendBar.style.background = `linear-gradient(90deg, ${[
+        stop(-1.6, 0),
+        stop(-0.8, 22),
+        stop(-0.25, 40),
+        stop(0, 50),
+        stop(0.25, 60),
+        stop(0.6, 78),
+        stop(1, 100),
+      ].join(', ')})`;
+      return;
+    }
     if (mode === 'speed') {
       this.legendLow.textContent = 'Slow air';
       this.legendMid.textContent = 'normal';
@@ -646,9 +916,168 @@ export class SectionView {
     }
     this.fieldDirty = true;
     this.staticDirty = true;
+    this.syncCaption();
+    this.syncProbeReadout();
     this.requestDraw();
     this.updateAnimation();
   }
+
+  /* ---------------------------------------------------------------------------------------- */
+  /* Probe and captions                                                                        */
+  /* ---------------------------------------------------------------------------------------- */
+
+  private syncCaption(): void {
+    this.caption.textContent = sectionCaption(
+      this.backdrop,
+      this.frame,
+      this.section ? (this.section.fieldCl ?? this.section.cl) : null,
+    );
+    const base =
+      this.frame === 'air'
+        ? "The air's view of a slice of the wing: arrows show how the passing wing moves the still air."
+        : this.backdrop === 'terrain'
+          ? 'Air flowing over a pressure landscape around a slice of the wing: valleys of low pressure, hills of high pressure, with contour lines.'
+          : 'Air flowing past a slice of the wing: blue marks low pressure above, red high pressure below.';
+    this.canvas.setAttribute(
+      'aria-label',
+      this.probe ? `${base} Probe placed: use the arrow keys to move it.` : base,
+    );
+  }
+
+  /** Switch the probe on (at its default spot) or off. */
+  toggleProbe(): void {
+    const next = this.probe ? null : { ...DEFAULT_SECTION_PROBE };
+    this.store.set((s) => ({ ...s, view: { ...s.view, sectionProbe: next } }));
+    if (next) this.canvas.focus({ preventScroll: true });
+  }
+
+  private setProbe(probe: SectionProbe | null): void {
+    this.probe = probe ? { x: probe.x, y: probe.y } : null;
+    const on = this.probe !== null;
+    this.probeButton.setAttribute('aria-pressed', String(on));
+    this.probeButton.classList.toggle('is-active', on);
+    this.stage.classList.toggle('is-probing', on);
+    this.el.classList.toggle('has-probe', on);
+    this.probeBox.hidden = !on;
+    if (on) this.canvas.tabIndex = 0;
+    else this.canvas.removeAttribute('tabindex');
+    if (!on) this.dragging = false;
+    this.syncCaption();
+    this.syncProbeReadout();
+    this.requestDraw();
+  }
+
+  private freestream(aero: AeroResult | null): ProbeFreestream {
+    if (!aero) return { vInf: NaN, mach: 0, pInf: 101325, q: NaN };
+    return {
+      vInf: aero.velocity,
+      mach: aero.mach,
+      pInf: aero.atmosphere.pressure,
+      q: aero.dynamicPressure,
+    };
+  }
+
+  /** Fill the probe readout from the current section, probe position and freestream. */
+  private syncProbeReadout(): void {
+    const probe = this.probe;
+    const section = this.section;
+    const cells = this.probeCells;
+    if (!probe) return;
+    if (!section) {
+      cells.speed.textContent = '–';
+      cells.speedSub.textContent = 'Waiting for the flow…';
+      cells.pressure.textContent = '–';
+      cells.pressureSub.textContent = '';
+      cells.direction.textContent = '–';
+      return;
+    }
+    const aero = this.results.get().aero;
+    const free = this.freestream(aero);
+    const r = probeSection(section, probe.x, probe.y, free);
+    const text = probeText(
+      {
+        inside: r.inside,
+        speedRatio: r.speedRatio,
+        vInf: free.vInf,
+        deltaPressure: r.pressure.delta,
+        pressureFraction: r.pressure.fraction,
+        angleUp: r.angle,
+        separated: r.separated,
+      },
+      this.store.get().view.units,
+    );
+    this.probeBox.classList.toggle('is-inside', r.inside);
+    cells.inside.hidden = !r.inside;
+    cells.inside.textContent = r.inside
+      ? 'Inside the wing: no air here. Drag the probe out into the flow.'
+      : '';
+    if (r.inside) return;
+    cells.speed.textContent = text.speed;
+    cells.speedSub.textContent = text.speedCompare;
+    const f = r.pressure.fraction;
+    const same = !(Math.abs(f) >= 5e-5);
+    cells.pressure.textContent = same
+      ? 'Normal'
+      : `${formatPercent(f)} ${f < 0 ? 'lower' : 'higher'}`;
+    cells.pressure.dataset.sign = same ? '0' : f < 0 ? '-' : '+';
+    cells.pressureSub.textContent = same
+      ? 'same as the air around it'
+      : `than the air around it (${text.pressureValue})`;
+    cells.direction.textContent = text.direction;
+    this.probeBox.setAttribute('aria-label', text.summary);
+  }
+
+  private moveProbe(x: number, y: number): void {
+    const next = {
+      x: Math.min(PROBE_LIMITS.xMax, Math.max(PROBE_LIMITS.xMin, x)),
+      y: Math.min(PROBE_LIMITS.yMax, Math.max(PROBE_LIMITS.yMin, y)),
+    };
+    this.store.set((s) => ({ ...s, view: { ...s.view, sectionProbe: next } }));
+  }
+
+  private probeFromEvent(e: PointerEvent): void {
+    const vt = this.vt;
+    if (!vt) return;
+    const rect = this.canvas.getBoundingClientRect();
+    this.moveProbe(vt.worldX(e.clientX - rect.left), vt.worldY(e.clientY - rect.top));
+  }
+
+  private readonly onPointerDown = (e: PointerEvent): void => {
+    if (!this.probe || e.button !== 0) return;
+    this.dragging = true;
+    try {
+      this.stage.setPointerCapture(e.pointerId);
+    } catch {
+      /* not supported (tests) */
+    }
+    e.preventDefault();
+    this.canvas.focus({ preventScroll: true });
+    this.probeFromEvent(e);
+  };
+
+  private readonly onPointerMove = (e: PointerEvent): void => {
+    if (this.dragging) this.probeFromEvent(e);
+  };
+
+  private readonly onPointerUp = (): void => {
+    this.dragging = false;
+  };
+
+  private readonly onCanvasKey = (e: KeyboardEvent): void => {
+    const probe = this.probe;
+    if (!probe) return;
+    const step = PROBE_STEP * (e.shiftKey ? 10 : 1);
+    const moves: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, step],
+      ArrowDown: [0, -step],
+    };
+    const d = moves[e.key];
+    if (!d) return;
+    e.preventDefault();
+    this.moveProbe(probe.x + d[0], probe.y + d[1]);
+  };
 
   /** The few streamlines nearest the wing on each side carry the timing markers. */
   private pickPulseLines(prep: PreparedStreamlines): void {
@@ -774,8 +1203,13 @@ export class SectionView {
     ctx.clearRect(0, 0, pxW, pxH);
     if (this.layerCtx) ctx.drawImage(this.layer, 0, 0);
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.drawStreaks(ctx);
-    this.drawPulse(ctx);
+    if (this.frame === 'air') {
+      this.drawDisturbanceMotion(ctx);
+    } else {
+      this.drawStreaks(ctx);
+      this.drawPulse(ctx);
+    }
+    this.drawProbe(ctx);
   }
 
   /** Text size scale: a little larger in the enlarged view. */
@@ -819,15 +1253,19 @@ export class SectionView {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     if (this.fieldImage) ctx.drawImage(this.field, 0, 0, this.cssW, this.cssH);
+    if (this.backdrop === 'terrain') this.drawContours(ctx);
 
-    this.drawStreamlines(ctx, vt);
+    const air = this.frame === 'air';
+    if (air) this.drawDisturbance(ctx, vt, section);
+    else this.drawStreamlines(ctx, vt);
     this.drawSeparation(ctx, vt, section);
     this.drawAirfoil(ctx, vt, this.contourDisp);
     this.drawFlapHinge(ctx, vt, section);
-    if (this.showArrows) this.drawSurfaceArrows(ctx, vt, section);
+    if (this.showArrows && !air) this.drawSurfaceArrows(ctx, vt, section);
     this.drawStagnation(ctx, vt, section);
     this.drawLiftArrow(ctx, vt, section, theme.tokens['--lift'] ?? '#4ade80');
     this.drawAirflowCue(ctx);
+    if (air) this.drawDisturbanceKey(ctx);
   }
 
   private backgroundColor(): string {
@@ -864,9 +1302,233 @@ export class SectionView {
       Ymax: vt.worldY(0),
       Ymin: vt.worldY(this.cssH),
     };
-    const mode = this.store.get().view.colorBy;
-    fillFieldImage(section, this.speed, win, w, h, mode, this.fieldImage.data);
+    if (this.backdrop === 'terrain') {
+      if (!this.terrainCp || this.terrainCp.length !== w * h)
+        this.terrainCp = new Float32Array(w * h);
+      if (!this.terrainFade || this.terrainFade.length !== w * h) {
+        this.terrainFade = new Float32Array(w * h);
+      }
+      sampleCpRaster(section, win, w, h, this.terrainCp, this.terrainFade);
+      const pxPerChord = w / (win.Xmax - win.Xmin);
+      fillTerrainImage(
+        this.terrainCp,
+        w,
+        h,
+        TERRAIN_RELIEF_CHORDS * pxPerChord,
+        this.fieldImage.data,
+        this.terrainFade,
+      );
+      const heights = terrainHeights(this.terrainCp, this.terrainFade);
+      this.contours = TERRAIN_LEVELS.map((level) => ({
+        level,
+        segs: contourSegments(heights, w, h, level),
+      }));
+    } else {
+      const mode = this.store.get().view.colorBy;
+      fillFieldImage(section, this.speed, win, w, h, mode, this.fieldImage.data);
+      this.contours = [];
+    }
     ctx.putImageData(this.fieldImage, 0, 0);
+  }
+
+  /** Terrain contour lines; normal pressure ("sea level") is drawn brighter. */
+  private drawContours(ctx: CanvasRenderingContext2D): void {
+    if (this.contours.length === 0) return;
+    const sx = this.cssW / this.field.width;
+    const sy = this.cssH / this.field.height;
+    ctx.lineJoin = 'round';
+    for (const { level, segs } of this.contours) {
+      if (segs.length === 0) continue;
+      const sea = Math.abs(level) < 1e-9;
+      const major = Math.abs(Math.round(level * 10)) % 5 === 0;
+      ctx.strokeStyle = sea
+        ? 'rgba(255, 255, 255, 0.7)'
+        : level < 0
+          ? `rgba(190, 225, 255, ${major ? 0.5 : 0.28})`
+          : `rgba(255, 214, 196, ${major ? 0.55 : 0.32})`;
+      ctx.lineWidth = sea ? 1.4 : major ? 1.1 : 0.8;
+      ctx.beginPath();
+      for (let k = 0; k + 3 < segs.length; k += 4) {
+        ctx.moveTo(segs[k]! * sx, segs[k + 1]! * sy);
+        ctx.lineTo(segs[k + 2]! * sx, segs[k + 3]! * sy);
+      }
+      ctx.stroke();
+    }
+  }
+
+  /* ---------------------------------------------------------------------------------------- */
+  /* The air's view                                                                            */
+  /* ---------------------------------------------------------------------------------------- */
+
+  /** Static disturbance arrows (flow minus wind), exaggerated by a "nice" gain. */
+  private drawDisturbance(
+    ctx: CanvasRenderingContext2D,
+    vt: ViewTransform,
+    section: SectionFlow,
+  ): void {
+    const spacingPx = DISTURBANCE_SPACING_PX[this.mode];
+    const spacing = spacingPx / vt.scale;
+    const win = {
+      Xmin: vt.worldX(spacingPx * 0.5),
+      Xmax: vt.worldX(this.cssW - spacingPx * 0.5),
+      Ymax: vt.worldY(spacingPx * 0.5),
+      Ymin: vt.worldY(this.cssH - spacingPx * 0.5),
+    };
+    this.dArrows = disturbanceArrows(section, win, spacing);
+    this.dGain = disturbanceGain(this.dArrows, DISTURBANCE_ARROW_SPACINGS * spacing);
+    // Key: the largest "nice" fraction of the wind whose arrow fits in about two spacings.
+    let key: number = KEY_FRACTIONS[0];
+    for (const f of KEY_FRACTIONS) if (f * this.dGain <= 2.2 * spacing) key = f;
+    this.dKey = key;
+    const head = this.mode === 'large' ? 6 : 4.5;
+    const maxLen = 1.7 * spacingPx;
+    for (const a of this.dArrows) {
+      const mag = Math.hypot(a.dU, a.dV);
+      let len = mag * this.dGain * vt.scale;
+      if (len < 4) continue;
+      len = Math.min(len, maxLen);
+      const ux = a.dU / mag;
+      const uy = -a.dV / mag; // screen y runs down
+      const x0 = vt.x(a.X) - ux * len * 0.5;
+      const y0 = vt.y(a.Y) - uy * len * 0.5;
+      const alpha = Math.min(1, 0.35 + len / spacingPx);
+      ctx.globalAlpha = alpha;
+      this.arrow(ctx, x0, y0, x0 + ux * len, y0 + uy * len, DISTURBANCE_ARROW, 1.5, head);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /** A bright dash that runs along each arrow: the direction reads even at a glance. */
+  private drawDisturbanceMotion(ctx: CanvasRenderingContext2D): void {
+    const vt = this.vt;
+    if (!vt || this.dArrows.length === 0 || this.reducedMotion) return;
+    const spacingPx = DISTURBANCE_SPACING_PX[this.mode];
+    const maxLen = 1.7 * spacingPx;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.lineWidth = this.mode === 'large' ? 2.4 : 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < this.dArrows.length; i++) {
+      const a = this.dArrows[i]!;
+      const mag = Math.hypot(a.dU, a.dV);
+      const len = Math.min(maxLen, mag * this.dGain * vt.scale);
+      if (len < 6) continue;
+      const ux = a.dU / mag;
+      const uy = -a.dV / mag;
+      const phase = (this.clock * 1.4 + ((i * 0.618034) % 1)) % 1;
+      const x0 = vt.x(a.X) - ux * len * 0.5;
+      const y0 = vt.y(a.Y) - uy * len * 0.5;
+      const t0 = phase * 0.75 * len;
+      const t1 = t0 + 0.25 * len;
+      ctx.moveTo(x0 + ux * t0, y0 + uy * t0);
+      ctx.lineTo(x0 + ux * t1, y0 + uy * t1);
+    }
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+  }
+
+  /** "Arrow = 10% of the wind speed" key, top-right. */
+  private drawDisturbanceKey(ctx: CanvasRenderingContext2D): void {
+    const vt = this.vt;
+    if (!vt || this.dArrows.length === 0) return;
+    const k = this.textScale;
+    const len = Math.max(8, this.dKey * this.dGain * vt.scale);
+    const text = `= ${Math.round(this.dKey * 100)}% of the wind speed`;
+    const font = this.font(10.5, '600');
+    ctx.font = font;
+    const tw = ctx.measureText(text).width;
+    const boxW = len + tw + 26;
+    const boxH = 22 * k;
+    const x = this.cssW - boxW - 8;
+    const y = 8;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, boxW, boxH, 6);
+    else ctx.rect(x, y, boxW, boxH);
+    ctx.fillStyle = 'rgba(7, 12, 21, 0.8)';
+    ctx.fill();
+    const cy = y + boxH / 2;
+    this.arrow(
+      ctx,
+      x + 9,
+      cy,
+      x + 9 + len,
+      cy,
+      DISTURBANCE_ARROW,
+      1.5,
+      this.mode === 'large' ? 6 : 4.5,
+    );
+    this.label(ctx, text, x + len + 16, cy, 'left', TEXT_MUTED, font);
+  }
+
+  /* ---------------------------------------------------------------------------------------- */
+  /* Probe marker                                                                              */
+  /* ---------------------------------------------------------------------------------------- */
+
+  private drawProbe(ctx: CanvasRenderingContext2D): void {
+    const probe = this.probe;
+    const vt = this.vt;
+    const section = this.section;
+    if (!probe || !vt || !section) return;
+    const px = vt.x(probe.x);
+    const py = vt.y(probe.y);
+    const r = probeSection(section, probe.x, probe.y, this.freestream(this.results.get().aero));
+    const big = this.mode === 'large';
+    const ring = big ? 9 : 7.5;
+    // Flow direction: a short arrow from the probe along the local velocity, longer when faster.
+    if (!r.inside && Number.isFinite(r.angle)) {
+      const len = (big ? 30 : 22) * Math.min(2, r.speedRatio);
+      const ex = px + Math.cos(r.angle) * (ring + len);
+      const ey = py - Math.sin(r.angle) * (ring + len);
+      const sx = px + Math.cos(r.angle) * ring;
+      const sy = py - Math.sin(r.angle) * ring;
+      this.arrow(ctx, sx, sy, ex, ey, '#ffffff', big ? 2.4 : 2, big ? 9 : 7, HALO);
+    }
+    ctx.beginPath();
+    ctx.arc(px, py, ring + 2, 0, Math.PI * 2);
+    ctx.strokeStyle = HALO;
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(px, py, ring, 0, Math.PI * 2);
+    ctx.strokeStyle = r.inside ? PROBE_INSIDE : PROBE_RING;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(px, py, 2, 0, Math.PI * 2);
+    ctx.fillStyle = r.inside ? PROBE_INSIDE : PROBE_RING;
+    ctx.fill();
+    if (this.canvas.ownerDocument.activeElement === this.canvas) {
+      ctx.beginPath();
+      ctx.arc(px, py, ring + 5, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(61, 214, 200, 0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // A compact tag: the pressure change, coloured like the pressure map.
+    const f = r.pressure.fraction;
+    const tag = r.inside
+      ? 'inside the wing'
+      : Number.isFinite(f)
+        ? `${formatPercent(f)} ${f < 0 ? 'lower' : 'higher'} pressure`
+        : '';
+    if (!tag) return;
+    const color = r.inside ? PROBE_INSIDE : f < 0 ? SUCTION_ARROW : PRESSURE_ARROW;
+    const font = this.font(11, '700');
+    ctx.font = font;
+    const tw = ctx.measureText(tag).width;
+    const right = px + ring + 6 + tw < this.cssW - 4;
+    const ty = py - ring - 8 < 10 ? py + ring + 12 : py - ring - 8;
+    this.label(
+      ctx,
+      tag,
+      right ? px + ring + 4 : px - ring - 4,
+      ty,
+      right ? 'left' : 'right',
+      color,
+      font,
+    );
   }
 
   private drawStreamlines(ctx: CanvasRenderingContext2D, vt: ViewTransform): void {
@@ -1105,6 +1767,19 @@ export class SectionView {
     const y = this.cssH - 12;
     const font = this.font(9.5, '600');
     ctx.font = font;
+    if (this.frame === 'air') {
+      this.arrow(ctx, x + 26, y, x + 2, y, 'rgba(182, 198, 220, 0.7)', 1.3, 5);
+      this.label(
+        ctx,
+        'WING MOVES THROUGH STILL AIR',
+        x + 32,
+        y,
+        'left',
+        'rgba(182, 198, 220, 0.7)',
+        font,
+      );
+      return;
+    }
     const text = 'AIRFLOW';
     const w = ctx.measureText(text).width;
     this.label(ctx, text, x, y, 'left', 'rgba(182, 198, 220, 0.7)', font);

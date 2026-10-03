@@ -97,7 +97,8 @@ describe('planformShapes', () => {
 describe('formatting', () => {
   it('formats lengths, areas, altitudes and loadings per unit system', () => {
     expect(formatLength(64.44, 'metric')).toBe('64.4 m');
-    expect(formatLength(150, 'aviation')).toBe('150 m');
+    expect(formatLength(150, 'aviation')).toBe('492 ft');
+    expect(formatArea(511, 'aviation')).toBe('5,500 ft²');
     expect(formatLength(10, 'imperial')).toBe('32.8 ft');
     expect(formatArea(511, 'metric')).toBe('511 m²');
     expect(formatArea(10, 'imperial')).toBe('108 ft²');

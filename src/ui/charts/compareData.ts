@@ -86,16 +86,18 @@ const withCommas = (n: number): string =>
     .toString()
     .replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
+/** Lengths and areas are in feet in the aviation and imperial systems (as in shared/units). */
+const inFeet = (units: UnitSystem): boolean => units !== 'metric';
+
 export function formatLength(meters: number, units: UnitSystem): string {
   if (!Number.isFinite(meters)) return '–';
-  if (units === 'imperial')
-    return `${(meters * M_TO_FT).toFixed(meters * M_TO_FT >= 100 ? 0 : 1)} ft`;
+  if (inFeet(units)) return `${(meters * M_TO_FT).toFixed(meters * M_TO_FT >= 100 ? 0 : 1)} ft`;
   return `${meters.toFixed(meters >= 100 ? 0 : 1)} m`;
 }
 
 export function formatArea(squareMeters: number, units: UnitSystem): string {
   if (!Number.isFinite(squareMeters)) return '–';
-  if (units === 'imperial') return `${withCommas(squareMeters * M_TO_FT * M_TO_FT)} ft²`;
+  if (inFeet(units)) return `${withCommas(squareMeters * M_TO_FT * M_TO_FT)} ft²`;
   return `${squareMeters.toFixed(squareMeters >= 100 ? 0 : 1)} m²`;
 }
 
@@ -507,8 +509,8 @@ export function buildPlanformSvg(inputs: readonly PlanformInput[], units: UnitSy
   });
 
   // Scale bar (a round length that is roughly a fifth of the widest span).
-  const unitPerMeter = units === 'imperial' ? M_TO_FT : 1;
-  const unitName = units === 'imperial' ? 'ft' : 'm';
+  const unitPerMeter = inFeet(units) ? M_TO_FT : 1;
+  const unitName = inFeet(units) ? 'ft' : 'm';
   const barLength = niceScaleBarLength((2 * maxHalf * unitPerMeter) / 5);
   const barPx = (barLength / unitPerMeter) * scale;
   const bx = margin;

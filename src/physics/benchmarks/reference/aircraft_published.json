@@ -1,0 +1,55 @@
+{
+  "source": "Published aircraft figures and simple calculations from them. The model is the WING ALONE (no fuselage, tail, nacelles), so only wing-dominated coefficients are compared, all rescaled to the published reference area. Each value says whether it is published, calculated from published inputs, or an estimate.",
+  "aircraft": [
+    {
+      "presetId": "b737-800",
+      "publishedAreaM2": 124.6,
+      "areaSource": "Boeing 737NG data via https://en.wikipedia.org/wiki/Boeing_737_Next_Generation (1,341.2 sq ft)",
+      "cruiseCl": {
+        "value": 0.497,
+        "source": "Calculated: 65 t at FL350, Mach 0.785, ISA, S = 124.6 m2 (range 0.48-0.51 for 60-75 t at FL310-370)"
+      },
+      "buffetOnsetCl": {
+        "value": 0.74,
+        "source": "Estimate: 1.3 g buffet-margin rule x CL at the 1.3 g maximum altitude (about FL379 at 65 t, not verified); no public Boeing buffet boundary found"
+      },
+      "landingClMax": {
+        "value": 2.7,
+        "flapDeg": 30,
+        "source": "Rudolph, NASA CR-4746 (1996), Fig. 2.29: 737-X approach CL 1.75 x 1.54 (CLmax / CL_approach, p. 40); 737-300: 2.75"
+      },
+      "dragDivergenceMach": {
+        "value": 0.785,
+        "source": "Proxy: published typical cruise Mach 0.785 (airliners cruise at about M_dd); no published M_dd. MMO 0.82."
+      }
+    },
+    {
+      "presetId": "b747-400",
+      "publishedAreaM2": 525,
+      "areaSource": "https://aerospaceweb.org/aircraft/jetliner/b747 and https://en.wikipedia.org/wiki/Boeing_747-400 (5,650 sq ft)",
+      "cruiseCl": {
+        "value": 0.505,
+        "source": "Calculated: 330 t at FL350, Mach 0.855, ISA, S = 525 m2 (range 0.48-0.51 for 270-380 t at FL310-390)"
+      },
+      "buffetOnsetCl": {
+        "value": 0.72,
+        "source": "Estimate: 1.3 g buffet-margin rule x CL at the 1.3 g maximum altitude (about FL370 at 330 t, not verified); no public Boeing buffet boundary found"
+      },
+      "landingClMax": {
+        "value": 2.1,
+        "flapDeg": 30,
+        "source": "Rudolph, NASA CR-4746 (1996), Fig. 2.29: 747-400 approach CL 1.36 x 1.54 (CLmax / CL_approach, p. 40); approach 146 kt at MLW (p. 79)"
+      },
+      "dragDivergenceMach": {
+        "value": 0.855,
+        "source": "Proxy: published cruise Mach 0.855 (Wikipedia, citing Boeing); no published M_dd. MMO 0.92."
+      }
+    }
+  ],
+  "citations": [
+    "R. K. Rudolph, 'High-Lift Systems on Commercial Subsonic Airliners', NASA CR-4746, 1996. https://ntrs.nasa.gov/citations/19960052267",
+    "https://en.wikipedia.org/wiki/Boeing_737_Next_Generation",
+    "https://en.wikipedia.org/wiki/Boeing_747-400",
+    "https://aerospaceweb.org/aircraft/jetliner/b747"
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "source": "NACA wind-tunnel reports, read from the NASA Technical Reports Server scans. Values marked 'figure' were read by eye from the plotted curves (about +-0.002/deg on CL_alpha and +-0.02 on CL).",
+  "cases": [
+    {
+      "id": "RM-L8D29 35deg AR6",
+      "source": "Koven & Graham, NACA RM L8D29 (1948), text + Table I",
+      "citation": "W. Koven and R. R. Graham, 'Wind-Tunnel Investigation of High-Lift and Stall-Control Devices on a 37 deg Sweptback Wing of Aspect Ratio 6 at High Reynolds Numbers', NACA RM L8D29, 1948. https://ntrs.nasa.gov/citations/19930093752",
+      "notes": "Semispan reflection-plane model, Langley 19-ft pressure tunnel, R = 6.8e6 on the MAC, M about 0.13. AR 6, taper 0.5, no twist, LE sweep 37.25 deg (35 deg at 0.27c; 35.2 deg at c/4 by calculation). Section NACA 64(1)-212 normal to the 0.27c line, i.e. about 9.8 % thick streamwise; the stand-in is a 4-digit section with 1 % camber at 50 % chord and 9.8 % thickness. Jet-boundary corrections applied by the authors; support tares (about +0.0008/deg on CL_alpha) not removed. CL_alpha 0.070/deg measured (report text). Plain-wing CLmax 1.27 at alpha 19.0 deg (Table I). Stall: sudden, over the whole outer half of the semispan, with an unstable pitch break (report text).",
+      "planform": {
+        "aspectRatio": 6,
+        "taperRatio": 0.5,
+        "sweepQuarterChordDeg": 35.2,
+        "airfoilStandIn": { "camber": 0.01, "camberPos": 0.5, "thickness": 0.098 }
+      },
+      "mach": 0.13,
+      "liftSlope": { "reynoldsMac": 6.8e6, "perDeg": 0.07, "alphaRangeDeg": [0, 6] },
+      "clMax": { "reynoldsMac": 6.8e6, "value": 1.27, "alphaDeg": 19.0 },
+      "tipStallFirst": { "reynoldsMac": 6.8e6, "value": true }
+    },
+    {
+      "id": "RM-L50F16 45deg AR6",
+      "source": "Cahill & Gottlieb, NACA RM L50F16 (1950), Figs. 12a, 18, 19",
+      "citation": "J. F. Cahill and S. M. Gottlieb, 'Low-Speed Aerodynamic Characteristics of a Series of Swept Wings Having NACA 65A006 Airfoil Sections', NACA RM L50F16, 1950. https://ntrs.nasa.gov/api/citations/19930086214/downloads/19930086214.pdf",
+      "notes": "Wing 45-6-0.6: c/4 sweep 45 deg, AR 6, taper 0.6, NACA 65A006 streamwise, no twist or dihedral; semispan model in the Langley two-dimensional low-turbulence pressure tunnel, M <= 0.2. CL_alpha about 0.054/deg at R = 6e6 (Fig. 18, figure), linear to CL about 0.35. CLmax about 1.02 at R = 3e6 (Fig. 19a, figure) at alpha 26-28 deg, beyond the app's 24 deg sweep range, so the angle is not compared. On this thin section a leading-edge separation vortex forms above CL about 0.35 and carries the high-alpha lift; unstable pitch breaks from complete separation over the tip sections start near CL 0.41 (Fig. 19b and text). The stand-in section is NACA 0006.",
+      "planform": {
+        "aspectRatio": 6,
+        "taperRatio": 0.6,
+        "sweepQuarterChordDeg": 45,
+        "airfoilStandIn": { "camber": 0, "camberPos": 0.4, "thickness": 0.06 }
+      },
+      "mach": 0.15,
+      "liftSlope": { "reynoldsMac": 6e6, "perDeg": 0.054, "alphaRangeDeg": [0, 4] },
+      "clMax": { "reynoldsMac": 3e6, "value": 1.02, "alphaDeg": null },
+      "tipStallFirst": { "reynoldsMac": 3e6, "value": true }
+    }
+  ]
+}

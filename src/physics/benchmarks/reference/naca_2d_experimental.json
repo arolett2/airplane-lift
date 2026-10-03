@@ -1,0 +1,237 @@
+{
+  "source": "Smooth-model wind-tunnel data for NACA sections. NACA 0006, 2412, 4412: Abbott, von Doenhoff & Stivers, 'Summary of Airfoil Data', NACA Report 824 (1945), Appendix V figure pages (the same charts as Abbott & von Doenhoff, Theory of Wing Sections, Appendix IV), digitised for this project from the NTRS scan https://ntrs.nasa.gov/api/citations/19930090976/downloads/19930090976.pdf (axes calibrated on the printed grid; accuracy about +-0.02 cl_max, +-0.5 deg stall angle, +-0.0002 cd, +-0.003/deg a0, +-0.2 deg alpha_L0, +-0.005 cm). NACA 0012: Ladson, NASA TM-4074 (1988), printed Table I (M = 0.15, free transition), https://ntrs.nasa.gov/api/citations/19880019495/downloads/19880019495.pdf, and Loftin & Cohen, NACA TN 1591 (1948), Fig. 15 (the 0012 data used by Abbott & von Doenhoff, figure), https://ntrs.nasa.gov/api/citations/19930082240/downloads/19930082240.pdf. Report 824 has no NACA 0012 chart.",
+  "notes": [
+    "Report 824 test Reynolds numbers for 2412 are 3.1, 5.7 and 8.9 million; the model is evaluated at the tabulated Reynolds number.",
+    "Lift slope, zero-lift angle and cm_c/4 were fitted over all Reynolds numbers on a chart, so they are listed once per section.",
+    "Ladson 0012 cl_max at Re 3.94e6 and 8.86e6 is not used: the angle steps miss the peak (1.484 at 15.1 deg and 1.693 at 18.4 deg are lower bounds).",
+    "NACA 2412 measured a0 of 0.100/deg is lower than the 0.104-0.108 of the other sections on the same report; it is what the chart shows.",
+    "Standard roughness (not compared): cl_max 0012 1.05 (TN 1591) / 1.22 (Ladson grit, Re 6e6), 2412 1.19, 4412 1.39; cd_min about 0.0090-0.0100.",
+    "NACA 64-006 (Report 824 p.177): a0 0.1085, cl_max about 0.84 at 9-10 deg, cd_min 0.0039-0.0040. Not compared: the app only builds NACA 4-digit sections."
+  ],
+  "sections": [
+    {
+      "section": "0006",
+      "params": {
+        "camber": 0,
+        "camberPos": 0.4,
+        "thickness": 0.06
+      },
+      "reynolds": 3000000.0,
+      "source": "NACA R-824 App. V (figure) p.131",
+      "clMax": 0.835,
+      "alphaStallDeg": 9.5,
+      "cdMin": 0.0044
+    },
+    {
+      "section": "0006",
+      "params": {
+        "camber": 0,
+        "camberPos": 0.4,
+        "thickness": 0.06
+      },
+      "reynolds": 6000000.0,
+      "source": "NACA R-824 App. V (figure) p.131",
+      "liftSlopePerDeg": 0.1085,
+      "alphaZeroLiftDeg": 0.0,
+      "clMax": 0.85,
+      "alphaStallDeg": 9.0,
+      "cdMin": 0.0049,
+      "cmQuarterChord": 0.0
+    },
+    {
+      "section": "0006",
+      "params": {
+        "camber": 0,
+        "camberPos": 0.4,
+        "thickness": 0.06
+      },
+      "reynolds": 9000000.0,
+      "source": "NACA R-824 App. V (figure) p.131",
+      "clMax": 0.93,
+      "alphaStallDeg": 9.0,
+      "cdMin": 0.0052
+    },
+    {
+      "section": "0012",
+      "params": {
+        "camber": 0,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 3940000.0,
+      "source": "Ladson TM-4074 Table I",
+      "liftSlopePerDeg": 0.1025,
+      "alphaZeroLiftDeg": 0.0,
+      "cdMin": 0.0064,
+      "cmQuarterChord": 0.0
+    },
+    {
+      "section": "0012",
+      "params": {
+        "camber": 0,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 5970000.0,
+      "source": "Ladson TM-4074 Table I",
+      "liftSlopePerDeg": 0.1066,
+      "alphaZeroLiftDeg": 0.0,
+      "clMax": 1.66,
+      "alphaStallDeg": 17.35,
+      "cdMin": 0.0065,
+      "cmQuarterChord": 0.0
+    },
+    {
+      "section": "0012",
+      "params": {
+        "camber": 0,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 6000000.0,
+      "source": "NACA TN-1591 Fig. 15 (figure)",
+      "liftSlopePerDeg": 0.1055,
+      "clMax": 1.59,
+      "alphaStallDeg": 15.5,
+      "cdMin": 0.0059
+    },
+    {
+      "section": "0012",
+      "params": {
+        "camber": 0,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 8860000.0,
+      "source": "Ladson TM-4074 Table I",
+      "liftSlopePerDeg": 0.108,
+      "alphaZeroLiftDeg": 0.0,
+      "cdMin": 0.0063
+    },
+    {
+      "section": "2412",
+      "params": {
+        "camber": 0.02,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 3100000.0,
+      "source": "NACA R-824 App. V (figure) p.136",
+      "clMax": 1.59,
+      "alphaStallDeg": 15.25,
+      "cdMin": 0.0065
+    },
+    {
+      "section": "2412",
+      "params": {
+        "camber": 0.02,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 5700000.0,
+      "source": "NACA R-824 App. V (figure) p.136",
+      "liftSlopePerDeg": 0.1,
+      "alphaZeroLiftDeg": -2.25,
+      "clMax": 1.68,
+      "alphaStallDeg": 16.5,
+      "cdMin": 0.0062,
+      "cmQuarterChord": -0.04
+    },
+    {
+      "section": "2412",
+      "params": {
+        "camber": 0.02,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 8900000.0,
+      "source": "NACA R-824 App. V (figure) p.136",
+      "clMax": 1.675,
+      "alphaStallDeg": 16.5,
+      "cdMin": 0.0058
+    },
+    {
+      "section": "4412",
+      "params": {
+        "camber": 0.04,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 3000000.0,
+      "source": "NACA R-824 App. V (figure) p.141",
+      "clMax": 1.52,
+      "alphaStallDeg": 13.5,
+      "cdMin": 0.0068
+    },
+    {
+      "section": "4412",
+      "params": {
+        "camber": 0.04,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 6000000.0,
+      "source": "NACA R-824 App. V (figure) p.141",
+      "liftSlopePerDeg": 0.105,
+      "alphaZeroLiftDeg": -3.9,
+      "clMax": 1.635,
+      "alphaStallDeg": 14.5,
+      "cdMin": 0.0062,
+      "cmQuarterChord": -0.09
+    },
+    {
+      "section": "4412",
+      "params": {
+        "camber": 0.04,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 9000000.0,
+      "source": "NACA R-824 App. V (figure) p.141",
+      "clMax": 1.67,
+      "alphaStallDeg": 14.75,
+      "cdMin": 0.006
+    }
+  ],
+  "clMaxReynoldsTrend": [
+    {
+      "section": "2412",
+      "params": {
+        "camber": 0.02,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynoldsLow": 3100000.0,
+      "reynoldsHigh": 8900000.0,
+      "clMaxLow": 1.59,
+      "clMaxHigh": 1.675,
+      "source": "NACA R-824 App. V (figure) p.136"
+    },
+    {
+      "section": "4412",
+      "params": {
+        "camber": 0.04,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynoldsLow": 3000000.0,
+      "reynoldsHigh": 9000000.0,
+      "clMaxLow": 1.52,
+      "clMaxHigh": 1.67,
+      "source": "NACA R-824 App. V (figure) p.141"
+    },
+    {
+      "section": "0006",
+      "params": {
+        "camber": 0,
+        "camberPos": 0.4,
+        "thickness": 0.06
+      },
+      "reynoldsLow": 3000000.0,
+      "reynoldsHigh": 9000000.0,
+      "clMaxLow": 0.835,
+      "clMaxHigh": 0.93,
+      "source": "NACA R-824 App. V (figure) p.131"
+    }
+  ]
+}

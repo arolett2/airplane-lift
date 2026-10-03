@@ -73,10 +73,15 @@ export class ComparePanel {
   private previousFocus: Element | null = null;
   private destroyed = false;
 
+  /**
+   * Listens on the document in the capture phase: while the dialog is open, Escape closes the
+   * dialog and nothing else (not the lesson behind it, nor an open drawer).
+   */
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (!this.open) return;
     if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopPropagation();
       this.close();
     } else if (e.key === 'Tab') {
       this.trapFocus(e);
@@ -194,7 +199,7 @@ export class ComparePanel {
     this.card.append(head, pickers, blurbs, this.statusEl, this.planformBox, this.body);
     this.el.append(backdrop, this.card);
     root.appendChild(this.el);
-    doc.addEventListener('keydown', this.onKeyDown);
+    doc.addEventListener('keydown', this.onKeyDown, true);
 
     this.unsubscribe.push(
       store.select(
@@ -214,7 +219,7 @@ export class ComparePanel {
   destroy(): void {
     this.destroyed = true;
     this.token++;
-    this.root.ownerDocument.removeEventListener('keydown', this.onKeyDown);
+    this.root.ownerDocument.removeEventListener('keydown', this.onKeyDown, true);
     for (const off of this.unsubscribe) off();
     this.unsubscribe.length = 0;
     this.el.remove();
@@ -314,7 +319,11 @@ export class ComparePanel {
     const first = focusable[0]!;
     const last = focusable[focusable.length - 1]!;
     const active = this.root.ownerDocument.activeElement;
-    if (e.shiftKey && active === first) {
+    if (!this.card.contains(active)) {
+      // Focus left the dialog (e.g. a click on plain text): bring it back in.
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+    } else if (e.shiftKey && active === first) {
       e.preventDefault();
       last.focus();
     } else if (!e.shiftKey && active === last) {

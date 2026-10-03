@@ -324,6 +324,21 @@ describe('ComparePanel computing', () => {
     // In the middle of the dialog Tab is left alone.
     select('a').focus();
     expect(tab().defaultPrevented).toBe(false);
+    // Focus that slipped out of the dialog (a click on plain text) is brought back in.
+    (document.activeElement as HTMLElement).blur();
+    expect(tab().defaultPrevented).toBe(true);
+    expect(root.contains(document.activeElement)).toBe(true);
+  });
+
+  it('Escape closes only the dialog: it does not reach handlers behind it', () => {
+    open();
+    const behind = vi.fn();
+    document.addEventListener('keydown', behind);
+    const inside = root.querySelector<HTMLElement>('.viz-close')!;
+    inside.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(store.get().compare).toBeNull();
+    expect(behind).not.toHaveBeenCalled();
+    document.removeEventListener('keydown', behind);
   });
 
   it('quotes distances in the selected unit system in the explanations', async () => {

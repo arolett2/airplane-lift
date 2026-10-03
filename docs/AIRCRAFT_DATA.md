@@ -8,18 +8,19 @@ retuned later.
 
 ## How the wind-tunnel numbers are derived
 
-| Wind-tunnel field       | Derivation                                                                                                                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wing.span` (base span) | Winglets: published overall span minus `2 h sin(cant)`. Raked tips: published span / (1 + `tipDevice.size`). Otherwise the published span.                          |
-| `wing.rootChord`        | From published reference area S: `S_base = c_r * b/2 * [(1 + taper) + yehudi.spanFrac * yehudi.chordFrac]`, where `S_base` is S minus the raked-tip area.           |
-| `wing.sweepDeg`         | Published quarter-chord sweep. For the F-16 only the leading-edge sweep (40 deg) is published, so `tan(sweep_c/4) = tan(40 deg) - (4/AR)(0.25)(1-taper)/(1+taper)`. |
-| `cruise.airspeed`       | cruise Mach x speed of sound, ISA: `a = 340.29 * sqrt(T/288.15)` (T from the standard atmosphere at the cruise altitude).                                           |
-| `cruise.alphaDeg`       | Estimate: `alpha = CL/CLalpha + alpha_0L + 0.45 * washout`, with `CL = W/(q S)` and `CLalpha` from the DATCOM/Helmbold formula (below). Retune against the solver.  |
-| `approach`              | Typical final-approach speed at sea level; alpha 7 to 8 deg (the lessons deploy flaps separately). The F-16 uses 12 deg, as real F-16 approaches do.                |
-| `typicalCruiseMassKg`   | About 85 % of MTOW for airliners (estimate); about 75 to 86 % for light aircraft and the glider; the published "normal loaded" mass for the F-16.                   |
+| Wind-tunnel field       | Derivation                                                                                                                                                                                    |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wing.span` (base span) | Winglets: published overall span minus `2 h sin(cant)`. Raked tips: published span / (1 + `tipDevice.size`). Otherwise the published span.                                                    |
+| `wing.rootChord`        | From published reference area S: `S_base = c_r * b/2 * [(1 + taper) + yehudi.spanFrac * yehudi.chordFrac]`, where `S_base` is S minus the raked-tip area.                                     |
+| `wing.sweepDeg`         | Published quarter-chord sweep. For the F-16 only the leading-edge sweep (40 deg) is published, so `tan(sweep_c/4) = tan(40 deg) - (4/AR)(0.25)(1-taper)/(1+taper)`.                           |
+| `cruise.airspeed`       | cruise Mach x speed of sound, ISA: `a = 340.29 * sqrt(T/288.15)` (T from the standard atmosphere at the cruise altitude).                                                                     |
+| `cruise.alphaDeg`       | Solved with the app's own solver: the root-chord angle (to 0.1 deg) at which `computeAero` gives lift = `typicalCruiseMassKg * g` at the cruise speed and altitude (see "Cruise trim" below). |
+| `approach`              | Typical final-approach speed at sea level; alpha 7 to 8 deg (the lessons deploy flaps separately). The F-16 uses 12 deg, as real F-16 approaches do.                                          |
+| `typicalCruiseMassKg`   | About 85 % of MTOW for airliners (estimate); about 75 to 86 % for light aircraft and the glider; the published "normal loaded" mass for the F-16.                                             |
 
-Helmbold / DATCOM lift-curve slope (per radian), with Prandtl-Glauert compressibility
-(`beta^2 = 1 - M^2`; at M = 0 it reduces to the incompressible form):
+The first estimates of the cruise angle used `alpha = CL/CLalpha + alpha_0L + 0.45 * washout`,
+with `CL = W/(q S)` and the Helmbold / DATCOM lift-curve slope (per radian), with Prandtl-Glauert
+compressibility (`beta^2 = 1 - M^2`; at M = 0 it reduces to the incompressible form):
 
 ```
 CLalpha = 2 pi A / ( 2 + sqrt( 4 + A^2 beta^2 (1 + tan^2(Lambda_half) / beta^2) ) )
@@ -27,7 +28,60 @@ CLalpha = 2 pi A / ( 2 + sqrt( 4 + A^2 beta^2 (1 + tan^2(Lambda_half) / beta^2) 
 
 `alpha_0L` is the thin-airfoil zero-lift angle of the NACA 4-digit mean line, integrated
 numerically (about -2 deg for a 2 % camber section). Aspect ratio A uses the published
-overall span.
+overall span. Those estimates came out 0.3 to 1.6 deg too high against the solver (lift 5 to 11 %
+above the weight), so every cruise angle was then re-solved as described next.
+
+## Cruise trim and limits (solver results)
+
+Method: for each preset, bisect the root angle of attack until `computeAero(wing, cruise)` gives
+lift = typical cruise mass x g, round to the slider step (0.1 deg) and keep the neighbour closest
+to the weight. `src/physics/presets.e2e.test.ts` re-checks all of this on every test run (lift
+within 3 % of the weight, wing-alone L/D by class, Mach margins, maximum lift, tip devices).
+The airliner angles sit at 3.7 to 4 deg. To keep them in a plausible 1 to 4 deg range the 747-400
+(camber 1.5 -> 2.1 %, washout 3.5 -> 3 deg), 747-8 (camber 1.7 -> 2.2 %) and 787-9 (camber 2 -> 2.2 %)
+stand-in sections got a little more camber, as real aft-loaded transport sections have. Real
+aircraft also mount the wing at about 2 deg incidence to the fuselage, so the cockpit pitch
+attitude in cruise is smaller than these wing-root angles.
+
+| Preset       | Cruise alpha (deg) | Mach  | CL    | Lift / weight | Wing L/D | M_crit | M_dd  | CLmax at cruise Mach (alpha) | Clean CLmax, approach (alpha) | CLmax flaps 30 + slats | Approach lift / weight, flaps up |
+| ------------ | ------------------ | ----- | ----- | ------------- | -------- | ------ | ----- | ---------------------------- | ----------------------------- | ---------------------- | -------------------------------- |
+| `b747-400`   | 3.8                | 0.850 | 0.581 | 0.995         | 27.3     | 0.751  | 0.859 | 0.83 (7)                     | 1.37 (16)                     | 2.43                   | 0.41                             |
+| `b747-8`     | 3.8                | 0.855 | 0.613 | 0.992         | 29.8     | 0.792  | 0.900 | 0.99 (8)                     | 1.46 (17)                     | 2.51                   | 0.35                             |
+| `b737-800`   | 3.8                | 0.785 | 0.591 | 1.005         | 33.5     | 0.727  | 0.835 | 1.13 (9)                     | 1.60 (17)                     | 2.71                   | 0.41                             |
+| `b737-max8`  | 4                  | 0.790 | 0.617 | 1.009         | 33.2     | 0.724  | 0.831 | 1.08 (9)                     | 1.52 (17)                     | 2.72                   | 0.39                             |
+| `b787-9`     | 3.8                | 0.850 | 0.635 | 0.999         | 29.9     | 0.763  | 0.871 | 0.94 (7)                     | 1.45 (16)                     | 2.54                   | 0.39                             |
+| `a320neo`    | 3.9                | 0.780 | 0.609 | 0.999         | 33.7     | 0.727  | 0.835 | 1.15 (9)                     | 1.54 (16)                     | 2.75                   | 0.38                             |
+| `a380-800`   | 3.7                | 0.850 | 0.549 | 0.994         | 29.3     | 0.776  | 0.884 | 0.92 (8)                     | 1.46 (17)                     | 2.51                   | 0.34                             |
+| `cessna-172` | 2.7                | 0.187 | 0.325 | 0.988         | 26.8     | 0.640  | 0.747 | 1.52 (19)                    | 1.45 (18)                     | 2.39                   | 0.82                             |
+| `glider-18m` | 4.7                | 0.108 | 0.612 | 1.002         | 47.9     | 0.611  | 0.719 | 1.44 (15)                    | 1.42 (14)                     | 2.66                   | 0.97                             |
+| `f16`        | 3.4                | 0.849 | 0.272 | 1.000         | 20.1     | 0.860  | 0.967 | 0.58 (8)                     | 0.57 (10)                     | 1.48                   | 0.47                             |
+
+How to read it:
+
+- **Mach margins.** Every airliner cruises above its critical Mach number (weak shocks, a little
+  wave drag: normal) and at or just below its drag-divergence Mach number, as real airliners do.
+  The app warns only past drag divergence. `M_dd` comes from the Korn equation with technology
+  factor 0.95 (supercritical) or 0.90 (older transport sections such as the 747-400's; plain
+  NACA 6-series sections would be 0.87, which would put the 747-400's M_dd near 0.83, below its
+  published Mach 0.85 cruise).
+- **Maximum lift falls with Mach.** A strip's maximum lift is
+  `softMin(cos^0.75(sweep) * clMax_lowSpeed, cl_buffet(M))` (see `physics/compressibility.ts`):
+  the sweep factor is DATCOM's high-lift sweep correction, and `cl_buffet` is the Korn
+  drag-divergence lift at that Mach number plus 0.2 (shock-induced separation, i.e. buffet).
+  So clean airliner wings reach CL 1.4 to 1.6 at approach speed, 2.4 to 2.8 with flaps and slats,
+  but only 0.8 to 1.15 at cruise Mach, 3 to 5 deg above the cruise angle. Real airliners keep a
+  1.3 g or larger margin to buffet onset in cruise; here the margin is 1.4 g (747-400) to 1.9 g
+  (A320neo), because the Korn equation is generous to the 737/A320 sections.
+- **Approach with flaps up** the clean wing makes only a third to two fifths of the weight at
+  the approach angle (7 to 7.5 deg); flaps and slats (lesson "Flaps and slats") make up the rest.
+- **Wing L/D** is the wing alone: no fuselage, tail or engines. Profile drag uses flat-plate
+  friction with a laminar run up to a chord Reynolds number of 500,000, which matters for the
+  small, slow glider wing (its whole-aircraft best glide ratio is 50) and hardly at all for
+  airliners.
+- **Light aircraft and glider** are untouched by the Mach model (cl_buffet is several times
+  their clMax at Mach 0.1 to 0.2).
+- **F-16** maximum lift is low (about 0.6) because the strake (LEX) vortex lift that lets the
+  real aircraft reach CL 1.5 and more is not modelled.
 
 ## Published figures
 
@@ -92,11 +146,12 @@ disagree with real life:
   0.227 is a commonly quoted value, but was not re-checked.
 - **Inboard trailing-edge extension (yehudi)** for every airliner: `spanFrac` 0.33 to 0.35,
   `chordFrac` 0.35 to 0.45.
-- **Washout** (3 to 3.5 deg for airliners, 2 deg for the light aircraft and glider, 0 for the F-16),
+- **Washout** (3 to 3.5 deg for airliners; 3 deg for the 747-400 since the retune, 2 deg for the light aircraft and glider, 0 for the F-16),
   and **dihedral** (7 deg 747, 6 deg 737, 5 to 5.5 deg A320/787/A380, 1.7 deg Cessna 172, 3 deg glider, 0 F-16).
 - **Airfoil stand-ins**: each real wing uses several different sections along the span; the preset
-  uses one NACA 4-digit with a representative mean thickness (airliners 10.5 to 11.2 %, camber 1.5 to
-  2.0 %, max camber 45 to 50 % chord). The Cessna uses NACA 2412 (published); the F-16 uses a 4 %
+  uses one NACA 4-digit with a representative mean thickness (airliners 10 to 11.2 %, camber 1.8 to
+  2.2 %, max camber 45 to 50 % chord). The 747-400 uses 10 % (its wing runs from about 13 % at the
+  root to about 8 % at the tip; estimate). The Cessna uses NACA 2412 (published); the F-16 uses a 4 %
   thick, nearly symmetric section (the real section is NACA 64A204).
 - **`supercritical`**: `true` for the 747-8, 737 family, 787, A320neo and A380 (modern designs);
   `false` for the 747-400 (older conventional section), Cessna, glider and F-16.
@@ -112,7 +167,8 @@ disagree with real life:
   450 kg for the glider (pilot, no water); 12,000 kg for the F-16 (published "normal loaded").
 - **Cruise altitudes**: airliners 10,668 m (35,000 ft), 11,000 m or 11,900 m; the F-16 at 9,000 m,
   the Cessna at 2,438 m (8,000 ft), the glider at 1,500 m.
-- **Cruise angle of attack** for every preset (see the derivation above). Real aircraft also get
+- **Cruise angle of attack** for every preset: solved with the app's solver (see "Cruise trim"),
+  so it is only as good as the stand-in sections, washout and the solver. Real aircraft also get
   lift from the fuselage and tail and have wing incidence relative to the fuselage, so the
   wing-alone angle from the tunnel differs from the cockpit pitch angle.
 - **Approach speed** (about Vref+5 kt at typical landing mass) for every preset.

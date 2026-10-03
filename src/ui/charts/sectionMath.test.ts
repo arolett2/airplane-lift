@@ -15,6 +15,7 @@ import {
   prepareStreamlines,
   sectionPressureTint,
   separatedLabelAnchor,
+  softMask,
   separationPolygon,
   speedGrid,
   surfaceArrows,
@@ -185,6 +186,16 @@ describe('pressure field image', () => {
     expect(separatedLabelAnchor(makeSection())).toBeNull();
   });
 
+  it('softens the dead-air mask edge', () => {
+    const mask = new Uint8Array(25);
+    mask[12] = 1; // centre of a 5 x 5 grid
+    const soft = softMask(mask, 5, 5);
+    expect(soft[12]).toBeGreaterThan(soft[11]!);
+    expect(soft[11]).toBeGreaterThan(0);
+    expect(soft[0]).toBeGreaterThan(0);
+    expect(soft[12]).toBeLessThan(1);
+  });
+
   it('gives suction a blue tint and high pressure a red one, both fading to clear at Cp = 0', () => {
     const rgb: [number, number, number] = [0, 0, 0];
     expect(sectionPressureTint(0, rgb)).toBe(0);
@@ -325,6 +336,23 @@ describe('streamline preparation', () => {
       checked++;
     }
     expect(checked).toBe(prep.lines.length);
+  });
+
+  it('keeps the start line upstream when some lines enter through the picture edge', () => {
+    const tilted = makeSection();
+    // A line that only starts below the trailing edge (it entered through the bottom edge).
+    const late = tilted.streamlines[0]!;
+    const n = late.points.length / 2;
+    const keep = Math.floor(n * 0.7);
+    tilted.streamlines[0] = {
+      points: late.points.slice(2 * keep),
+      speed: late.speed.slice(keep),
+      time: late.time.slice(keep),
+    };
+    const p = prepareStreamlines(tilted);
+    expect(p.pulseX).toBeLessThan(0);
+    expect(Number.isNaN(p.lines[0]!.pulseStart)).toBe(true);
+    expect(Number.isFinite(p.lines[5]!.pulseStart)).toBe(true);
   });
 
   it('lets the air over the top arrive at the trailing edge sooner', () => {

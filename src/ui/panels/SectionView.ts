@@ -82,6 +82,9 @@ interface PulseState {
   hold: number;
   /** Display X of the common start line. */
   startX: number;
+  /** Mean time from the start line to the trailing edge, over the top / bottom markers. */
+  top: number;
+  bottom: number;
 }
 
 let viewCounter = 0;
@@ -377,14 +380,27 @@ export class SectionView {
     if (this.pulseStarts.length !== prep.lines.length) {
       this.pulseStarts = new Float64Array(prep.lines.length);
     }
+    this.pulseStarts.fill(NaN);
     let longest = 0;
-    prep.lines.forEach((line, i) => {
-      const hit = crossingAtX(line.disp, line.time, startX);
-      const start = hit ? hit.t : line.pulseStart;
-      this.pulseStarts[i] = start;
-      longest = Math.max(longest, line.total - start);
-    });
-    this.pulse = { age: 0, longest, done: false, hold: PULSE_HOLD_SECONDS, startX };
+    const arrival = (indices: number[]): number => {
+      let sum = 0;
+      let n = 0;
+      for (const i of indices) {
+        const line = prep.lines[i]!;
+        const hit = crossingAtX(line.disp, line.time, startX);
+        if (!hit) continue;
+        this.pulseStarts[i] = hit.t;
+        longest = Math.max(longest, line.total - hit.t);
+        if (Number.isFinite(line.teTime)) {
+          sum += line.teTime - hit.t;
+          n++;
+        }
+      }
+      return n ? sum / n : NaN;
+    };
+    const top = arrival(this.pulseTop);
+    const bottom = arrival(this.pulseBottom);
+    this.pulse = { age: 0, longest, done: false, hold: PULSE_HOLD_SECONDS, startX, top, bottom };
     this.requestDraw();
     this.updateAnimation();
   }
@@ -1175,9 +1191,9 @@ export class SectionView {
     // Caption box, top-left.
     const showResult =
       pulse.done &&
-      Number.isFinite(prep.topArrival) &&
-      Number.isFinite(prep.bottomArrival) &&
-      prep.topArrival < prep.bottomArrival - 0.005;
+      Number.isFinite(pulse.top) &&
+      Number.isFinite(pulse.bottom) &&
+      pulse.top < pulse.bottom - 0.005;
     const k = this.textScale;
     const boxW = 214 * k;
     const boxH = (showResult ? 58 : 42) * k;

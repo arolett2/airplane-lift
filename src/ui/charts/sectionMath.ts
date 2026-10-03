@@ -201,14 +201,17 @@ export function fillFieldImage(
   const gx = (g.nx - 1) / (g.xMax - g.xMin);
   const gy = (g.ny - 1) / (g.yMax - g.yMin);
   const sep =
-    mode === 'pressure' && section.separated?.length === g.nx * g.ny ? section.separated : null;
+    mode === 'pressure' && section.separated?.length === g.nx * g.ny
+      ? softMask(section.separated, g.nx, g.ny)
+      : null;
   const baseCp = sep ? separatedBaseCp(section) : 0;
-  // Value carried by one grid node: Cp in pressure mode (dead air at its base pressure), speed
-  // ratio in speed mode.
+  // Value carried by one grid node: Cp in pressure mode (dead air at its base pressure, blended
+  // over a couple of cells so the bubble has a soft edge), speed ratio in speed mode.
   const nodeValue = (k: number): number => {
     if (mode !== 'pressure') return speed[k]!;
-    if (sep && sep[k]) return baseCp;
-    return cpFromSpeed(speed[k]!);
+    const cp = cpFromSpeed(speed[k]!);
+    const m = sep ? sep[k]! : 0;
+    return m > 0 ? cp + (baseCp - cp) * m : cp;
   };
   const rgb: RGB = [0, 0, 0];
   let tinted = 0;
@@ -269,6 +272,33 @@ export function fillFieldImage(
     }
   }
   return tinted;
+}
+
+/** A 0/1 grid mask blurred by two 3x3 box passes (a soft edge about two cells wide). */
+export function softMask(mask: Uint8Array, nx: number, ny: number): Float32Array {
+  let src = Float32Array.from(mask);
+  let dst = new Float32Array(src.length);
+  for (let pass = 0; pass < 2; pass++) {
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        let sum = 0;
+        let n = 0;
+        for (let dj = -1; dj <= 1; dj++) {
+          const jj = j + dj;
+          if (jj < 0 || jj >= ny) continue;
+          for (let di = -1; di <= 1; di++) {
+            const ii = i + di;
+            if (ii < 0 || ii >= nx) continue;
+            sum += src[ii + nx * jj]!;
+            n++;
+          }
+        }
+        dst[i + nx * j] = sum / n;
+      }
+    }
+    [src, dst] = [dst, src];
+  }
+  return src;
 }
 
 /**
@@ -506,13 +536,16 @@ export function separationPolygon(section: SectionFlow): Float32Array | null {
 /* Streamlines: smoke puffs and the timing pulse                                                */
 /* ------------------------------------------------------------------------------------------ */
 
+/** How far downstream of the left-most streamline start the timing markers begin (chords). */
+const PULSE_START_OFFSET = 0.1;
+
 export interface PreparedStreamline {
   /** Display-frame coordinates, interleaved. */
   disp: Float32Array;
   /** Cumulative travel time (chord / V_inf) at each point. */
   time: Float32Array;
   speed: Float32Array;
-  /** Time at which the line reaches the common pulse start line (0 if it starts beyond it). */
+  /** Time at which the line reaches the common pulse start line (NaN if it never does). */
   pulseStart: number;
   /** Total time to the end of the line. */
   total: number;
@@ -589,11 +622,13 @@ export function prepareStreamlines(section: SectionFlow): PreparedStreamlines {
     };
   });
 
-  // The markers must start on one vertical line: use the right-most starting X.
-  let pulseX = -Infinity;
-  for (const l of lines) if (l.disp.length) pulseX = Math.max(pulseX, l.disp[0]!);
-  if (!Number.isFinite(pulseX)) pulseX = -0.5;
-  pulseX += 0.005;
+  // The markers must start on one vertical line just downstream of the seed line. Lines that
+  // enter the picture through its top or bottom edge (common at a high angle) start further
+  // right and never cross it; they get no marker (pulseStart NaN) instead of dragging the start
+  // line over the wing.
+  let firstX = Infinity;
+  for (const l of lines) if (l.disp.length) firstX = Math.min(firstX, l.disp[0]!);
+  const pulseX = Number.isFinite(firstX) ? firstX + PULSE_START_OFFSET : -0.5;
 
   let topSum = 0;
   let topN = 0;
@@ -601,14 +636,14 @@ export function prepareStreamlines(section: SectionFlow): PreparedStreamlines {
   let botN = 0;
   for (const l of lines) {
     const start = crossingAtX(l.disp, l.time, pulseX);
-    l.pulseStart = start ? start.t : 0;
+    l.pulseStart = start ? start.t : NaN;
     const te = crossingAtX(l.disp, l.time, teX);
     if (te) {
       l.teTime = te.t;
       l.teOffset = te.y - teY;
       l.side = te.y > teY ? 'top' : 'bottom';
       // Only streamlines that hug the airfoil say anything about "top vs bottom".
-      if (Math.abs(te.y - teY) < 0.3) {
+      if (start && Math.abs(te.y - teY) < 0.3) {
         const dt = te.t - l.pulseStart;
         if (l.side === 'top') {
           topSum += dt;
@@ -631,11 +666,12 @@ export function prepareStreamlines(section: SectionFlow): PreparedStreamlines {
 
 /**
  * Index i such that time[i] <= t < time[i + 1] by binary search, or -1 when t is outside the
- * line (before its start or at/after its end).
+ * line (before its start or at/after its end) or NaN.
  */
 export function findSegment(time: Float32Array, t: number): number {
   const n = time.length;
-  if (n < 2 || t < time[0]! || t >= time[n - 1]!) return -1;
+  // `!(t >= start)` also rejects NaN (a line with no timing marker).
+  if (n < 2 || !(t >= time[0]!) || t >= time[n - 1]!) return -1;
   let lo = 0;
   let hi = n - 1;
   while (hi - lo > 1) {

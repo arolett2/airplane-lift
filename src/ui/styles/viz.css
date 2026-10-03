@@ -450,6 +450,11 @@
   animation: viz-rise-in 220ms var(--ease, ease) both;
 }
 
+/* Focusable only so a click on the picture keeps focus in the dialog; never a tab stop. */
+.viz-section-sheet:focus {
+  outline: none;
+}
+
 .viz-section-dialog-head {
   display: flex;
   align-items: flex-start;

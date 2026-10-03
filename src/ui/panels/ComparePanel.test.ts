@@ -199,14 +199,15 @@ describe('ComparePanel computing', () => {
     expect(svg).not.toBeNull();
     // big jet: 2 wings + 2 winglets; trainer: 2 wings
     expect(svg.querySelectorAll('polygon')).toHaveLength(6);
-    expect(svg.textContent).toContain('60.0 m');
-    expect(svg.textContent).toContain('11.0 m');
+    // Default 'aviation' units: feet, like the wingspan slider and the readouts.
+    expect(svg.textContent).toContain('197 ft');
+    expect(svg.textContent).toContain('36.1 ft');
 
     const rows = [...root.querySelectorAll<HTMLElement>('tbody tr')];
     expect(rows).toHaveLength(11);
     const span = root.querySelector('tr[data-row="span"]')!;
-    expect(span.querySelector('.viz-col-a')!.textContent).toBe('60.0 m');
-    expect(span.querySelector('.viz-col-b')!.textContent).toBe('11.0 m');
+    expect(span.querySelector('.viz-col-a')!.textContent).toBe('197 ft');
+    expect(span.querySelector('.viz-col-b')!.textContent).toBe('36.1 ft');
     expect(root.querySelector('thead .viz-col-a')!.textContent).toBe('Big Jet');
     const bar = span.querySelector<HTMLElement>('.viz-col-b .viz-bar')!;
     expect(Number(bar.style.getPropertyValue('--frac'))).toBeCloseTo(11 / 60, 2);
@@ -219,9 +220,12 @@ describe('ComparePanel computing', () => {
     );
   });
 
-  it('switches table and drawing to imperial units', async () => {
+  it('switches table and drawing to metric and imperial units', async () => {
     open();
     await flush();
+    store.set((s) => ({ ...s, view: { ...s.view, units: 'metric' } }));
+    expect(root.querySelector('tr[data-row="span"] .viz-col-a')!.textContent).toBe('60.0 m');
+    expect(root.querySelector('svg.viz-planform')!.textContent).toContain('60.0 m');
     store.set((s) => ({ ...s, view: { ...s.view, units: 'imperial' } }));
     expect(root.querySelector('tr[data-row="span"] .viz-col-a')!.textContent).toBe('197 ft');
     expect(root.querySelector('svg.viz-planform')!.textContent).toContain('ft');
@@ -240,7 +244,7 @@ describe('ComparePanel computing', () => {
     releaseFirst(stale);
     await flush();
     expect(root.querySelector('thead .viz-col-a')!.textContent).toBe('Twin Jet');
-    expect(root.querySelector('tr[data-row="span"] .viz-col-a')!.textContent).toBe('35.0 m');
+    expect(root.querySelector('tr[data-row="span"] .viz-col-a')!.textContent).toBe('115 ft');
   });
 
   it('ignores answers that arrive after closing', async () => {
@@ -324,6 +328,21 @@ describe('ComparePanel computing', () => {
     // In the middle of the dialog Tab is left alone.
     select('a').focus();
     expect(tab().defaultPrevented).toBe(false);
+    // Focus that slipped out of the dialog (a click on plain text) is brought back in.
+    (document.activeElement as HTMLElement).blur();
+    expect(tab().defaultPrevented).toBe(true);
+    expect(root.contains(document.activeElement)).toBe(true);
+  });
+
+  it('Escape closes only the dialog: it does not reach handlers behind it', () => {
+    open();
+    const behind = vi.fn();
+    document.addEventListener('keydown', behind);
+    const inside = root.querySelector<HTMLElement>('.viz-close')!;
+    inside.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(store.get().compare).toBeNull();
+    expect(behind).not.toHaveBeenCalled();
+    document.removeEventListener('keydown', behind);
   });
 
   it('quotes distances in the selected unit system in the explanations', async () => {

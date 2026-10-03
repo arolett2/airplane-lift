@@ -38,6 +38,21 @@ const EPS = 1e-9;
 
 /** Lower bound for any device chord relative to the tip chord, so geometry never degenerates. */
 const MIN_CHORD_FRACTION = 0.02;
+/**
+ * Largest streamwise run of a device's trailing edge per metre of its span (45 deg; backward, at
+ * least as far as the leading edge runs). A device much shorter than the tip chord would
+ * otherwise taper so fast that its trailing edge runs almost streamwise, which the vortex lattice
+ * cannot represent reliably (the device was dropped, or skewed the whole solution). Normal
+ * devices, and raked tips (whose swept leading edge keeps the trailing edge straight), are not
+ * affected.
+ */
+const MAX_TRAILING_EDGE_RUN = 1;
+/**
+ * Shortest piece of a blend arc, in tip chords. On a small winglet three pieces of a few
+ * centimetres each, rolling and twisting hard under a 1.5 m chord, made the lattice near-singular;
+ * a short arc is cut into fewer pieces instead (at least one).
+ */
+const MIN_BLEND_PIECE = 0.05;
 /** Leading-edge sweep is clamped to this range (rad) so tan() stays finite. */
 const MAX_SWEEP = 80 * DEG;
 /** Roll away from the wing plane (rad) at which a device stops inheriting the wing-tip twist. */
@@ -64,6 +79,7 @@ interface DeviceSpec {
   /** Leading edge of the root section. */
   le0: Vec3;
   chordRoot: number;
+  /** Requested tip chord; the change from chordRoot is capped (MAX_TRAILING_EDGE_RUN). */
   chordTip: number;
   roll0: number;
   roll1: number;
@@ -105,9 +121,18 @@ function deviceStations(spec: DeviceSpec): number[] {
 /** Sections of one right-hand device surface, ordered root -> tip. */
 function buildDeviceSections(spec: DeviceSpec): WingSection[] {
   const blend = Math.min(Math.max(spec.blendLength, 0), spec.length);
+  const tanSweep = Math.tan(spec.sweep);
+  // Cap the chord change so that the trailing edge runs at most MAX_TRAILING_EDGE_RUN per metre
+  // of span (backward: or as far as the leading edge itself runs).
+  const leRun = spec.length * tanSweep * spec.sweepProfile(1);
+  const teRun = MAX_TRAILING_EDGE_RUN * spec.length;
+  const chordChange = Math.min(
+    Math.max(teRun, leRun) - leRun,
+    Math.max(-teRun - leRun, spec.chordTip - spec.chordRoot),
+  );
+  const chordTip = Math.max(MIN_CHORD_FRACTION * spec.chordRoot, spec.chordRoot + chordChange);
   const rollAt = (s: number): number =>
     blend > EPS && s < blend ? spec.roll0 + ((spec.roll1 - spec.roll0) * s) / blend : spec.roll1;
-  const tanSweep = Math.tan(spec.sweep);
 
   const sections: WingSection[] = [];
   let y = spec.le0[1];
@@ -135,7 +160,7 @@ function buildDeviceSections(spec: DeviceSpec): WingSection[] {
     const toeTwist = spec.toe * (Math.sin(sectionRoll) - w * Math.sin(spec.tipRoll));
     sections.push({
       le: [spec.le0[0] + spec.length * tanSweep * spec.sweepProfile(u), y, z],
-      chord: spec.chordRoot + (spec.chordTip - spec.chordRoot) * u,
+      chord: spec.chordRoot + (chordTip - spec.chordRoot) * u,
       twist: w * spec.tipTwist - toeTwist,
       roll: sectionRoll,
       airfoil: { ...spec.airfoil },
@@ -195,6 +220,10 @@ function blendedWinglet(
   const roll1 = d.cantRoll;
   const turn = Math.abs(roll1 - roll0);
   const blendLength = turn > 0.02 ? Math.min(blendRadiusFrac * h * turn, 0.8 * h) : 0;
+  const blendPieces = Math.max(
+    1,
+    Math.min(3, Math.floor(blendLength / (MIN_BLEND_PIECE * tip.chord))),
+  );
   return makeSurface(
     id,
     name,
@@ -205,7 +234,7 @@ function blendedWinglet(
       roll0,
       roll1,
       blendLength,
-      blendPieces: 3,
+      blendPieces,
       interiorStations: [],
       length: h,
       sweep: d.sweep,

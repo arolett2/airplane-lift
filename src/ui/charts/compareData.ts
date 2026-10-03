@@ -3,7 +3,7 @@
  * planforms at the same scale, the side-by-side metric table and the "why they differ" text.
  */
 import type { AeroResult, WingGeometry } from '../../physics/types';
-import type { TipDeviceKind, UnitSystem } from '../../state/params';
+import type { TipDeviceKind, UnitSystem, WingConfig } from '../../state/params';
 import type { AircraftPreset } from '../../state/presets';
 import { niceNumber } from './ticks';
 
@@ -86,16 +86,18 @@ const withCommas = (n: number): string =>
     .toString()
     .replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
+/** Lengths and areas are in feet in the aviation and imperial systems (as in shared/units). */
+const inFeet = (units: UnitSystem): boolean => units !== 'metric';
+
 export function formatLength(meters: number, units: UnitSystem): string {
   if (!Number.isFinite(meters)) return '–';
-  if (units === 'imperial')
-    return `${(meters * M_TO_FT).toFixed(meters * M_TO_FT >= 100 ? 0 : 1)} ft`;
+  if (inFeet(units)) return `${(meters * M_TO_FT).toFixed(meters * M_TO_FT >= 100 ? 0 : 1)} ft`;
   return `${meters.toFixed(meters >= 100 ? 0 : 1)} m`;
 }
 
 export function formatArea(squareMeters: number, units: UnitSystem): string {
   if (!Number.isFinite(squareMeters)) return '–';
-  if (units === 'imperial') return `${withCommas(squareMeters * M_TO_FT * M_TO_FT)} ft²`;
+  if (inFeet(units)) return `${withCommas(squareMeters * M_TO_FT * M_TO_FT)} ft²`;
   return `${squareMeters.toFixed(squareMeters >= 100 ? 0 : 1)} m²`;
 }
 
@@ -117,13 +119,33 @@ const fixed = (v: number, digits: number): string => (Number.isFinite(v) ? v.toF
 /* Case summaries and the metric table                                                          */
 /* ------------------------------------------------------------------------------------------ */
 
+/**
+ * Area of the wing seen from above, as published for an aircraft: the reference trapezoid plus
+ * the inboard trailing-edge extension and any raked tip (upturned winglets are not counted).
+ * The presets are sized so this matches the published figure; WingGeometry.referenceArea is the
+ * trapezoid alone, which the force coefficients are based on.
+ */
+export function planformArea(wing: WingConfig): number {
+  const halfSpan = wing.span / 2;
+  const yehudi = wing.yehudi.spanFrac * wing.yehudi.chordFrac;
+  let area = wing.rootChord * halfSpan * (1 + wing.taperRatio + yehudi);
+  const device = wing.tipDevice;
+  if (device.kind === 'raked-tip') {
+    const tipChord = wing.rootChord * wing.taperRatio;
+    area += 2 * device.size * halfSpan * tipChord * ((1 + device.taper) / 2);
+  }
+  return area;
+}
+
 /** Everything the table and the explanations need about one aircraft, in SI. */
 export interface CaseSummary {
   preset: AircraftPreset;
   geometry: WingGeometry;
   aero: AeroResult;
   spanM: number;
+  /** Planform area (see planformArea). */
   areaM2: number;
+  /** Overall span squared over planform area. */
   aspectRatio: number;
   sweepDeg: number;
   macM: number;
@@ -143,7 +165,10 @@ export function summarizeCase(
   geometry: WingGeometry,
   aero: AeroResult,
 ): CaseSummary {
-  const area = geometry.referenceArea;
+  // Area, aspect ratio and wing loading use the published-style planform area, so they agree
+  // with the aircraft facts shown beside the table; the lift coefficient keeps the reference
+  // area that every coefficient in the app uses.
+  const area = planformArea(preset.wing);
   const weight = preset.typicalCruiseMassKg * G;
   return {
     preset,
@@ -151,13 +176,14 @@ export function summarizeCase(
     aero,
     spanM: geometry.overallSpan,
     areaM2: area,
-    aspectRatio: geometry.aspectRatio,
+    aspectRatio: (geometry.overallSpan * geometry.overallSpan) / area,
     sweepDeg: geometry.sweepQuarterChord * RAD2DEG,
     macM: geometry.meanAeroChord,
     wingLoading: preset.maxTakeoffMassKg / area,
     cruiseMach: aero.mach,
     cruiseAltitudeM: preset.cruise.altitude,
-    clNeeded: aero.dynamicPressure > 0 ? weight / (aero.dynamicPressure * area) : NaN,
+    clNeeded:
+      aero.dynamicPressure > 0 ? weight / (aero.dynamicPressure * geometry.referenceArea) : NaN,
     liftToDrag: aero.liftToDrag,
     spanEfficiency: aero.spanEfficiency,
     machCritical: aero.machCritical,
@@ -507,8 +533,8 @@ export function buildPlanformSvg(inputs: readonly PlanformInput[], units: UnitSy
   });
 
   // Scale bar (a round length that is roughly a fifth of the widest span).
-  const unitPerMeter = units === 'imperial' ? M_TO_FT : 1;
-  const unitName = units === 'imperial' ? 'ft' : 'm';
+  const unitPerMeter = inFeet(units) ? M_TO_FT : 1;
+  const unitName = inFeet(units) ? 'ft' : 'm';
   const barLength = niceScaleBarLength((2 * maxHalf * unitPerMeter) / 5);
   const barPx = (barLength / unitPerMeter) * scale;
   const bx = margin;

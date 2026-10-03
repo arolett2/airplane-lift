@@ -12,10 +12,13 @@ import {
   niceScaleBarLength,
   planformShapes,
   shapeBounds,
+  planformArea,
   summarizeCase,
   type CaseSummary,
 } from './compareData';
 import { makeAero, makeGeometry, makePreset } from './testFixtures';
+import { buildWingGeometry } from '../../physics/wing/geometry';
+import { getPreset } from '../../state/presets';
 
 function summary(
   id: string,
@@ -39,12 +42,19 @@ function summary(
     winglet: opts.winglet,
   });
   const tip = opts.tip ?? 'none';
+  // The preset's wing describes the same planform as the geometry (makeGeometry's defaults).
+  const span = opts.span ?? 10;
+  const rootChord = opts.rootChord ?? 1.5;
   const preset = makePreset({
     id,
     shortName: id,
     maxTakeoffMassKg: opts.mtow ?? 80000,
     wing: {
       ...DEFAULT_WING,
+      span,
+      rootChord,
+      taperRatio: (opts.tipChord ?? 0.75) / rootChord,
+      yehudi: { spanFrac: 0, chordFrac: 0 },
       tipDevice: tip === 'none' ? NO_TIP_DEVICE : TIP_DEVICE_DEFAULTS[tip],
     },
   });
@@ -97,7 +107,8 @@ describe('planformShapes', () => {
 describe('formatting', () => {
   it('formats lengths, areas, altitudes and loadings per unit system', () => {
     expect(formatLength(64.44, 'metric')).toBe('64.4 m');
-    expect(formatLength(150, 'aviation')).toBe('150 m');
+    expect(formatLength(150, 'aviation')).toBe('492 ft');
+    expect(formatArea(511, 'aviation')).toBe('5,500 ft²');
     expect(formatLength(10, 'imperial')).toBe('32.8 ft');
     expect(formatArea(511, 'metric')).toBe('511 m²');
     expect(formatArea(10, 'imperial')).toBe('108 ft²');
@@ -128,6 +139,34 @@ describe('summarizeCase', () => {
     expect(s.clNeeded).toBeCloseTo((65000 * 9.80665) / (9000 * 90), 6);
     expect(s.spanM).toBe(30);
     expect(s.sweepDeg).toBeGreaterThan(0);
+  });
+});
+
+describe('summarizeCase on the aircraft presets', () => {
+  const real = (id: string) => {
+    const preset = getPreset(id)!;
+    return summarizeCase(preset, buildWingGeometry(preset.wing), makeAero({}));
+  };
+
+  it('quotes the published wing area, as the aircraft facts beside the table do', () => {
+    const published: Record<string, number> = {
+      'b747-400': 525,
+      'b747-8': 554,
+      'b737-800': 124.6,
+      'b787-9': 377,
+      'a380-800': 845,
+    };
+    for (const [id, area] of Object.entries(published)) {
+      expect(Math.abs(real(id).areaM2 - area) / area, id).toBeLessThan(0.01);
+    }
+  });
+
+  it('takes aspect ratio and wing loading from that area', () => {
+    const jumbo = real('b747-400');
+    expect(jumbo.aspectRatio).toBeCloseTo(7.9, 1); // the 787-9's fact quotes "about 7.9"
+    expect(jumbo.wingLoading).toBeCloseTo(jumbo.preset.maxTakeoffMassKg / 525, -1);
+    // The lift coefficient stays on the app's reference area (the trapezoid).
+    expect(planformArea(jumbo.preset.wing)).toBeGreaterThan(jumbo.geometry.referenceArea);
   });
 });
 

@@ -483,6 +483,40 @@ describe('orientation', () => {
   });
 });
 
+describe('devices much shorter than the tip chord', () => {
+  const teX = (sec: WingSection) => sectionTrailingEdge(sec, 'right')[0];
+
+  it('taper with a trailing edge that runs at most 45 deg off the span', () => {
+    for (const kind of [
+      'canted-winglet',
+      'blended-winglet',
+      'raked-tip',
+      'wingtip-fence',
+    ] as const) {
+      for (const size of [0.002, 0.005, 0.01]) {
+        const { g } = build(device(kind, { size, toeDeg: 0 }));
+        for (const s of g.surfaces.filter((x) => x.role === 'tip-device' && x.side === 'right')) {
+          const run = Math.abs(teX(last(s)) - teX(first(s)));
+          expect(run, `${kind} ${size}`).toBeLessThanOrEqual(spanPathLength(s) * (1 + 1e-9));
+        }
+      }
+    }
+  });
+
+  it('cut a short blend arc into fewer, longer pieces', () => {
+    const tiny = surf(build(device('blended-winglet', { size: 0.005 })).g, 'winglet-right');
+    const full = surf(build(device('blended-winglet')).g, 'winglet-right');
+    expect(tiny.sections.length).toBeLessThan(full.sections.length);
+    // The arc is still there: the roll turns in at least one step before the straight part.
+    expect(tiny.sections.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('keep the requested taper once they are long enough', () => {
+    const { g } = build(device('canted-winglet', { size: 0.1, taper: 0.3 }));
+    expect(last(surf(g, 'winglet-right')).chord).toBeCloseTo(0.3 * TIP_CHORD, 12);
+  });
+});
+
 describe('validity', () => {
   it('stays finite with positive chords for every cant, sweep, taper and toe', () => {
     for (const kind of Object.keys(TIP_DEVICE_DEFAULTS) as TipDeviceKind[]) {

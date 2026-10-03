@@ -51,7 +51,14 @@ vi.mock('three', async (importOriginal) => {
   }
   class FakePMREM {
     fromScene() {
-      return { texture: new actual.Texture(), dispose() {} };
+      const target = {
+        texture: new actual.Texture(),
+        disposed: false,
+        dispose() {
+          target.disposed = true;
+        },
+      };
+      return target;
     }
     dispose() {}
   }
@@ -321,6 +328,16 @@ describe('SceneManager', () => {
     expect(sm.camera.fov).toBeGreaterThan(26);
     for (let i = 0; i < 80; i++) frame(sm, 16);
     expect(sm.camera.fov).toBe(26);
+  });
+
+  it('renders the reflection map again when a lost WebGL context is restored', () => {
+    const before = sm.scene.environment;
+    expect(before).not.toBeNull();
+    const oldTarget = (sm as unknown as { envTarget: { disposed: boolean } }).envTarget;
+    sm.renderer.domElement.dispatchEvent(new Event('webglcontextrestored'));
+    expect(sm.scene.environment).not.toBeNull();
+    expect(sm.scene.environment).not.toBe(before);
+    expect(oldTarget.disposed).toBe(true);
   });
 
   it('dispose stops the loop, releases GL and removes its DOM; it is idempotent', () => {

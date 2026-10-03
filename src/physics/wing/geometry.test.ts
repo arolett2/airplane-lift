@@ -305,6 +305,24 @@ describe('Yehudi', () => {
     }
   });
 
+  it('shrinks the root extension to nothing as the kink nears the root (no sliver)', () => {
+    let prevRoot = Infinity;
+    for (const spanFrac of [0.05, 0.02, 0.01, 0.005, 0.002]) {
+      const s = surfaceById(
+        buildWingGeometry({ ...config, yehudi: { spanFrac, chordFrac: 0.4 } }),
+        'wing-right',
+      ).sections;
+      const [root, kink] = [s[0]!, s[1]!];
+      // The trailing edge runs forward at most 45 deg from the root to the kink.
+      const teRun = root.le[0] + root.chord - (kink.le[0] + kink.chord);
+      expect(teRun).toBeLessThanOrEqual(kink.le[1] * (1 + 1e-12));
+      expect(root.chord).toBeGreaterThanOrEqual(6 - 1e-12);
+      expect(root.chord).toBeLessThanOrEqual(prevRoot);
+      prevRoot = root.chord;
+    }
+    expect(prevRoot).toBeLessThan(6 * 1.01);
+  });
+
   it('adds wetted area', () => {
     const plain = buildWingGeometry({ ...config, yehudi: { spanFrac: 0, chordFrac: 0 } });
     expect(g.wettedArea).toBeGreaterThan(plain.wettedArea);

@@ -9,7 +9,9 @@
  *   post-stall  cl = (1 - w) * remnant(x) + w * 2 sin(alpha) cos(alpha)
  *                 remnant drops by `drop` with a Gaussian-shaped onset (zero slope at xs);
  *                 w is a smootherstep from xs to xs + blendWidth, so the curve joins the
- *                 flat-plate curve with matching slope.
+ *                 flat-plate curve with matching slope. A stall set by the buffet cap (see
+ *                 LiftLimit) levels off at the remnant instead (buffetFloor), and separated
+ *                 drag never falls below the attached-flow drag at small angles.
  *
  * The negative side mirrors this with clMin. Every join is C1, which keeps the nonlinear wing
  * coupling well behaved. All numbers are empirical fits to NACA 4-digit data (Abbott & von
@@ -141,6 +143,27 @@ function interpTable(table: readonly [number, number][], x: number): number {
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
+/** Width (in cl) of the rounded corner of buffetFloor's smooth maximum. */
+const BUFFET_FLOOR_SMOOTHING = 0.05;
+/**
+ * Share of a section's stall margin that the absolute cap (shock-induced separation) must take
+ * away for its stall to count fully as buffet; the weight rises smoothly from 0 (low speed, cap
+ * idle) to 1 at this share.
+ */
+const BUFFET_FLOOR_ONSET = 0.3;
+
+/**
+ * Deep-stall lift of a section whose stall is buffet-limited by `capped` (0..1): the flat-plate
+ * lift `fp`, raised toward a smooth maximum with the post-stall remnant `floor` in proportion to
+ * `capped`. Plain sections (capped = 0) keep the flat plate exactly.
+ */
+function buffetFloor(fp: number, floor: number, capped: number): number {
+  if (capped <= 0) return fp;
+  const e = BUFFET_FLOOR_SMOOTHING;
+  const smoothMax = 0.5 * (fp + floor + Math.sqrt((fp - floor) ** 2 + e * e));
+  return fp + capped * (smoothMax - fp);
+}
+
 /** Smootherstep on [0, 1] (zero first and second derivative at both ends). */
 function smoother(t: number): number {
   if (t <= 0) return 0;
@@ -270,6 +293,9 @@ export function createSectionPolar(
     let clMinRe = 0;
     let xsPos = 0; // x = alpha - alpha0 of the positive stall peak
     let xsNeg = 0; // (negative) x of the negative stall minimum
+    // How buffet-limited each side's stall is, 0 (plain) .. 1 (see BUFFET_FLOOR_ONSET).
+    let cappedPos = 0;
+    let cappedNeg = 0;
     function shape(re: number) {
       if (re === cachedRe) return;
       cachedRe = re;
@@ -282,6 +308,8 @@ export function createSectionPolar(
       // Lift limit (sweep, shock-induced separation); the 0.2 floor keeps a usable curve.
       clMaxRe = Math.max(0.2, softMin(limitScale * clMaxPlain, limitCap));
       clMinRe = -Math.max(0.2, softMin(-limitScale * clMinPlain, limitCap));
+      cappedPos = smoother((1 - clMaxRe / (limitScale * clMaxPlain)) / BUFFET_FLOOR_ONSET);
+      cappedNeg = smoother((1 - clMinRe / (limitScale * clMinPlain)) / BUFFET_FLOOR_ONSET);
       xsPos = clMaxRe / a + 0.5 * roundWidth;
       xsNeg = clMinRe / a - 0.5 * roundWidth;
     }
@@ -297,9 +325,13 @@ export function createSectionPolar(
         }
         const d = x - xsPos;
         const w = smoother(d / blendWidth);
-        if (w >= 1) return fp;
+        // A buffet (cap-limited) stall is shock-induced separation, not a flat plate: its lift
+        // levels off at the remnant instead of falling to the plate's at a small angle (with a
+        // flap down that angle is small while x is large, and lift would collapse below clean).
+        const deep = buffetFloor(fp, (1 - dropFrac) * clMaxRe, cappedPos);
+        if (w >= 1) return deep;
         const remnant = clMaxRe - dropFrac * clMaxRe * (1 - Math.exp(-((d / dropWidth) ** 2)));
-        return (1 - w) * remnant + w * fp;
+        return (1 - w) * remnant + w * deep;
       }
       if (x >= xsNeg + roundWidth) return a * x;
       if (x >= xsNeg) {
@@ -308,9 +340,10 @@ export function createSectionPolar(
       }
       const d = xsNeg - x;
       const w = smoother(d / blendWidth);
-      if (w >= 1) return fp;
+      const deep = -buffetFloor(-fp, -(1 - dropFrac) * clMinRe, cappedNeg);
+      if (w >= 1) return deep;
       const remnant = clMinRe - dropFrac * clMinRe * (1 - Math.exp(-((d / dropWidth) ** 2)));
-      return (1 - w) * remnant + w * fp;
+      return (1 - w) * remnant + w * deep;
     }
 
     /** Weight of the post-stall (flat-plate) drag model, 0 attached .. 1 deep stall. */
@@ -376,7 +409,12 @@ export function createSectionPolar(
         const dcl = a * x - designCl;
         const attached = friction + 0.0065 * dcl * dcl + flapDragDelta;
         const s = Math.sin(alpha);
-        const flatPlate = 1.98 * s * s + friction;
+        // Separating never makes a section slicker than it was attached: at a small angle (a
+        // buffet stall at cruise Mach, flap down) the plate's drag would undercut the flap's and
+        // more flap would cost less drag. (Faded out toward 90 deg, where the attached-flow fit
+        // means nothing.)
+        const forward = Math.max(0, Math.cos(alpha));
+        const flatPlate = Math.max(1.98 * s * s + friction, attached * forward * forward);
         const w = dragBlend(x);
         return attached + w * (flatPlate - attached);
       },

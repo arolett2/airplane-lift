@@ -355,6 +355,17 @@ export class LessonPanel {
     this.stepIndex = i;
     if (!this.base) this.base = this.store.get();
 
+    // Starting a lesson: put focus on its card before the step is applied, so that a dialog the
+    // step opens (a comparison) takes focus from here and gives it back here when it closes.
+    const focusFirst = apply && lessonChanged;
+    if (focusFirst) {
+      this.container.hidden = false;
+      this.picker.hidden = true;
+      this.stepView.hidden = false;
+      this.renderStep(lesson, i);
+      this.title.focus({ preventScroll: true });
+    }
+
     if (apply) {
       const base = this.base;
       this.syncing = true;
@@ -387,7 +398,7 @@ export class LessonPanel {
     this.setHighlights(step.highlight ?? [], true);
     if (apply && step.camera === 'section') this.pointAtSection();
     if (i === lesson.steps.length - 1) this.markCompleted(lesson.id);
-    if (lessonChanged) this.title.focus({ preventScroll: true });
+    if (lessonChanged && !focusFirst) this.title.focus({ preventScroll: true });
   }
 
   private renderStep(lesson: Lesson, i: number): void {

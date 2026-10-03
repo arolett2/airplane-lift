@@ -29,11 +29,11 @@ import { TopBar } from '../ui/panels/TopBar';
 import { decodeState, encodeState } from '../ui/urlState';
 import { PhysicsClient } from '../worker/PhysicsClient';
 import { STAGE_ORDER, type PhysicsResponse, type PhysicsStage } from '../worker/protocol';
+import { RequestScheduler } from './requestScheduler';
 
 const STANDARD_GRAVITY = 9.80665;
 /** Expensive stages wait until the person stops dragging a slider for this long (ms). */
 const IDLE_STAGE_DELAY_MS = 220;
-const IDLE_STAGES: readonly PhysicsStage[] = ['polar', 'field'];
 const DEFAULT_COMPARE: [string, string] = ['b747-400', 'b737-800'];
 /** Same breakpoint as the shell's floating-panel layout (ui/AppShell.ts). */
 const WIDE_LAYOUT_QUERY = '(min-width: 1100px)';
@@ -174,10 +174,8 @@ export async function startApp(root: HTMLElement): Promise<void> {
   ];
 
   /* ---------------------------------------------------------------- request scheduling */
-  // Stages are coalesced per animation frame; expensive ones wait for an idle moment.
-  const wanted = new Set<PhysicsStage>();
-  let frameRequested = false;
-  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  // Cheap stages go out once per animation frame; expensive ones wait for an idle moment. The
+  // scheduler keeps asking until every stage matches the current inputs (see requestScheduler).
   let fieldQuality = 1;
 
   const particlesShown = () => {
@@ -185,110 +183,73 @@ export async function startApp(root: HTMLElement): Promise<void> {
     return mode === 'particles' || mode === 'both';
   };
 
-  const flush = () => {
-    frameRequested = false;
-    if (wanted.size === 0) return;
-    const stages = STAGE_ORDER.filter((s) => wanted.has(s) && (s !== 'field' || particlesShown()));
-    wanted.clear();
-    if (stages.length === 0) return;
-    const s = store.get();
-    physics.compute({
-      wing: s.wing,
-      flow: s.flow,
-      rake: s.view.rake,
-      sectionEta: s.view.sectionEta,
-      stages,
-      fieldQuality,
-    });
-    results.set((r) => {
-      const pending = STAGE_ORDER.filter((st) => r.pending.includes(st) || stages.includes(st));
-      return sameStages(pending, r.pending) ? r : { ...r, pending };
-    });
-  };
-
-  const request = (stages: readonly PhysicsStage[]) => {
-    for (const s of stages) {
-      if (IDLE_STAGES.includes(s)) continue;
-      wanted.add(s);
-    }
-    const idle = stages.filter((s) => IDLE_STAGES.includes(s));
-    if (idle.length > 0) {
-      clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
-        // Re-send the cheap stages too: a newer request cancels an older one's remaining stages.
-        for (const s of ['aero', 'section', 'streamlines', ...idle] as PhysicsStage[])
-          wanted.add(s);
-        flush();
-      }, IDLE_STAGE_DELAY_MS);
-    }
-    if (!frameRequested && wanted.size > 0) {
-      frameRequested = true;
-      requestAnimationFrame(flush);
-    }
-  };
+  const scheduler = new RequestScheduler({
+    send: (stages) => {
+      const s = store.get();
+      return physics.compute({
+        wing: s.wing,
+        flow: s.flow,
+        rake: s.view.rake,
+        sectionEta: s.view.sectionEta,
+        stages,
+        fieldQuality,
+      });
+    },
+    eligible: (stage) => stage !== 'field' || particlesShown(),
+    onPending: (pending) =>
+      results.set((r) => (sameStages(pending, r.pending) ? r : { ...r, pending: [...pending] })),
+    requestFrame: (cb) => requestAnimationFrame(cb),
+    setTimeout: (cb, ms) => setTimeout(cb, ms),
+    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    idleDelayMs: IDLE_STAGE_DELAY_MS,
+  });
 
   store.select(
     (s) => [s.wing, s.flow] as const,
-    () => request(STAGE_ORDER),
+    () => scheduler.invalidate(STAGE_ORDER),
     { equals: (a, b) => a[0] === b[0] && a[1] === b[1] },
   );
   store.select(
     (s) => s.view.rake,
-    () => request(['streamlines']),
+    () => scheduler.invalidate(['streamlines']),
     { equals: deepEqual },
   );
   store.select(
     (s) => s.view.sectionEta,
-    () => request(['section']),
+    () => scheduler.invalidate(['section']),
   );
-  store.select(
-    () => particlesShown() && results.get().field === null,
-    (needField) => {
-      if (needField) request(['field']);
-    },
-  );
+  // Particles turned back on: fetch the field if it went out of date while they were hidden.
+  store.select(particlesShown, () => scheduler.refresh());
 
   /* ---------------------------------------------------------------- results -> store */
-  const settle = (r: ResultsState, stage: PhysicsStage): PhysicsStage[] =>
-    r.pending.filter((s) => s !== stage);
-
   physics.onResponse((msg: PhysicsResponse) => {
     switch (msg.type) {
       case 'aero':
-        results.set((r) => ({
-          ...r,
-          geometry: msg.geometry,
-          aero: msg.aero,
-          pending: settle(r, 'aero'),
-          error: null,
-        }));
+        results.set((r) => ({ ...r, geometry: msg.geometry, aero: msg.aero, error: null }));
         break;
       case 'section':
-        results.set((r) => ({ ...r, section: msg.section, pending: settle(r, 'section') }));
+        results.set((r) => ({ ...r, section: msg.section }));
         break;
       case 'polar':
-        results.set((r) => ({ ...r, polar: msg.polar, pending: settle(r, 'polar') }));
+        results.set((r) => ({ ...r, polar: msg.polar }));
         break;
       case 'streamlines':
-        results.set((r) => ({
-          ...r,
-          streamlines: msg.streamlines,
-          pending: settle(r, 'streamlines'),
-        }));
+        results.set((r) => ({ ...r, streamlines: msg.streamlines }));
         break;
       case 'field':
-        results.set((r) => ({ ...r, field: msg.field, pending: settle(r, 'field') }));
-        break;
-      case 'done':
-        results.set((r) => (r.pending.length === 0 ? r : { ...r, pending: [] }));
+        results.set((r) => ({ ...r, field: msg.field }));
         break;
       case 'error':
         console.error(`[physics:${msg.stage}]`, msg.message);
         results.set((r) => ({ ...r, error: msg.message }));
-        break;
+        // A failed stage is settled too: it is not retried until its inputs change again.
+        if (msg.stage !== 'compare') scheduler.settle(msg.stage, msg.requestId);
+        return;
+      case 'done':
       case 'compare':
-        break;
+        return;
     }
+    scheduler.settle(msg.type, msg.requestId);
   });
 
   /* ---------------------------------------------------------------- results -> renderers */
@@ -440,6 +401,9 @@ export async function startApp(root: HTMLElement): Promise<void> {
       simTime += dtSim;
       streamlines.update(simTime, dtSim);
       particles.update(dtSim);
+    } else {
+      // Paused: nothing moves, but colour, density, trail and field changes still reach the GPU.
+      particles.update(0);
     }
     // Adaptive quality: thin the particles if the frame rate sags.
     qualityClock += dt;
@@ -460,19 +424,28 @@ export async function startApp(root: HTMLElement): Promise<void> {
       history.replaceState(null, '', `#${encodeState(s)}`);
     }, 400);
   });
+  // A shared link pasted into this tab (or Back / Forward between links) only changes the hash;
+  // the page does not reload, so load the linked state here. Our own replaceState writes do not
+  // fire 'hashchange'. Session-only state (lesson, comparison) is kept.
+  const onHashChange = () => store.set((s) => decodeState(window.location.hash, s));
+  window.addEventListener('hashchange', onHashChange);
 
   /* ---------------------------------------------------------------- go */
-  request(STAGE_ORDER);
+  scheduler.invalidate(STAGE_ORDER);
 
   // Dev-only handle for debugging and browser-driven integration checks.
   if (import.meta.env.DEV) {
     (window as unknown as { __tunnel?: unknown }).__tunnel = { store, results, scene };
   }
 
-  window.addEventListener('pagehide', () => {
+  window.addEventListener('pagehide', (event: PageTransitionEvent) => {
+    // A page kept in the back/forward cache comes back as it was: tear down only on a real unload.
+    if (event.persisted) return;
+    window.removeEventListener('hashchange', onHashChange);
     insetObserver?.disconnect();
     wideLayout?.removeEventListener?.('change', measureInsets);
     for (const p of panels) p.destroy();
+    scheduler.dispose();
     physics.dispose();
     for (const r of [tunnel, wingMesh, forces, spanLoad, streamlines, particles, legend])
       r.dispose();

@@ -5,7 +5,7 @@ import { createIconButton } from './iconButton';
 import { createInfoPopover } from './infoPopover';
 import { createSegmented } from './segmented';
 import { createSelect } from './select';
-import { createSlider } from './slider';
+import { createSlider, parseTypedNumber } from './slider';
 import { createTipDevicePicker } from './tipDevicePicker';
 import { createToggle } from './toggle';
 import { createAirfoilThumb } from './airfoilThumb';
@@ -72,6 +72,53 @@ describe('slider', () => {
     input(number, 'abc', 'change');
     expect(onCommit).toHaveBeenCalledTimes(2); // garbage ignored
     expect(number.value).toBe('1008');
+  });
+
+  it('reads a decimal comma as a decimal point, not as thousands grouping', () => {
+    const onCommit = vi.fn();
+    const s = createSlider({
+      label: 'Angle of attack',
+      min: -10,
+      max: 25,
+      step: 0.1,
+      value: 4,
+      quantity: 'angle',
+      onCommit,
+    });
+    const number = s.el.querySelector<HTMLInputElement>('.slider__number')!;
+    input(number, '7,5', 'change');
+    expect(onCommit).toHaveBeenLastCalledWith(7.5);
+    expect(number.value).toBe('7.5');
+  });
+
+  it('parses typed numbers with either decimal mark and comma grouping', () => {
+    expect(parseTypedNumber('7,5')).toBe(7.5);
+    expect(parseTypedNumber(' -2,25 ')).toBe(-2.25);
+    expect(parseTypedNumber('7.5')).toBe(7.5);
+    expect(parseTypedNumber('10,000')).toBe(10000);
+    expect(parseTypedNumber('1,234,567')).toBe(1234567);
+    expect(parseTypedNumber('1,234.5')).toBe(1234.5);
+    expect(parseTypedNumber('1.234,5')).toBe(1234.5);
+    expect(parseTypedNumber('35 000')).toBe(35000);
+    expect(parseTypedNumber('1,2,3')).toBeNull();
+    expect(parseTypedNumber('abc')).toBeNull();
+    expect(parseTypedNumber('  ')).toBeNull();
+  });
+
+  it('Escape reverts a typed value without letting the key close the panel around it', () => {
+    const s = createSlider({ ...base, value: 60 });
+    document.body.append(s.el);
+    const outer = vi.fn();
+    document.addEventListener('keydown', outer);
+    const number = s.el.querySelector<HTMLInputElement>('.slider__number')!;
+    number.value = '99';
+    number.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(number.value).toBe('60');
+    expect(outer).not.toHaveBeenCalled();
+    // With nothing to revert, Escape is left to the page (e.g. to close a drawer).
+    number.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(outer).toHaveBeenCalledTimes(1);
+    document.removeEventListener('keydown', outer);
   });
 
   it('resets to the default on double-click and on Delete', () => {

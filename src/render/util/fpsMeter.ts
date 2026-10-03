@@ -16,7 +16,11 @@ export class FpsMeter {
     this.reading = initial;
   }
 
-  /** Record one rendered frame that took `dtSeconds` (unclamped wall-clock time). */
+  /**
+   * Record one rendered frame that took `dtSeconds` (unclamped wall-clock time). A frame longer
+   * than one bucket (the first frame back from a background tab, a one-off stall) counts as one
+   * bucket long: it is a gap, not a frame rate, and must not drag the reading down for a second.
+   */
   tick(dtSeconds: number): void {
     if (!(dtSeconds >= 0) || !Number.isFinite(dtSeconds)) return;
     if (this.seconds[this.head]! >= FpsMeter.BUCKET_SECONDS) {
@@ -25,7 +29,7 @@ export class FpsMeter {
       this.seconds[this.head] = 0;
     }
     this.frames[this.head]! += 1;
-    this.seconds[this.head]! += dtSeconds;
+    this.seconds[this.head]! += Math.min(dtSeconds, FpsMeter.BUCKET_SECONDS);
 
     let f = 0;
     let s = 0;

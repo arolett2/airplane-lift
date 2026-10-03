@@ -16,7 +16,11 @@
  * - Bound vortices and control points lie on the flat panels between edge stations, the same
  *   piecewise-flat sheet the trailing legs follow.
  * - A tip device starts exactly on its parent's last strip edge and blends to its own sections
- *   over its first segment (StripEdge.shift), so junction trailing legs coincide.
+ *   over its first segment (StripEdge.shift), so junction trailing legs coincide. The in-plane
+ *   part of the mismatch (a fence set ahead of the leading edge with a shorter chord, a vertical
+ *   fin under a tip chord pitched by washout) moves and shears the whole device instead
+ *   (StripEdge.offset): blended out over a span much shorter than the chord, it collapsed the
+ *   device's strips and the lattice went near-singular.
  * - Segments that would carry degenerate horseshoes (nearly streamwise bound vortices, or a strip
  *   folding over itself) are skipped; the next segment blends back over them (edgesUsable).
  */
@@ -196,10 +200,11 @@ function sameFlap(a: FlapState | null, b: FlapState | null): boolean {
 /**
  * One side edge of a strip: the section it is cut from, the flap camber lines averaged on it,
  * whether it is flattened into a vertical streamwise plane (wing surfaces, see edgePoint) and
- * whether that plane is the symmetry plane (wing root), and an optional transition
- * shift: weight * (from - to), pointwise along the chord. A segment that starts on an edge other
- * than its own inboard section (a device on its parent's tip edge, or a segment stretched back
- * over skipped slivers) blends from that edge (weight 1 at the segment start) to its own sections
+ * whether that plane is the symmetry plane (wing root), an optional placement offset (a tip
+ * device moved and stretched onto its parent's tip chord) and an optional transition shift:
+ * weight * (from - to), pointwise along the chord. A segment that starts on an edge other than
+ * its own inboard section (a device on its parent's tip edge, or a segment stretched back over
+ * skipped slivers) blends from that edge (weight 1 at the segment start) to its own sections
  * (weight 0 at its end), so the junction is exact and its skew is spread over the whole segment.
  */
 interface StripEdge {
@@ -207,7 +212,20 @@ interface StripEdge {
   flaps: readonly (FlapState | null)[];
   vertical: boolean;
   onSymmetryPlane: boolean;
-  shift?: { from: StripEdge; to: StripEdge; weight: number };
+  offset?: EdgeOffset;
+  shift?: EdgeShift;
+}
+
+/** A placement offset, linear along the chord: `le + x * chord` at chord fraction x. */
+interface EdgeOffset {
+  le: Vec3;
+  chord: Vec3;
+}
+
+interface EdgeShift {
+  from: StripEdge;
+  to: StripEdge;
+  weight: number;
 }
 
 /**
@@ -237,11 +255,13 @@ function edgePoint(e: StripEdge, x: number): Vec3 {
   return p;
 }
 
-/** The transition shift of an edge at chord fraction x (zero without one). */
+/** The placement offset plus transition shift of an edge at chord fraction x. */
 function edgeShift(e: StripEdge, x: number): Vec3 {
-  if (!e.shift || e.shift.weight === 0) return [0, 0, 0];
+  const o = e.offset;
+  const placed: Vec3 = o ? add(o.le, scaleVec(o.chord, x)) : [0, 0, 0];
+  if (!e.shift || e.shift.weight === 0) return placed;
   const { from, to, weight } = e.shift;
-  return scaleVec(sub(edgePoint(from, x), edgePoint(to, x)), weight);
+  return add(placed, scaleVec(sub(edgePoint(from, x), edgePoint(to, x)), weight));
 }
 
 /** Quarter-chord point of the chord line (no camber). */
@@ -480,11 +500,33 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
     }
     const vertical = surface.role === 'wing';
     const rootOnSymmetryPlane = vertical && Math.abs(surface.sections[0]!.le[1]) <= symTol;
+    // A device hangs off its parent's last edge. Where its own root chord lies elsewhere in its
+    // plane (leading edge further forward, a shorter chord, or the wing tip's chord pitched by
+    // washout across a vertical fin), the whole device is moved and sheared onto the parent's tip
+    // chord; only the rest (camber, twist, toe, roll) blends in over its first segment.
+    const parentEdge = parent ? lastEdge.get(parent) : undefined;
+    let offset: EdgeOffset | undefined;
+    if (parentEdge) {
+      const root: StripEdge = {
+        section: framedSection(surface, 0, 0),
+        flaps: [segmentFlap(surface, 0)],
+        vertical,
+        onSymmetryPlane: rootOnSymmetryPlane,
+      };
+      // Map the root chord line (LE, TE) onto the parent's, but only within the device's own
+      // plane: along its normal the difference is the device's own twist and toe, which stay.
+      const n = root.section.normalDir;
+      const inPlane = (v: Vec3): Vec3 => sub(v, scaleVec(n, dot(v, n)));
+      const le = sub(edgePoint(parentEdge, 0), edgePoint(root, 0));
+      const te = sub(edgePoint(parentEdge, 1), edgePoint(root, 1));
+      offset = { le: inPlane(le), chord: inPlane(sub(te, le)) };
+    }
     const ownEdge = (k: number, f: number): StripEdge => ({
       section: framedSection(surface, k, f),
       flaps: [segmentFlap(surface, k)],
       vertical,
       onSymmetryPlane: rootOnSymmetryPlane && k === 0 && f === 0,
+      offset,
     });
 
     // Which segments carry strips, decided per segment (so independent of the mesh). A segment
@@ -492,7 +534,6 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
     // edge (device) or the surface's own root. If it cannot blend from there (see edgesUsable),
     // its own inboard section is tried (leaving a gap), and if that fails too it is skipped and
     // the next segment blends back over it.
-    const parentEdge = parent ? lastEdge.get(parent) : undefined;
     let cur: StripEdge = parentEdge ?? ownEdge(0, 0);
     let curIsOwn = !parentEdge;
     const usable: boolean[] = [];
@@ -552,12 +593,14 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
                 flaps: flapsA,
                 vertical,
                 onSymmetryPlane: rootOnSymmetryPlane && k === 0 && piece.f0 === 0,
+                offset,
               };
       const edgeSpecB: StripEdge = {
         section: framedSection(surface, k, piece.f1),
         flaps: flapsB,
         vertical,
         onSymmetryPlane: false,
+        offset,
         shift: shift(piece.f1),
       };
       prevB = edgeSpecB;

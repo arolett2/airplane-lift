@@ -8,16 +8,17 @@ export const ARROW_REFERENCE_SEMISPANS = 0.6;
 export const MAX_DRAG_SEMISPANS = 1.5;
 
 export interface ArrowLengths {
-  /** Meters (physics space). */
+  /** Meters (physics space); negative when lift points down. */
   lift: number;
   drag: number;
   weight: number;
 }
 
 /**
- * Arrow lengths in meters: `0.6 * semispan * F / max(lift, weight, tiny)`, drag multiplied by
+ * Arrow lengths in meters: `0.6 * semispan * F / max(|lift|, weight, tiny)`, drag multiplied by
  * DRAG_VISUAL_SCALE. Lift and weight therefore share a scale, so equal arrows mean level flight.
- * Missing or non-positive forces give length 0.
+ * Lift keeps its sign (negative: the wing pushes down). Missing forces, and non-positive drag or
+ * weight, give length 0.
  */
 export function arrowLengths(
   semispan: number,
@@ -25,10 +26,10 @@ export function arrowLengths(
   dragN: number,
   weightN: number | null,
 ): ArrowLengths {
-  const lift = Number.isFinite(liftN) ? Math.max(0, liftN) : 0;
+  const lift = Number.isFinite(liftN) ? liftN : 0;
   const drag = Number.isFinite(dragN) ? Math.max(0, dragN) : 0;
   const weight = weightN !== null && Number.isFinite(weightN) ? Math.max(0, weightN) : 0;
-  const ref = Math.max(lift, weight, 1e-9);
+  const ref = Math.max(Math.abs(lift), weight, 1e-9);
   const unit = (ARROW_REFERENCE_SEMISPANS * semispan) / ref;
   return {
     lift: lift * unit,

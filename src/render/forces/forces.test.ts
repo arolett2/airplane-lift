@@ -39,6 +39,12 @@ describe('arrowLengths', () => {
     expect(level.lift).toBeCloseTo(level.weight, 12);
   });
 
+  it('keeps the sign of lift and scales weight against its size', () => {
+    const down = arrowLengths(10, -2000, 100, 1000);
+    expect(down.lift).toBeCloseTo(-ARROW_REFERENCE_SEMISPANS * 10, 10);
+    expect(down.weight).toBeCloseTo(0.5 * ARROW_REFERENCE_SEMISPANS * 10, 10);
+  });
+
   it('clamps drag, and treats missing or bad forces as zero length', () => {
     expect(arrowLengths(10, 100, 100, null).drag).toBeCloseTo(MAX_DRAG_SEMISPANS * 10, 10);
     const z = arrowLengths(10, NaN, -5, NaN);
@@ -180,6 +186,29 @@ describe('ForceArrows', () => {
     for (const n of ['LiftArrow', 'DragArrow', 'WeightArrow']) {
       expect(fa.object.getObjectByName(n)!.position.toArray()).toEqual([0.7, 0.1, 0.2]);
     }
+    fa.dispose();
+  });
+
+  it('draws negative lift pointing down, beside the weight arrow, with its label', () => {
+    const fa = new ForceArrows();
+    const a = makeTestAero(geo, undefined, { lift: -90_000, centerOfPressure: [0.7, 0.1, 0.2] });
+    fa.update(a, geo, 60_000);
+    fa.snap();
+    const lift = fa.object.getObjectByName('LiftArrow')!;
+    const weight = fa.object.getObjectByName('WeightArrow')!;
+    expect(lift.visible).toBe(true);
+    expect(new THREE.Vector3(0, 0, 1).applyQuaternion(lift.quaternion).z).toBeCloseTo(-1, 9);
+    const length = (g: THREE.Object3D) =>
+      (g.children[0] as THREE.Mesh).scale.z + (g.children[1] as THREE.Mesh).scale.z;
+    expect(length(lift)).toBeCloseTo(0.6 * 5, 6);
+    expect(length(weight)).toBeCloseTo(0.6 * 5 * (60 / 90), 6);
+    expect(lift.position.distanceTo(weight.position)).toBeGreaterThan(0.1);
+    expect(labelsOf(lift).map((l) => l.element.textContent)).toEqual(['Lift -90.0 kN']);
+    // Back to positive lift: up again, from the centre of pressure.
+    fa.update(aero, geo, 60_000);
+    fa.snap();
+    expect(new THREE.Vector3(0, 0, 1).applyQuaternion(lift.quaternion).z).toBeCloseTo(1, 9);
+    expect(lift.position.toArray()).toEqual(weight.position.toArray());
     fa.dispose();
   });
 

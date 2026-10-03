@@ -4,6 +4,7 @@ import { GLOSSARY, LESSONS } from '../../content/lessons';
 import { DEFAULT_STATE, type AppState } from '../../state/params';
 import { getPreset } from '../../state/presets';
 import { Store } from '../../state/store';
+import { ComparePanel } from './ComparePanel';
 import { ATTENTION_CLASS, HIGHLIGHT_CLASS, LESSON_STORAGE_KEY, LessonPanel } from './LessonPanel';
 
 let root: HTMLElement;
@@ -313,6 +314,23 @@ describe('LessonPanel keyboard', () => {
     q('.lesson-next').focus();
     key('Escape', q('.lesson-next'));
     expect(q('.lesson-panel').hidden).toBe(true);
+  });
+
+  it('Escape on a comparison the lesson opened closes only the comparison', () => {
+    const compareRoot = document.createElement('div');
+    document.body.append(compareRoot);
+    const compare = new ComparePanel(compareRoot, store, () => new Promise(() => {}));
+    startLesson('b747-vs-b737');
+    expect(compare.isOpen()).toBe(true);
+    // Focus stays in the modal dialog the step opened.
+    expect(compareRoot.contains(document.activeElement)).toBe(true);
+    key('Escape', document.activeElement!);
+    expect(compare.isOpen()).toBe(false);
+    expect(q('.lesson-panel').hidden).toBe(false);
+    expect(store.get().lesson.lessonId).toBe('b747-vs-b737');
+    // ... and focus comes back to the lesson card rather than dropping to <body>.
+    expect(document.activeElement).toBe(q('.lesson-title'));
+    compare.destroy();
   });
 
   it('stops listening after destroy', () => {

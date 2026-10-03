@@ -165,6 +165,11 @@ export class SectionView {
   private readonly scratch = new Float32Array(2);
   private readonly scratch2 = new Float32Array(2);
 
+  /**
+   * Keys while enlarged. Listens on the document in the capture phase, so Escape still closes
+   * the dialog after a click on the picture moved focus to <body>, and stops there instead of
+   * also closing the drawer behind the dialog.
+   */
   private readonly onDialogKey = (e: KeyboardEvent): void => {
     if (this.mode !== 'large') return;
     if (e.key === 'Escape') {
@@ -459,6 +464,7 @@ export class SectionView {
     this.el.remove();
     this.away.remove();
     this.dialog?.remove();
+    this.el.ownerDocument.removeEventListener('keydown', this.onDialogKey, true);
   }
 
   /** True while the requestAnimationFrame loop is running. */
@@ -509,7 +515,9 @@ export class SectionView {
     head.append(titles, close);
     sheet.append(head);
     dialog.append(backdrop, sheet);
-    dialog.addEventListener('keydown', this.onDialogKey);
+    // Focusable as a whole, so a click on the picture keeps focus inside the dialog.
+    sheet.tabIndex = -1;
+    doc.addEventListener('keydown', this.onDialogKey, true);
     doc.body.appendChild(dialog);
     this.dialog = dialog;
     this.dialogSheet = sheet;
@@ -527,7 +535,10 @@ export class SectionView {
     const first = focusable[0]!;
     const last = focusable[focusable.length - 1]!;
     const active = this.root.ownerDocument.activeElement;
-    if (e.shiftKey && active === first) {
+    if (!this.dialogSheet.contains(active) || active === this.dialogSheet) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+    } else if (e.shiftKey && active === first) {
       e.preventDefault();
       last.focus();
     } else if (!e.shiftKey && active === last) {

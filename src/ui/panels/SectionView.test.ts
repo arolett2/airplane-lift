@@ -332,6 +332,24 @@ describe('SectionView enlarged view', () => {
     expect(document.activeElement).toBe(expand);
   });
 
+  it('still closes on Escape after a click on the picture, and only the dialog reacts', () => {
+    results.set({ section: section() });
+    const expand = root.querySelector<HTMLButtonElement>('.viz-section-expand')!;
+    expand.focus();
+    view.setExpanded(true);
+    const sheet = document.querySelector<HTMLElement>('.viz-section-sheet')!;
+    // A click on the picture: the canvas cannot take focus, the sheet around it can.
+    expect(sheet.tabIndex).toBe(-1);
+    (document.activeElement as HTMLElement).blur();
+    const behind = vi.fn();
+    document.addEventListener('keydown', behind);
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(view.isExpanded()).toBe(false);
+    expect(behind).not.toHaveBeenCalled(); // e.g. the shell would close the drawer behind
+    expect(document.activeElement).toBe(expand);
+    document.removeEventListener('keydown', behind);
+  });
+
   it('closes from the close button and the backdrop, and is removed on destroy', () => {
     view.setExpanded(true);
     const dialog = document.querySelector<HTMLElement>('.viz-section-dialog')!;

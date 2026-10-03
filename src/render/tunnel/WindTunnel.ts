@@ -1,8 +1,9 @@
 /**
- * The wind-tunnel test section, drawn tastefully so it frames the wing and flow without
+ * The wind-tunnel test section, drawn as quiet context so it frames the wing and flow without
  * competing with them: faint glass walls and ceiling with edge lines and frame ribs, a fading
- * floor grid, a honeycomb flow straightener at the inlet, an outlet fan, an "AIRFLOW" floor
- * marking and a slim mounting sting up to the wing pivot. Everything is in physics meters
+ * floor grid, a faint honeycomb flow straightener at the inlet, a small dim outlet fan, an
+ * "AIRFLOW" floor marking and a slim mounting sting up to the wing pivot. Inlet and outlet
+ * hardware fade away when the camera looks in through them. Everything is in physics meters
  * (tunnel frame, Z up) and sized from the `TunnelDomain`.
  */
 import * as THREE from 'three';
@@ -22,8 +23,12 @@ import {
 
 const GLASS_COLOR = 0x9cc4ff;
 const EDGE_COLOR = 0x78a9dc;
-const GRID_COLOR: readonly [number, number, number] = [0.2, 0.42, 0.62];
-const FAN_SPIN_RAD_PER_S = 1.3;
+const GRID_COLOR: readonly [number, number, number] = [0.12, 0.26, 0.4];
+const FAN_SPIN_RAD_PER_S = 0.8;
+/** Outlet fan radius as a fraction of the smaller cross-section dimension. */
+const FAN_RADIUS_FRACTION = 0.3;
+
+const _camera = new THREE.Vector3();
 
 function prefersReducedMotion(): boolean {
   return (
@@ -254,7 +259,7 @@ export class WindTunnel {
     const glass = new THREE.MeshBasicMaterial({
       color: GLASS_COLOR,
       transparent: true,
-      opacity: 0.04,
+      opacity: 0.025,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
@@ -277,7 +282,7 @@ export class WindTunnel {
       new THREE.LineBasicMaterial({
         color: EDGE_COLOR,
         transparent: true,
-        opacity: 0.38,
+        opacity: 0.24,
         depthWrite: false,
       }),
       'Edges',
@@ -289,7 +294,7 @@ export class WindTunnel {
       new THREE.LineBasicMaterial({
         color: EDGE_COLOR,
         transparent: true,
-        opacity: 0.13,
+        opacity: 0.06,
         depthWrite: false,
       }),
       'Ribs',
@@ -330,7 +335,7 @@ export class WindTunnel {
       new THREE.LineBasicMaterial({
         color: 0x84a6cf,
         transparent: true,
-        opacity: 0.3,
+        opacity: 0.11,
         depthWrite: false,
       }),
       'HoneycombFront',
@@ -340,7 +345,7 @@ export class WindTunnel {
       new THREE.LineBasicMaterial({
         color: 0x84a6cf,
         transparent: true,
-        opacity: 0.16,
+        opacity: 0.06,
         depthWrite: false,
       }),
       'HoneycombBack',
@@ -359,13 +364,14 @@ export class WindTunnel {
       new THREE.LineBasicMaterial({
         color: 0x84a6cf,
         transparent: true,
-        opacity: 0.1,
+        opacity: 0.035,
         depthWrite: false,
       }),
       'HoneycombLinks',
     );
     for (const o of [front, back, connectors]) {
       o.renderOrder = -2;
+      this.fadeWhenCameraBeyond(o, domain.min[0], -1, 0.25);
       this.shell.add(o);
     }
   }
@@ -374,7 +380,7 @@ export class WindTunnel {
   private buildOutlet(domain: TunnelDomain): void {
     const { lx, ly, lz, cy, cz } = tunnelDims(domain);
     const x = domain.max[0] - 1e-3 * lx;
-    const R = 0.44 * Math.min(ly, lz);
+    const R = FAN_RADIUS_FRACTION * Math.min(ly, lz);
 
     // Panel: the rectangle of the outlet face minus a circular opening.
     const shape = new THREE.Shape();
@@ -395,7 +401,7 @@ export class WindTunnel {
       new THREE.MeshBasicMaterial({
         color: 0x16233b,
         transparent: true,
-        opacity: 0.32,
+        opacity: 0.16,
         side: THREE.DoubleSide,
         depthWrite: false,
       }),
@@ -403,6 +409,7 @@ export class WindTunnel {
     panel.name = 'OutletPanel';
     panel.frustumCulled = false;
     panel.renderOrder = -4;
+    this.fadeWhenCameraBeyond(panel, x, 1, 0);
     this.shell.add(panel);
 
     // Fan: shroud ring, hub and pitched blades, spinning about the flow axis.
@@ -417,10 +424,11 @@ export class WindTunnel {
       new THREE.MeshBasicMaterial({
         color: 0x8fb0d8,
         transparent: true,
-        opacity: 0.5,
+        opacity: 0.16,
         depthWrite: false,
       }),
     );
+    this.fadeWhenCameraBeyond(ring, x - 0.05 * lx, 1, 0);
     this.shell.add(ring);
     ring.position.copy(fan.position);
 
@@ -429,7 +437,7 @@ export class WindTunnel {
     const bladeMat = new THREE.MeshBasicMaterial({
       color: 0x9db8dd,
       transparent: true,
-      opacity: 0.2,
+      opacity: 0.07,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
@@ -453,12 +461,35 @@ export class WindTunnel {
       g.rotateX((i * Math.PI * 2) / blades);
       fan.add(new THREE.Mesh(g, bladeMat));
     }
+    for (const blade of fan.children) this.fadeWhenCameraBeyond(blade, x - 0.05 * lx, 1, 0);
     this.shell.add(fan);
     if (!this.reducedMotion) {
       setFrameTick(fan, (dt) => {
         fan.rotation.x += dt * FAN_SPIN_RAD_PER_S;
       });
     }
+  }
+
+  /**
+   * Fade `object` (to `keep` x its opacity) while the camera is outside the test section beyond
+   * the plane x = faceX on the given side (-1 upstream, +1 downstream), i.e. looking in through
+   * it. Shared materials are fine: the opacity is set right before each draw.
+   */
+  private fadeWhenCameraBeyond(
+    object: THREE.Object3D,
+    faceX: number,
+    side: 1 | -1,
+    keep: number,
+  ): void {
+    const mesh = object as THREE.Mesh;
+    const material = mesh.material as THREE.Material | undefined;
+    if (!material || Array.isArray(material)) return;
+    const base = material.opacity;
+    object.onBeforeRender = (_renderer, _scene, camera) => {
+      _camera.setFromMatrixPosition(camera.matrixWorld);
+      this.shell.worldToLocal(_camera);
+      material.opacity = side * (_camera.x - faceX) > 0 ? base * keep : base;
+    };
   }
 
   /** "AIRFLOW ->" painted on the floor beside the wing's path, reading in the flow direction. */

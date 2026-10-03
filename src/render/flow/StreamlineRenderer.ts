@@ -42,14 +42,14 @@ const PULSE_MAX_TRANSITS = 2.5;
 /** After reaching the end of its line a pulse marker fades over this fraction of a transit. */
 const PULSE_FADE_TRANSITS = 0.18;
 /** Pulse markers are washed this far toward white so they read as "bright". */
-const PULSE_WHITEN = 0.35;
+const PULSE_WHITEN = 0.2;
 
 /** Neighbouring lines are joined by a timeline connector if their seeds are at most this many median spacings apart. */
 const LINK_DISTANCE_FACTOR = 2.5;
 /** Opacity of the connector joining two timeline markers. */
 const CONNECTOR_ALPHA = 0.85;
 /** Width of the timeline connector (CSS px) and its colour (linear RGB, a cool white). */
-const CONNECTOR_WIDTH_PX = 2.6;
+const CONNECTOR_WIDTH_PX = 3;
 const CONNECTOR_RGB: readonly [number, number, number] = [0.92, 0.96, 1.0];
 
 const LINE_WIDTH_PX = 1.6;

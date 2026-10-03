@@ -203,7 +203,8 @@ describe('SceneManager', () => {
     expect(sm.camera.position.x).toBeCloseTo(pose.position[0], 3);
     expect(sm.camera.position.y).toBeCloseTo(pose.position[1], 3);
     expect(sm.camera.position.z).toBeCloseTo(pose.position[2], 3);
-    expect(sm.controls.target.toArray()).toEqual(pose.target);
+    // OrbitControls re-normalises the target (clampLength), which can cost an ulp.
+    sm.controls.target.toArray().forEach((v, i) => expect(v).toBeCloseTo(pose.target[i]!, 9));
     expect(early.distanceTo(sm.camera.position)).toBeGreaterThan(1);
     // Side view: the camera looks along +y with +x to the screen's right.
     const dir = new THREE.Vector3();

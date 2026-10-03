@@ -40,6 +40,17 @@ export interface ViewInsets {
 }
 
 const NO_INSETS: ViewInsets = { left: 0, right: 0, top: 0, bottom: 0 };
+
+/**
+ * Shots that cut the scene open at the smoke-rake station: everything between the camera and
+ * the station is clipped away, so the airfoil section and the smoke bending round it are seen
+ * unobstructed (the wing's dark interior reads as the cut face).
+ */
+const CUTAWAY_SHOTS: ReadonlySet<CameraShot> = new Set<CameraShot>(['side', 'section']);
+/** The cutaway stays on while the view direction is within ~45 degrees of looking along +y. */
+const CUTAWAY_MIN_DIR_Y = 0.7;
+/** The cut sits this many station chords in front of the station (toward the camera). */
+const CUTAWAY_OFFSET_CHORDS = 0.45;
 /** The visible region never shrinks below this fraction of the canvas on either axis. */
 const MIN_VISIBLE_FRACTION = 0.35;
 
@@ -108,6 +119,10 @@ export class SceneManager implements SceneManagerApi {
   private readonly keyLight: THREE.DirectionalLight;
 
   private frameCallbacks: FrameCallback[] = [];
+  private cutawayListeners: Array<(on: boolean) => void> = [];
+  private readonly cutPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private readonly scratchDir = new THREE.Vector3();
+  private cutActive = false;
   private extents: SceneExtents;
   private domain: TunnelDomain = tunnelDomain(10, 1.5);
   private focus: { pivot: Vec3; semispan: number; framing?: WingFraming } | null = null;
@@ -134,7 +149,7 @@ export class SceneManager implements SceneManagerApi {
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     const canvas = this.renderer.domElement;
@@ -281,6 +296,19 @@ export class SceneManager implements SceneManagerApi {
     this.placeCamera(true);
   }
 
+  /** True while the side / section cutaway clips the scene in front of the rake station. */
+  get cutawayActive(): boolean {
+    return this.cutActive;
+  }
+
+  /** Called whenever the cutaway switches on or off; returns an unsubscribe function. */
+  onCutawayChange(cb: (on: boolean) => void): () => void {
+    this.cutawayListeners = [...this.cutawayListeners, cb];
+    return () => {
+      this.cutawayListeners = this.cutawayListeners.filter((f) => f !== cb);
+    };
+  }
+
   onFrame(cb: FrameCallback): () => void {
     this.frameCallbacks = [...this.frameCallbacks, cb];
     return () => {
@@ -297,6 +325,7 @@ export class SceneManager implements SceneManagerApi {
     this.controls.removeEventListener('start', this.onControlStart);
     this.controls.dispose();
     this.frameCallbacks = [];
+    this.cutawayListeners = [];
     // modelRoot's children belong to their own classes (the app disposes those).
     this.scene.remove(this.modelRoot);
     disposeObject3D(this.scene);
@@ -459,9 +488,35 @@ export class SceneManager implements SceneManagerApi {
       this.reportCallbackError(err);
     }
 
+    this.updateCutaway();
+
     this.renderer.render(this.scene, this.camera);
     this.labelRenderer.render(this.scene, this.camera);
   };
+
+  /** Switch the side / section cutaway on while such a shot looks along +y at the station. */
+  private updateCutaway(): void {
+    let on = false;
+    if (CUTAWAY_SHOTS.has(this.currentShot)) {
+      this.camera.getWorldDirection(this.scratchDir);
+      on = this.scratchDir.y > CUTAWAY_MIN_DIR_Y;
+    }
+    if (on) {
+      const st = this.extents.wing.station;
+      // Keep y >= station - offset (world = display units; the plane keeps n.p + c >= 0).
+      this.cutPlane.constant = -(st.le[1] - CUTAWAY_OFFSET_CHORDS * st.chord);
+    }
+    if (on === this.cutActive) return;
+    this.cutActive = on;
+    this.renderer.clippingPlanes = on ? [this.cutPlane] : [];
+    for (const cb of this.cutawayListeners) {
+      try {
+        cb(on);
+      } catch (err) {
+        this.reportCallbackError(err);
+      }
+    }
+  }
 
   /** Log a failing per-frame callback once per distinct message (not 60 times a second). */
   private reportCallbackError(err: unknown): void {

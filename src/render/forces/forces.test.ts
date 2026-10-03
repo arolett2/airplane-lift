@@ -208,7 +208,7 @@ describe('ForceArrows', () => {
     fa.snap();
     const texts = labelsOf(fa.object).map((l) => l.element.textContent);
     expect(texts.some((t) => t === 'Lift 60.0 kN')).toBe(true);
-    expect(texts.some((t) => t?.startsWith('Drag 4.00 kN') && t.includes('x5'))).toBe(true);
+    expect(texts.some((t) => t?.startsWith('Drag 4.00 kN') && t.includes('×5'))).toBe(true);
     expect(fa.object.getObjectByName('WeightArrow')!.visible).toBe(false);
     fa.update(aero, geo, 50_000);
     fa.snap();

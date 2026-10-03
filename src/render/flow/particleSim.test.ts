@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { BASE_PARTICLES, MAX_PARTICLES, ParticleSim, particleCountFor } from './particleSim';
+import {
+  BASE_PARTICLES,
+  MAX_PARTICLES,
+  ParticleSim,
+  TRAIL_POINTS,
+  particleCountFor,
+} from './particleSim';
 import { defaultAnalyticParams, makeAnalyticFlowGrid } from './fixtures';
 import { makeSpawnRegion } from './spawn';
 import { tunnelDomain } from '../../physics/domain';
@@ -199,21 +205,28 @@ describe('ParticleSim', () => {
       expect(sim.alpha[i]!).toBeLessThanOrEqual(1);
       for (let c = 0; c < 3; c++) {
         expect(Number.isFinite(sim.pos[i * 3 + c]!)).toBe(true);
-        expect(Number.isFinite(sim.tail[i * 3 + c]!)).toBe(true);
+        for (let k = 0; k < TRAIL_POINTS; k++)
+          expect(Number.isFinite(sim.history[(i * TRAIL_POINTS + k) * 3 + c]!)).toBe(true);
         expect(sim.color[i * 3 + c]!).toBeGreaterThanOrEqual(0);
         expect(sim.color[i * 3 + c]!).toBeLessThanOrEqual(1);
       }
     }
   });
 
-  it('trails lag behind the head along the flow and vanish when paused', () => {
+  it('trail history lags behind the head along the flow, oldest sample furthest back', () => {
     const sim = makeSim(uniformGrid(30), 200);
     for (let s = 0; s < 100; s++) sim.update(0.004);
+    const oldest = (sim.historyHead + 1) % TRAIL_POINTS;
     let lagging = 0;
+    let ordered = 0;
     for (let i = 0; i < sim.count; i++) {
-      if (sim.pos[i * 3]! - sim.tail[i * 3]! > 0.05) lagging++;
+      const newestX = sim.history[(i * TRAIL_POINTS + sim.historyHead) * 3]!;
+      const oldestX = sim.history[(i * TRAIL_POINTS + oldest) * 3]!;
+      if (sim.pos[i * 3]! - oldestX > 0.05) lagging++;
+      if (sim.pos[i * 3]! >= newestX && newestX >= oldestX) ordered++;
     }
     expect(lagging).toBeGreaterThan(150);
+    expect(ordered).toBeGreaterThan(190);
     const snapshot = Float32Array.from(sim.pos.subarray(0, sim.count * 3));
     sim.update(0); // paused: nothing moves
     for (let i = 0; i < sim.count * 3; i++) expect(sim.pos[i]!).toBe(snapshot[i]!);

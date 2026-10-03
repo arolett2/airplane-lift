@@ -35,6 +35,8 @@ function installStallHatch(material: THREE.MeshStandardMaterial, spacing: { valu
       .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
+        // Seen through a cutaway, the inside of the skin reads as the dark cut face.
+        if (!gl_FrontFacing) diffuseColor.rgb = vec3(0.05, 0.06, 0.08);
         {
           float g = (vHatchPos.x + vHatchPos.y) / uHatchSpacing;
           float aa = max(fwidth(g), 1e-4);
@@ -43,7 +45,7 @@ function installStallHatch(material: THREE.MeshStandardMaterial, spacing: { valu
         }`,
       );
   };
-  material.customProgramCacheKey = () => 'wing-stall-hatch-v1';
+  material.customProgramCacheKey = () => 'wing-stall-hatch-v2';
 }
 
 export class WingMesh {

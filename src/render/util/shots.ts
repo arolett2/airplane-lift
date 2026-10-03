@@ -193,36 +193,29 @@ export function computeShot(
 ): CameraPose {
   const s = ext.semispan;
   const { min, max, station, tip } = ext.wing;
-  const halfX = 0.5 * ext.size[0];
   const wingCenter: Vec3 = [0.5 * (min[0] + max[0]), 0.5 * (min[1] + max[1]), ext.pivot[2]];
   const wingLength = Math.max(max[0] - min[0], 1e-3);
   const chord = Math.max(station.chord, 1e-3);
-  // Leftmost wing point the side cameras must stay clear of.
-  const nearY = min[1];
 
   switch (shot) {
     case 'side':
     case 'section': {
       // Look along +y at the rake station: the chord plus the air ahead (upwash) and behind
-      // (downwash). 'section' is a close-up of the airfoil itself.
+      // (downwash). 'section' is a close-up of the airfoil itself. The scene manager cuts
+      // away everything between the camera and the station, so nothing blocks the view.
       const close = shot === 'section';
-      const ahead = (close ? 1.1 : 2.4) * chord;
-      const behind = (close ? 2.0 : 4.6) * chord;
+      const ahead = (close ? 1.0 : 2.2) * chord;
+      const behind = (close ? 2.0 : 4.4) * chord;
       const target: Vec3 = [
         station.le[0] + 0.5 * (behind - ahead),
         station.le[1],
-        station.le[2] + (close ? 0 : 0.1 * chord),
+        station.le[2] - (close ? 0.02 : 0.08) * chord,
       ];
       const halfW = 0.5 * (ahead + behind);
       const tanV = Math.tan((fovYDeg * Math.PI) / 360);
       const tanH = tanV * Math.max(0.2, aspect);
-      let d = Math.max(halfW / tanH, (0.6 * chord) / tanV);
-      // A short side camera would sit right on the near wing: then look down on it a little more
-      // so the near wing passes under the frame (the side shot also backs off to the tip).
-      const clearance = station.le[1] - nearY + 0.6 * chord;
-      if (!close) d = Math.max(d, clearance);
-      const inside = d < clearance;
-      const elevation = ((inside ? 14 : close ? 6 : 3) * Math.PI) / 180;
+      const d = Math.max(halfW / tanH, (0.6 * chord) / tanV);
+      const elevation = ((close ? 2 : 4) * Math.PI) / 180;
       return {
         position: [
           target[0],
@@ -237,9 +230,8 @@ export function computeShot(
       const target: Vec3 = [wingCenter[0], wingCenter[1], wingCenter[2]];
       const dir: Vec3 = [-1, 0, 0.16];
       const d = fitPoints(boxCorners(min, max), target, dir, fovYDeg, aspect, 0.78, 0.7);
-      const pos = along(target, dir, d);
-      pos[0] = Math.max(pos[0], -halfX - 0.35 * ext.size[0]);
-      return { position: pos, target };
+      // May sit outside the inlet: the tunnel fades its honeycomb when looked through.
+      return { position: along(target, dir, d), target };
     }
     case 'top': {
       // From above: the wing and the start of its wake.
@@ -252,37 +244,39 @@ export function computeShot(
       return { position: along(target, dir, d), target };
     }
     case 'tip': {
-      // Behind, outboard and above the right tip, looking back up the trailing vortex so its
-      // curl and the wingtip it comes from are both in view.
+      // Behind, outboard and above the right tip, looking back along the trailing vortex: its
+      // swirl reads as spirals, with the wingtip that sheds it in the background.
       const tc = Math.max(tip.chord, 0.12 * chord);
       const te: Vec3 = [tip.le[0] + tc, tip.le[1], tip.le[2]];
-      const r = Math.max(0.22 * s, 4.5 * tc);
-      const target: Vec3 = [te[0] + 0.35 * r, te[1] - 0.12 * r, te[2] - 0.05 * r];
+      const r = Math.max(0.2 * s, 4 * tc);
+      const target: Vec3 = [te[0] + 0.45 * r, te[1] - 0.12 * r, te[2] - 0.06 * r];
       return {
-        position: [target[0] + 1.6 * r, target[1] + 1.05 * r, target[2] + 0.55 * r],
+        position: [te[0] + 2.5 * r, te[1] + 0.85 * r, te[2] + 0.55 * r],
         target,
       };
     }
     case 'behind': {
       // From downstream, slightly above: downwash and both tip vortices.
-      const target: Vec3 = [max[0], wingCenter[1], wingCenter[2]];
-      const dir: Vec3 = [1, 0, 0.2];
+      const target: Vec3 = [max[0], wingCenter[1], wingCenter[2] - 0.05 * s];
+      const dir: Vec3 = [1, 0, 0.16];
       const lo: Vec3 = [min[0], min[1], min[2]];
-      const d = fitPoints(boxCorners(lo, max), target, dir, fovYDeg, aspect, 0.8, 0.7);
-      const pos = along(target, dir, Math.max(d, 0.05 * s));
-      pos[0] = Math.min(pos[0], halfX + 0.35 * ext.size[0]);
-      return { position: pos, target };
+      const d = fitPoints(boxCorners(lo, max), target, dir, fovYDeg, aspect, 0.66, 0.6);
+      // May sit outside the outlet: the tunnel fades its fan when looked through.
+      return { position: along(target, dir, Math.max(d, 0.05 * s)), target };
     }
     case 'overview':
     default: {
-      // 3/4 view from the front-left, above: the wing spans about two thirds of the width, with
-      // room behind it for the wake.
-      const wake = Math.min(0.55 * s, 1.2 * wingLength);
-      const target: Vec3 = [wingCenter[0] + 0.25 * wake, wingCenter[1], wingCenter[2] - 0.04 * s];
-      const dir: Vec3 = [-0.62, -0.74, 0.5];
-      const lo: Vec3 = [min[0], min[1], min[2] - 0.05 * s];
-      const hi: Vec3 = [max[0] + wake, max[1], max[2] + 0.05 * s];
-      const d = fitPoints(boxCorners(lo, hi), target, dir, fovYDeg, aspect, 0.8, 0.78);
+      // 3/4 view from the front-left, above: the wing spans about two thirds of the visible
+      // width, aimed a little downstream of its centre so the wake has room.
+      const target: Vec3 = [
+        wingCenter[0] + 0.12 * wingLength + 0.04 * s,
+        wingCenter[1],
+        wingCenter[2] - 0.03 * s,
+      ];
+      const dir: Vec3 = [-0.6, -0.74, 0.5];
+      const lo: Vec3 = [min[0], min[1], min[2] - 0.04 * s];
+      const hi: Vec3 = [max[0], max[1], max[2] + 0.04 * s];
+      const d = fitPoints(boxCorners(lo, hi), target, dir, fovYDeg, aspect, 0.8, 0.75);
       return { position: along(target, dir, d), target };
     }
   }

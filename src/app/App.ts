@@ -9,8 +9,9 @@ import { simSecondsPerSecond } from '../render/flow/playback';
 import { StreamlineRenderer } from '../render/flow/StreamlineRenderer';
 import { ForceArrows } from '../render/forces/ForceArrows';
 import { SpanLoadViz } from '../render/forces/SpanLoadViz';
+import { PressureLegend } from '../render/overlay/PressureLegend';
 import { SceneManager } from '../render/SceneManager';
-import { wingFraming } from '../render/util/framing';
+import { wingFraming, type WingFraming } from '../render/util/framing';
 import { WindTunnel } from '../render/tunnel/WindTunnel';
 import { WingMesh } from '../render/wing/WingMesh';
 import { DEFAULT_STATE, INITIAL_PRESET_ID, type AppState } from '../state/params';
@@ -84,6 +85,7 @@ export async function startApp(root: HTMLElement): Promise<void> {
   const spanLoad = new SpanLoadViz();
   const streamlines = new StreamlineRenderer();
   const particles = new ParticleSystem();
+  const legend = new PressureLegend(shell.viewport);
   scene.modelRoot.add(
     tunnel.object,
     wingMesh.object,
@@ -117,10 +119,18 @@ export async function startApp(root: HTMLElement): Promise<void> {
       if (t.height > 0 && t.top < vp.bottom) insets.bottom = Math.max(0, vp.bottom - t.top);
     }
     scene.setViewInsets(insets);
+    // The colour key sits at the bottom of the uncovered region, above the lesson card if any.
+    const region = scene.visibleRegion;
+    let bottom = vp.height - (region.y + region.height) + 14;
+    const card = shell.lesson.getBoundingClientRect();
+    if (card.height > 1 && card.top < vp.bottom) {
+      bottom = Math.max(bottom, vp.bottom - card.top + 10);
+    }
+    legend.setPlacement(region.x + 0.5 * region.width, bottom);
   };
   const insetObserver =
     typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => measureInsets()) : null;
-  for (const el of [shell.viewport, shell.topBar, leftPanel, rightPanel, tabBar]) {
+  for (const el of [shell.viewport, shell.topBar, shell.lesson, leftPanel, rightPanel, tabBar]) {
     if (el) insetObserver?.observe(el);
   }
   wideLayout?.addEventListener?.('change', measureInsets);
@@ -303,15 +313,25 @@ export async function startApp(root: HTMLElement): Promise<void> {
   // Side / section shots look at the smoke-rake station (or the 2D section's station).
   const focusEta = (s: AppState) =>
     s.view.rake.mode === 'vertical' ? s.view.rake.eta : s.view.sectionEta;
+  let framing: WingFraming | null = null;
   function focusCamera(): void {
     if (!geometry) return;
-    scene.setFocus(
-      geometry.pivot,
-      geometry.overallSpan / 2,
-      wingFraming(geometry, focusEta(store.get())),
-    );
+    framing = wingFraming(geometry, focusEta(store.get()));
+    scene.setFocus(geometry.pivot, geometry.overallSpan / 2, framing);
+    applyCutaway();
   }
   store.select(focusEta, () => focusCamera());
+
+  // Side / section cutaway: the scene in front of the station is clipped away; show only the
+  // smoke in a thin "light sheet" at the station, and hide the force arrows (they sit at the
+  // centreline, which the cut removes).
+  function applyCutaway(): void {
+    const cut = scene.cutawayActive;
+    forces.setVisible(store.get().view.showForces && !cut);
+    const st = framing?.station;
+    particles.setLightSheet(cut && st ? { y: st.le[1], halfWidth: 0.6 * st.chord } : null);
+  }
+  scene.onCutawayChange(() => applyCutaway());
 
   results.select(
     (r) => r.aero,
@@ -353,9 +373,11 @@ export async function startApp(root: HTMLElement): Promise<void> {
       particles.setVisible(view.flowMode === 'particles' || view.flowMode === 'both');
       streamlines.setColorBy(view.colorBy);
       particles.setColorBy(view.colorBy);
+      legend.setMode(view.colorBy);
+      legend.setVisible(view.showSurfacePressure || view.flowMode !== 'off');
       particles.setDensity(view.particleDensity);
       wingMesh.setPressureVisible(view.showSurfacePressure);
-      forces.setVisible(view.showForces);
+      forces.setVisible(view.showForces && !scene.cutawayActive);
       spanLoad.setVisible(view.showSpanLoad);
       if (view.camera !== prev.camera && !firstFrame) scene.flyTo(view.camera);
     },
@@ -416,7 +438,8 @@ export async function startApp(root: HTMLElement): Promise<void> {
     wideLayout?.removeEventListener?.('change', measureInsets);
     for (const p of panels) p.destroy();
     physics.dispose();
-    for (const r of [tunnel, wingMesh, forces, spanLoad, streamlines, particles]) r.dispose();
+    for (const r of [tunnel, wingMesh, forces, spanLoad, streamlines, particles, legend])
+      r.dispose();
     scene.dispose();
   });
 }

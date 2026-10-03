@@ -213,13 +213,18 @@ export const DEFAULT_WING: WingConfig = {
 
 export const DEFAULT_FLOW: FlowConditions = { alphaDeg: 5, airspeed: 60, altitude: 0 };
 
+/**
+ * First impression: smoke (a sheet across the span plus the tips) and a vertical smoke rake at
+ * 35% of the right semispan, coloured by pressure, on a pressure-coloured wing. 18 rake lines
+ * are enough to show the bending over the airfoil without becoming a wall of lines.
+ */
 export const DEFAULT_VIEW: ViewSettings = {
   flowMode: 'both',
   colorBy: 'pressure',
   showSurfacePressure: true,
   showForces: true,
   showSpanLoad: false,
-  rake: { mode: 'vertical', eta: 0.35, height: 0, count: 24 },
+  rake: { mode: 'vertical', eta: 0.35, height: 0, count: 18 },
   particleDensity: 1,
   playbackSpeed: 1,
   paused: false,

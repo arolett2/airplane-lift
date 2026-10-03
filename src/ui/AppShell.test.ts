@@ -50,10 +50,10 @@ describe('createAppShell slots', () => {
     expect(shell.topBar.tagName).toBe('HEADER');
     expect(root.querySelectorAll('aside')).toHaveLength(2);
     const cards = [...root.querySelectorAll<HTMLElement>('.card')];
-    expect(cards.map((c) => c.dataset.card)).toEqual(['numbers', 'charts', 'section']);
+    expect(cards.map((c) => c.dataset.card)).toEqual(['numbers', 'section', 'charts']);
     expect(shell.readouts.closest('.card')).toBe(cards[0]);
-    expect(shell.charts.closest('.card')).toBe(cards[1]);
-    expect(shell.section.closest('.card')).toBe(cards[2]);
+    expect(shell.section.closest('.card')).toBe(cards[1]);
+    expect(shell.charts.closest('.card')).toBe(cards[2]);
     expect(shell.controls.closest('#panel-left')).not.toBeNull();
   });
 
@@ -66,7 +66,7 @@ describe('createAppShell slots', () => {
 
   it('has a phone tab bar with the four tabs', () => {
     const tabs = [...root.querySelectorAll<HTMLButtonElement>('.shell__tab')];
-    expect(tabs.map((t) => t.textContent)).toEqual(['Controls', 'Numbers', 'Charts', 'Section']);
+    expect(tabs.map((t) => t.textContent)).toEqual(['Controls', 'Numbers', 'Section', 'Charts']);
   });
 });
 
@@ -111,7 +111,7 @@ describe('createAppShell behaviour', () => {
     expect(shellEl().dataset.tab).toBe('numbers');
     expect(tabs[1]!.getAttribute('aria-pressed')).toBe('true');
     tabs[2]!.click();
-    expect(shellEl().dataset.tab).toBe('charts');
+    expect(shellEl().dataset.tab).toBe('section');
     expect(tabs[1]!.getAttribute('aria-pressed')).toBe('false');
     tabs[2]!.click();
     expect(shellEl().dataset.sheet).toBe('closed');
@@ -151,5 +151,49 @@ describe('createAppShell behaviour', () => {
     shell.destroy();
     expect(root.children).toHaveLength(0);
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  });
+});
+
+describe('view insets', () => {
+  const rect = (left: number, top: number, width: number, height: number) =>
+    ({
+      left,
+      top,
+      width,
+      height,
+      right: left + width,
+      bottom: top + height,
+      x: left,
+      y: top,
+      toJSON() {},
+    }) as DOMRect;
+
+  it('reports how much of the viewport the floating panels cover', () => {
+    const rects = new Map<Element, DOMRect>([
+      [shell.viewport, rect(0, 0, 1440, 900)],
+      [shell.topBar, rect(12, 12, 1416, 52)],
+      [root.querySelector('#panel-left')!, rect(12, 76, 320, 800)],
+      [root.querySelector('#panel-right')!, rect(1068, 76, 360, 800)],
+    ]);
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element,
+    ) {
+      return rects.get(this) ?? rect(0, 0, 0, 0);
+    });
+    vi.spyOn(Element.prototype, 'getClientRects').mockImplementation(function (this: Element) {
+      return (rects.has(this) ? [rects.get(this)] : []) as unknown as DOMRectList;
+    });
+    expect(shell.getViewInsets()).toEqual({ top: 64, right: 372, bottom: 0, left: 332 });
+  });
+
+  it('notifies listeners once per frame and stops after unsubscribe', async () => {
+    const seen: unknown[] = [];
+    const off = shell.onViewInsetsChange((insets) => seen.push(insets));
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(seen).toHaveLength(1);
+    off();
+    shellEl().dataset.panel = 'left';
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(seen).toHaveLength(1);
   });
 });

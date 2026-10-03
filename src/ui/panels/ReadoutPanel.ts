@@ -60,7 +60,25 @@ interface Banner {
   text: HTMLElement;
 }
 
-function banner(kind: 'stall' | 'approach' | 'mach' | 'error'): Banner {
+/** Drag-divergence Mach, or a typical margin above the critical Mach when it is unknown. */
+function dragDivergenceOf(machCritical: number, machDragDivergence: number): number {
+  return Number.isFinite(machDragDivergence) && machDragDivergence > machCritical
+    ? machDragDivergence
+    : machCritical + 0.08;
+}
+
+/** How much the Mach number deserves to be mentioned. */
+export function machLevel(
+  mach: number,
+  machCritical: number,
+  machDragDivergence: number,
+): 'none' | 'info' | 'warning' {
+  if (!(Number.isFinite(mach) && Number.isFinite(machCritical) && machCritical > 0)) return 'none';
+  if (mach <= machCritical) return 'none';
+  return mach > dragDivergenceOf(machCritical, machDragDivergence) ? 'warning' : 'info';
+}
+
+function banner(kind: 'stall' | 'approach' | 'mach' | 'info' | 'error'): Banner {
   const title = h('strong', { class: 'banner__title' });
   const text = h('span', { class: 'banner__text' });
   const el = h(
@@ -87,6 +105,7 @@ export class ReadoutPanel {
   private readonly status = h('p', { class: 'readouts__status', 'aria-live': 'polite' });
   private readonly stallBanner = banner('stall');
   private readonly approachBanner = banner('approach');
+  private readonly machNote = banner('info');
   private readonly machBanner = banner('mach');
   private readonly errorBanner = banner('error');
 
@@ -128,16 +147,13 @@ export class ReadoutPanel {
         this.approachBanner.el,
         this.machBanner.el,
       ),
-      h(
-        'div',
-        { class: 'metric-grid' },
-        this.lift.el,
-        this.gaugeCard,
-        this.drag.el,
-        this.efficiency.el,
-      ),
+      h('div', { class: 'metric-grid' }, this.lift.el, this.drag.el, this.efficiency.el),
+      // Calm notes (not warnings) sit under the numbers they explain.
+      this.machNote.el,
       this.engineer,
     );
+    // Lift and "compared with weight" tell one story, so they share a card.
+    this.lift.el.append(this.gaugeCard);
 
     this.render();
     this.unsubscribers.push(
@@ -171,12 +187,7 @@ export class ReadoutPanel {
     );
     this.gaugeCard.append(
       h('h3', { class: 'metric__title' }, 'Lift compared with weight'),
-      h(
-        'div',
-        { class: 'metric__value' },
-        this.gaugeValue,
-        h('span', { class: 'metric__unit' }, 'of weight'),
-      ),
+      h('div', { class: 'metric__value' }, this.gaugeValue),
       this.gaugeBar,
       this.gaugeText,
     );
@@ -282,16 +293,30 @@ export class ReadoutPanel {
         'Part of the wing is nearly at the limit of how much it can lift. A little more angle and the air will let go.';
     }
 
-    const supersonicTrouble =
-      aero !== null &&
-      Number.isFinite(aero.machCritical) &&
-      aero.machCritical > 0 &&
-      aero.mach > aero.machCritical;
-    setHidden(this.machBanner.el, !supersonicTrouble);
-    if (aero && supersonicTrouble) {
-      this.machBanner.title.textContent = `Mach ${formatNumber(aero.mach, 2)} is above this wing's critical Mach ${formatNumber(aero.machCritical, 2)}. `;
-      this.machBanner.text.textContent =
-        'Pockets of air are going supersonic and forming shock waves, so drag rises sharply. More sweep or a thinner wing delays this.';
+    this.renderMach(aero);
+  }
+
+  /**
+   * Mach messaging in three calm steps. Up to the critical Mach: nothing to say. Between it and
+   * the drag-divergence Mach some air over the wing is supersonic, which is what airliners do
+   * every day in cruise, so this is an information note, not a warning. Only past drag
+   * divergence, where shock waves make drag climb steeply, does the amber warning appear.
+   */
+  private renderMach(aero: AeroResult | null): void {
+    const crit = aero?.machCritical ?? NaN;
+    const known = aero !== null && Number.isFinite(crit) && crit > 0;
+    const level = !aero || !known ? 'none' : machLevel(aero.mach, crit, aero.machDragDivergence);
+    setHidden(this.machNote.el, level !== 'info');
+    setHidden(this.machBanner.el, level !== 'warning');
+    if (!aero) return;
+    if (level === 'info') {
+      this.machNote.title.textContent = `Mach ${formatNumber(aero.mach, 2)}: some air over the wing is now supersonic. `;
+      this.machNote.text.textContent =
+        'Normal for jets in cruise; it is why airliner wings are swept and use special airfoils.';
+    } else if (level === 'warning') {
+      const divergence = dragDivergenceOf(crit, aero.machDragDivergence);
+      this.machBanner.title.textContent = `Mach ${formatNumber(aero.mach, 2)} is past this wing's drag rise (about Mach ${formatNumber(divergence, 2)}). `;
+      this.machBanner.text.textContent = `Shock waves on the wing are now strong enough that drag climbs steeply (shocks first form at Mach ${formatNumber(crit, 2)}). More sweep or a thinner wing pushes this limit higher.`;
     }
   }
 
@@ -329,8 +354,8 @@ export class ReadoutPanel {
       drag.value,
       drag.unit,
       Number.isFinite(share) && share > 0
-        ? `The air resistance the engines must beat. About ${clamp(share, 0, 100)}% of it comes from the swirl at the wingtips.`
-        : 'The air resistance the engines must beat.',
+        ? `About ${clamp(share, 0, 100)}% of it comes from the wingtip swirl.`
+        : 'Air resistance the engines must overcome.',
     );
 
     const ld = aero.liftToDrag;
@@ -339,7 +364,7 @@ export class ReadoutPanel {
       Number.isFinite(ld) ? formatNumber(ld, 1) : DASH,
       'lift per drag',
       Number.isFinite(ld) && ld > 0
-        ? `Each 1 unit of drag buys ${formatNumber(ld, 1)} units of lift. Higher is better.`
+        ? 'Lift for each unit of drag. Higher is better.'
         : 'Lift per unit of drag. Higher is better.',
     );
   }
@@ -362,12 +387,13 @@ export class ReadoutPanel {
     this.gaugeFill.style.setProperty('--fill', `${clamp(ratio / GAUGE_MAX_RATIO, 0, 1) * 100}%`);
     this.gaugeBar.setAttribute('aria-valuenow', String(clamp(pct, 0, GAUGE_MAX_RATIO * 100)));
     this.gaugeBar.setAttribute('aria-valuetext', `${pct}% of the aircraft's weight`);
+    const name = preset?.shortName ?? 'aircraft';
     this.gaugeText.textContent =
       state_ === 'low'
-        ? `The ${preset?.shortName ?? 'aircraft'} weighs about ${weight}. This is not enough lift to stay up: it would sink.`
+        ? `The ${name} weighs about ${weight}: too little lift, it would sink.`
         : state_ === 'ok'
-          ? `Matches the ${preset?.shortName ?? 'aircraft'}'s weight of about ${weight}: steady, level flight.`
-          : `More than the ${preset?.shortName ?? 'aircraft'}'s weight of about ${weight}: it would climb.`;
+          ? `Matches the ${name}'s ${weight}: steady, level flight.`
+          : `More than the ${name}'s ${weight}: it would climb.`;
   }
 
   private renderEngineer(

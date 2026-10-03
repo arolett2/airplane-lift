@@ -8,29 +8,33 @@
 
 .lesson-panel {
   --lp-surface: var(--surface, rgba(20, 25, 34, 0.94));
-  --lp-surface-2: var(--surface-2, rgba(255, 255, 255, 0.06));
+  --lp-surface-2: var(--elevated, rgba(255, 255, 255, 0.06));
   --lp-text: var(--text, #e8edf5);
-  --lp-muted: var(--text-muted, #a4afc0);
+  --lp-muted: var(--muted, #a4afc0);
   --lp-border: var(--border, rgba(255, 255, 255, 0.14));
   --lp-accent: var(--accent, #4cc2ff);
-  --lp-accent-contrast: var(--accent-contrast, #07131c);
-  --lp-radius: var(--radius, 12px);
-  --lp-shadow: var(--shadow, 0 12px 40px rgba(0, 0, 0, 0.35));
+  --lp-accent-contrast: var(--accent-ink, #07131c);
+  --lp-radius: var(--radius-lg, 16px);
+  --lp-shadow: var(--shadow-2, 0 12px 40px rgba(0, 0, 0, 0.35));
 
   box-sizing: border-box;
-  width: min(680px, calc(100vw - 32px));
-  max-height: min(72vh, 600px);
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(64vh, 560px);
   overflow-y: auto;
-  padding: 14px 18px 16px;
+  overscroll-behavior: contain;
+  padding: 12px 18px 14px;
   color: var(--lp-text);
   background: var(--lp-surface);
-  border: 1px solid var(--lp-border);
+  border: 1px solid var(--border-strong, var(--lp-border));
   border-radius: var(--lp-radius);
   box-shadow: var(--lp-shadow);
-  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: var(--blur, blur(10px));
+  backdrop-filter: var(--blur, blur(10px));
   font-family: var(--font, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif);
-  font-size: 15px;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.55;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(143, 168, 205, 0.35) transparent;
   /* The shell slot may ignore pointer events so the 3D view stays interactive around the card. */
   pointer-events: auto;
 }
@@ -51,8 +55,8 @@
 .lesson-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 6px;
+  gap: 6px;
+  margin-bottom: 4px;
 }
 
 .lesson-heading {
@@ -107,6 +111,7 @@
 }
 
 .lesson-panel button:focus-visible,
+.lesson-fold:focus-visible,
 .lesson-panel summary:focus-visible,
 .lesson-title:focus-visible {
   outline: 2px solid var(--lp-accent);
@@ -225,17 +230,80 @@
 
 /* ---- step card ---------------------------------------------------------------------------- */
 
+/* The step card stays compact so the wing above it is visible: at most ~42% of the screen. */
+.lesson-panel:has(.lesson-step:not([hidden])) {
+  max-height: min(42vh, 420px);
+}
+
 .lesson-title {
-  margin: 4px 0 8px;
-  font-size: 20px;
+  margin: 0 0 6px;
+  font-size: 18px;
   font-weight: 700;
   line-height: 1.25;
+}
+
+.lesson-body {
+  color: color-mix(in srgb, var(--lp-text) 88%, var(--lp-muted));
 }
 
 .lesson-body p,
 .lesson-body ul,
 .lesson-body ol {
-  margin: 0 0 10px;
+  margin: 0 0 8px;
+}
+
+.lesson-body > :last-child {
+  margin-bottom: 0;
+}
+
+/* Folded: just the title and the buttons, so the whole tunnel is visible. */
+.lesson-panel.is-folded .lesson-body,
+.lesson-panel.is-folded .lesson-tryit {
+  display: none;
+}
+
+.lesson-panel.is-folded .lesson-title {
+  margin-bottom: 0;
+  font-size: 16px;
+}
+
+.lesson-panel.is-folded .lesson-nav {
+  margin-top: 4px;
+}
+
+.lesson-fold {
+  appearance: none;
+  position: relative;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--lp-muted);
+  cursor: pointer;
+}
+
+.lesson-fold::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translate(-50%, -70%) rotate(45deg);
+  transition: transform 0.18s ease;
+}
+
+.lesson-panel.is-folded .lesson-fold::before {
+  transform: translate(-50%, -30%) rotate(-135deg);
+}
+
+.lesson-fold:hover {
+  color: var(--lp-text);
+  background: var(--lp-surface-2);
 }
 
 .lesson-body ul,
@@ -257,8 +325,8 @@
 }
 
 .lesson-tryit {
-  margin: 12px 0 4px;
-  padding: 10px 12px;
+  margin: 10px 0 2px;
+  padding: 8px 12px;
   background: color-mix(in srgb, var(--lp-accent) 14%, transparent);
   border-left: 3px solid var(--lp-accent);
   border-radius: 6px;
@@ -275,17 +343,33 @@
 }
 
 .lesson-nav {
+  position: sticky;
+  bottom: -14px;
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 14px;
+  margin: 10px -18px -14px;
+  padding: 6px 18px 14px;
+  /* Stays reachable when a long step scrolls; a short fade above it hints at more text. */
+  background: var(--surface-solid, #0b111d);
+}
+
+.lesson-nav::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 18px;
+  pointer-events: none;
+  background: linear-gradient(transparent, var(--surface-solid, #0b111d));
 }
 
 .lesson-prev,
 .lesson-next {
   appearance: none;
   min-width: 76px;
-  padding: 8px 16px;
+  padding: 7px 16px;
   color: var(--lp-text);
   font: inherit;
   font-weight: 600;
@@ -387,6 +471,17 @@
   }
 }
 
+/* A lesson step that talks about the 2D cross-section makes its card glow briefly. */
+.card.is-lesson-focus {
+  border-color: var(--accent, #4cc2ff);
+  box-shadow:
+    0 0 0 1px var(--accent, #4cc2ff),
+    0 0 24px 2px color-mix(in srgb, var(--accent, #4cc2ff) 35%, transparent);
+  transition:
+    border-color 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
 @media (prefers-reduced-motion: reduce) {
   [data-param].is-highlighted {
     animation: none;
@@ -404,6 +499,11 @@
   .lesson-panel {
     padding: 12px 14px 14px;
     max-height: 66vh;
+  }
+
+  .lesson-nav {
+    margin-inline: -14px;
+    padding-inline: 14px;
   }
 
   .lesson-kicker {

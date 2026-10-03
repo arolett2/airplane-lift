@@ -278,7 +278,7 @@ export function compareRows(a: CaseSummary, b: CaseSummary, units: UnitSystem): 
     row(
       'efficiency',
       'Span efficiency',
-      'How close the lift sharing is to the ideal ellipse (1.00 is perfect).',
+      'How close the lift sharing is to the ideal ellipse (1.00); tip devices can push it a little higher.',
       a.spanEfficiency,
       b.spanEfficiency,
       (v) => fixed(v, 2),
@@ -325,20 +325,30 @@ export function explainDifferences(
     return ['These are the same aircraft. Pick two different ones to see what changes.'];
   }
 
-  // Size.
+  // Size. Area carries the lift, so "larger" means more area; a long but narrow wing (a glider
+  // against a fighter) gets its own sentence instead of a contradictory one.
   const spanRatio = a.spanM / b.spanM;
-  if (spanRatio >= 1.2 || spanRatio <= 1 / 1.2) {
-    const [big, small] = spanRatio > 1 ? [a, b] : [b, a];
-    const areaRatio = big.areaM2 / small.areaM2;
+  const areaRatio = a.areaM2 / b.areaM2;
+  const spanDiffers = spanRatio >= 1.2 || spanRatio <= 1 / 1.2;
+  const areaDiffers = areaRatio >= 1.25 || areaRatio <= 1 / 1.25;
+  if (spanDiffers && areaDiffers && spanRatio > 1 !== areaRatio > 1) {
+    const [long, short] = spanRatio > 1 ? [a, b] : [b, a];
     out.push(
-      `The ${big.preset.shortName} is the larger wing: ${formatLength(big.spanM, units)} across against ${formatLength(small.spanM, units)}, with ${ratioText(areaRatio)}× the wing area. More area means more total lift for a heavier aircraft.`,
+      `The ${long.preset.shortName} spans ${formatLength(long.spanM, units)} against ${formatLength(short.spanM, units)}, yet has less wing area (${formatArea(long.areaM2, units)} against ${formatArea(short.areaM2, units)}): its wing is long and narrow, the ${short.preset.shortName}'s short and broad.`,
+    );
+  } else if (spanDiffers || areaDiffers) {
+    const [big, small] = areaRatio > 1 ? [a, b] : [b, a];
+    out.push(
+      `The ${big.preset.shortName} is the larger wing: ${formatLength(big.spanM, units)} across against ${formatLength(small.spanM, units)}, with ${ratioText(big.areaM2 / small.areaM2)}× the wing area. More area means more total lift for a heavier aircraft.`,
     );
   }
 
   // Sweep and speed.
   if (Math.abs(a.sweepDeg - b.sweepDeg) >= 5) {
     const [more, less] = a.sweepDeg > b.sweepDeg ? [a, b] : [b, a];
-    const faster = more.cruiseMach - less.cruiseMach >= 0.03;
+    // Only claim sweep as the reason for a faster cruise between aircraft that both fly fast
+    // enough for compressibility to matter (not a jet against a glider or a light aircraft).
+    const faster = more.cruiseMach - less.cruiseMach >= 0.03 && less.cruiseMach >= 0.25;
     out.push(
       `The ${more.preset.shortName} sweeps its wing back ${more.sweepDeg.toFixed(0)}° against ${less.sweepDeg.toFixed(0)}°. Sweep delays the shock waves that form near the speed of sound` +
         (faster
@@ -364,9 +374,14 @@ export function explainDifferences(
   const wlRatio = a.wingLoading / b.wingLoading;
   if (wlRatio >= 1.2 || wlRatio <= 1 / 1.2) {
     const [heavy, light] = wlRatio > 1 ? [a, b] : [b, a];
-    const faster = (Math.sqrt(heavy.wingLoading / light.wingLoading) - 1) * 100;
+    const speedRatio = Math.sqrt(heavy.wingLoading / light.wingLoading);
+    // "248% faster" is hard to picture; past double, say how many times as fast.
+    const howMuch =
+      speedRatio > 2.05
+        ? `about ${speedRatio.toFixed(1)} times as fast`
+        : `about ${Math.round((speedRatio - 1) * 100)}% faster`;
     out.push(
-      `The ${heavy.preset.shortName} loads ${Math.round(heavy.wingLoading)} kg onto every square metre of wing, the ${light.preset.shortName} only ${Math.round(light.wingLoading)}. Speed needed to stay up grows with the square root of that load, so the ${heavy.preset.shortName} has to land about ${Math.round(faster)}% faster.`,
+      `The ${heavy.preset.shortName} loads ${Math.round(heavy.wingLoading)} kg onto every square metre of wing, the ${light.preset.shortName} only ${Math.round(light.wingLoading)}. Speed needed to stay up grows with the square root of that load, so the ${heavy.preset.shortName} has to land ${howMuch}.`,
     );
   }
 
@@ -456,11 +471,13 @@ export function buildPlanformSvg(inputs: readonly PlanformInput[], units: UnitSy
     `<line class="viz-plan-dim" stroke="#8a97a8" stroke-opacity="0.6" x1="${cx}" y1="${top - 6}" x2="${cx}" y2="${planformBottom + 6}" stroke-dasharray="2 4"/>`,
   );
 
-  for (const input of inputs) {
+  // The bigger wing is drawn first so the smaller one sits on top of it and stays visible.
+  const drawOrder = [...inputs].sort((p, q) => q.spanM - p.spanM);
+  for (const input of drawOrder) {
     const cls = input.slot === 'a' ? 'viz-plan-a' : 'viz-plan-b';
     const stroke = input.slot === 'a' ? 'var(--viz-series-1)' : 'var(--viz-series-2)';
     parts.push(
-      `<g class="${cls}" style="fill:${stroke};fill-opacity:0.22;stroke:${stroke};stroke-width:1.6;stroke-linejoin:round">`,
+      `<g class="${cls}" style="fill:${stroke};fill-opacity:0.2;stroke:${stroke};stroke-width:1.75;stroke-linejoin:round">`,
     );
     for (const shape of input.shapes) {
       const pts = shape.points

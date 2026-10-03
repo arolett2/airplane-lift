@@ -7,7 +7,7 @@
  * pitched nose-up:   X =  x cos a + y sin a,   Y = -x sin a + y cos a.
  * "Display frame" below means (X, Y) after that rotation, in chord lengths, Y up.
  */
-import { cpFromSpeed, pressureColor, speedColor, type RGB } from '../../shared/colormaps';
+import { cpFromSpeed, speedColor, type RGB } from '../../shared/colormaps';
 import type { ChordwiseCp, SectionFlow } from '../../physics/types';
 import { interpolateAt } from './chartMath';
 
@@ -48,21 +48,48 @@ export class ViewTransform {
   }
 }
 
-/** Horizontal extent of the view in chords (leading edge near 0.55 from the left edge). */
-const VIEW_WIDTH_CHORDS = 2.3;
-const VIEW_MIN_HEIGHT_CHORDS = 1.05;
-const VIEW_CENTER_X = 0.6;
+export interface FitOptions {
+  /** Horizontal extent of the view in chords. */
+  widthChords?: number;
+  /** The view is never less tall than this (chords). */
+  minHeightChords?: number;
+  /** Display X (chords from the leading edge) placed at the centre of the canvas. */
+  centerX?: number;
+}
+
+/** The compact card: the airfoil fills most of the width. */
+export const CARD_VIEW: Required<FitOptions> = {
+  widthChords: 1.5,
+  minHeightChords: 0.95,
+  centerX: 0.56,
+};
+
+/** The enlarged view: a little more air around the wing. */
+export const LARGE_VIEW: Required<FitOptions> = {
+  widthChords: 2.05,
+  minHeightChords: 1.05,
+  centerX: 0.6,
+};
 
 /** Fit the airfoil in a canvas of the given CSS size, keeping the same scale on both axes. */
-export function fitView(width: number, height: number, alphaEff: number): ViewTransform {
-  const scale = Math.max(1, Math.min(width / VIEW_WIDTH_CHORDS, height / VIEW_MIN_HEIGHT_CHORDS));
-  // Centre on the middle of the (pitched) chord line.
-  const cy = -0.5 * Math.sin(alphaEff);
+export function fitView(
+  width: number,
+  height: number,
+  alphaEff: number,
+  options: FitOptions = {},
+): ViewTransform {
+  const widthChords = options.widthChords ?? CARD_VIEW.widthChords;
+  const minHeight = options.minHeightChords ?? CARD_VIEW.minHeightChords;
+  const centerX = options.centerX ?? CARD_VIEW.centerX;
+  const scale = Math.max(1, Math.min(width / widthChords, height / minHeight));
+  // Centre on the middle of the (pitched) chord line, nudged down a little so the lift arrow
+  // and the suction above the wing get the extra room.
+  const cy = -0.5 * Math.sin(alphaEff) + 0.06;
   return new ViewTransform(
     width,
     height,
     scale,
-    width / 2 - VIEW_CENTER_X * scale,
+    width / 2 - centerX * scale,
     height / 2 + cy * scale,
   );
 }
@@ -82,6 +109,51 @@ export function speedGrid(section: SectionFlow): Float32Array {
 /** Opacity of the background tint: the calm freestream stays transparent over the dark panel. */
 export function tintAlpha(deviation: number): number {
   return Math.min(0.92, 1 - Math.exp(-2.4 * Math.abs(deviation)));
+}
+
+/* Night-lab pressure tint. On the dark tunnel window a tint that fades to white near Cp = 0
+ * reads as grey haze, so each sign gets one clear hue whose opacity (and brightness) grows with
+ * the size of the pressure change: blue for suction (low pressure), red for high pressure. The
+ * colour language matches the shared pressure map: blue low, red high. */
+const SUCTION_DEEP: readonly [number, number, number] = [36, 92, 214];
+const SUCTION_BRIGHT: readonly [number, number, number] = [104, 186, 255];
+const PRESSURE_DEEP: readonly [number, number, number] = [176, 42, 52];
+const PRESSURE_BRIGHT: readonly [number, number, number] = [255, 122, 92];
+/** |Cp| at which the colour reaches its brightest. */
+const SUCTION_FULL = 1.6;
+const PRESSURE_FULL = 1;
+
+/**
+ * Colour and opacity (0..1) of the section's pressure tint for a pressure coefficient.
+ * Writes 0..255 RGB into `out` and returns the opacity.
+ */
+export function sectionPressureTint(cp: number, out: RGB): number {
+  if (!Number.isFinite(cp)) {
+    out[0] = out[1] = out[2] = 0;
+    return 0;
+  }
+  const suction = cp < 0;
+  const mag = Math.abs(cp);
+  const t = Math.min(1, mag / (suction ? SUCTION_FULL : PRESSURE_FULL));
+  const lo = suction ? SUCTION_DEEP : PRESSURE_DEEP;
+  const hi = suction ? SUCTION_BRIGHT : PRESSURE_BRIGHT;
+  const f = Math.sqrt(t);
+  out[0] = lo[0] + (hi[0] - lo[0]) * f;
+  out[1] = lo[1] + (hi[1] - lo[1]) * f;
+  out[2] = lo[2] + (hi[2] - lo[2]) * f;
+  return suction ? 0.9 * (1 - Math.exp(-1.9 * mag)) : 0.88 * (1 - Math.exp(-2.6 * mag));
+}
+
+/**
+ * Pressure inside the separated dead-air bubble: roughly the low "base" pressure that the upper
+ * surface feels at the trailing edge, not 1 - |V|^2 (the air there is slow but NOT at high
+ * pressure). Clamped to a plausible range.
+ */
+export function separatedBaseCp(section: SectionFlow): number {
+  const upper = section.cp.upper;
+  const te = upper.length ? upper[upper.length - 1]! : NaN;
+  const value = Number.isFinite(te) ? te : -0.4;
+  return Math.min(-0.25, Math.max(-1.2, value));
 }
 
 export interface WorldWindow {
@@ -128,6 +200,19 @@ export function fillFieldImage(
   const s = Math.sin(a);
   const gx = (g.nx - 1) / (g.xMax - g.xMin);
   const gy = (g.ny - 1) / (g.yMax - g.yMin);
+  const sep =
+    mode === 'pressure' && section.separated?.length === g.nx * g.ny
+      ? softMask(section.separated, g.nx, g.ny)
+      : null;
+  const baseCp = sep ? separatedBaseCp(section) : 0;
+  // Value carried by one grid node: Cp in pressure mode (dead air at its base pressure, blended
+  // over a couple of cells so the bubble has a soft edge), speed ratio in speed mode.
+  const nodeValue = (k: number): number => {
+    if (mode !== 'pressure') return speed[k]!;
+    const cp = cpFromSpeed(speed[k]!);
+    const m = sep ? sep[k]! : 0;
+    return m > 0 ? cp + (baseCp - cp) * m : cp;
+  };
   const rgb: RGB = [0, 0, 0];
   let tinted = 0;
   for (let j = 0; j < h; j++) {
@@ -141,7 +226,8 @@ export function fillFieldImage(
       const o = 4 * (j * w + i);
       let v: number;
       if (fx < 0 || fy < 0 || fx > g.nx - 1 || fy > g.ny - 1) {
-        v = 1; // beyond the grid the flow is the undisturbed freestream
+        // Beyond the grid the flow is the undisturbed freestream.
+        v = mode === 'pressure' ? 0 : 1;
       } else {
         const i0 = Math.min(g.nx - 2, Math.floor(fx));
         const j0 = Math.min(g.ny - 2, Math.floor(fy));
@@ -160,26 +246,103 @@ export function fillFieldImage(
           out[o + 3] = 0;
           continue;
         }
-        v = (w00 * speed[k00]! + w10 * speed[k10]! + w01 * speed[k01]! + w11 * speed[k11]!) / wSum;
+        v =
+          (w00 * (w00 ? nodeValue(k00) : 0) +
+            w10 * (w10 ? nodeValue(k10) : 0) +
+            w01 * (w01 ? nodeValue(k01) : 0) +
+            w11 * (w11 ? nodeValue(k11) : 0)) /
+          wSum;
       }
-      let deviation: number;
+      let alpha: number;
       if (mode === 'pressure') {
-        const cp = cpFromSpeed(v);
-        deviation = cp;
-        pressureColor(cp, rgb);
+        alpha = sectionPressureTint(v, rgb);
+        out[o] = rgb[0];
+        out[o + 1] = rgb[1];
+        out[o + 2] = rgb[2];
       } else {
-        deviation = v - 1;
         speedColor(v, rgb);
+        alpha = tintAlpha(v - 1);
+        out[o] = rgb[0] * 255;
+        out[o + 1] = rgb[1] * 255;
+        out[o + 2] = rgb[2] * 255;
       }
-      const alpha = tintAlpha(deviation) * gridFade(g, x, y);
-      out[o] = rgb[0] * 255;
-      out[o + 1] = rgb[1] * 255;
-      out[o + 2] = rgb[2] * 255;
+      alpha *= gridFade(g, x, y);
       out[o + 3] = alpha * 255;
       if (alpha > 0.05) tinted++;
     }
   }
   return tinted;
+}
+
+/** A 0/1 grid mask blurred by two 3x3 box passes (a soft edge about two cells wide). */
+export function softMask(mask: Uint8Array, nx: number, ny: number): Float32Array {
+  let src = Float32Array.from(mask);
+  let dst = new Float32Array(src.length);
+  for (let pass = 0; pass < 2; pass++) {
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        let sum = 0;
+        let n = 0;
+        for (let dj = -1; dj <= 1; dj++) {
+          const jj = j + dj;
+          if (jj < 0 || jj >= ny) continue;
+          for (let di = -1; di <= 1; di++) {
+            const ii = i + di;
+            if (ii < 0 || ii >= nx) continue;
+            sum += src[ii + nx * jj]!;
+            n++;
+          }
+        }
+        dst[i + nx * j] = sum / n;
+      }
+    }
+    [src, dst] = [dst, src];
+  }
+  return src;
+}
+
+/**
+ * Where to label the separated dead-air bubble: the display-frame point at the top of the
+ * bubble's rear half (from the solver's `separated` mask), or null when there is none.
+ */
+export function separatedLabelAnchor(section: SectionFlow): { X: number; Y: number } | null {
+  const g = section.grid;
+  const mask = section.separated;
+  if (!mask || mask.length !== g.nx * g.ny) return null;
+  const a = section.alphaEffective;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const dx = (g.xMax - g.xMin) / (g.nx - 1);
+  const dy = (g.yMax - g.yMin) / (g.ny - 1);
+  let count = 0;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (let j = 0; j < g.ny; j++) {
+    for (let i = 0; i < g.nx; i++) {
+      if (!mask[i + g.nx * j]) continue;
+      const X = displayX(c, s, g.xMin + i * dx, g.yMin + j * dy);
+      minX = Math.min(minX, X);
+      maxX = Math.max(maxX, X);
+      count++;
+    }
+  }
+  if (count < 4) return null;
+  // Highest point of the bubble over its middle stretch, so the label sits above it.
+  const from = minX + 0.3 * (maxX - minX);
+  const to = minX + 0.75 * (maxX - minX);
+  let best: { X: number; Y: number } | null = null;
+  for (let j = 0; j < g.ny; j++) {
+    for (let i = 0; i < g.nx; i++) {
+      if (!mask[i + g.nx * j]) continue;
+      const x = g.xMin + i * dx;
+      const y = g.yMin + j * dy;
+      const X = displayX(c, s, x, y);
+      if (X < from || X > to) continue;
+      const Y = displayY(c, s, x, y);
+      if (!best || Y > best.Y) best = { X, Y };
+    }
+  }
+  return best;
 }
 
 /* ------------------------------------------------------------------------------------------ */
@@ -373,13 +536,16 @@ export function separationPolygon(section: SectionFlow): Float32Array | null {
 /* Streamlines: smoke puffs and the timing pulse                                                */
 /* ------------------------------------------------------------------------------------------ */
 
+/** How far downstream of the left-most streamline start the timing markers begin (chords). */
+const PULSE_START_OFFSET = 0.1;
+
 export interface PreparedStreamline {
   /** Display-frame coordinates, interleaved. */
   disp: Float32Array;
   /** Cumulative travel time (chord / V_inf) at each point. */
   time: Float32Array;
   speed: Float32Array;
-  /** Time at which the line reaches the common pulse start line (0 if it starts beyond it). */
+  /** Time at which the line reaches the common pulse start line (NaN if it never does). */
   pulseStart: number;
   /** Total time to the end of the line. */
   total: number;
@@ -387,6 +553,8 @@ export interface PreparedStreamline {
   side: 'top' | 'bottom' | null;
   /** Time at which the line crosses the trailing-edge position, or NaN. */
   teTime: number;
+  /** Display-frame height above (+) or below (-) the trailing edge where it passes it, or NaN. */
+  teOffset: number;
 }
 
 export interface PreparedStreamlines {
@@ -450,14 +618,17 @@ export function prepareStreamlines(section: SectionFlow): PreparedStreamlines {
       total: n ? time[n - 1]! : 0,
       side: null,
       teTime: NaN,
+      teOffset: NaN,
     };
   });
 
-  // The markers must start on one vertical line: use the right-most starting X.
-  let pulseX = -Infinity;
-  for (const l of lines) if (l.disp.length) pulseX = Math.max(pulseX, l.disp[0]!);
-  if (!Number.isFinite(pulseX)) pulseX = -0.5;
-  pulseX += 0.005;
+  // The markers must start on one vertical line just downstream of the seed line. Lines that
+  // enter the picture through its top or bottom edge (common at a high angle) start further
+  // right and never cross it; they get no marker (pulseStart NaN) instead of dragging the start
+  // line over the wing.
+  let firstX = Infinity;
+  for (const l of lines) if (l.disp.length) firstX = Math.min(firstX, l.disp[0]!);
+  const pulseX = Number.isFinite(firstX) ? firstX + PULSE_START_OFFSET : -0.5;
 
   let topSum = 0;
   let topN = 0;
@@ -465,13 +636,14 @@ export function prepareStreamlines(section: SectionFlow): PreparedStreamlines {
   let botN = 0;
   for (const l of lines) {
     const start = crossingAtX(l.disp, l.time, pulseX);
-    l.pulseStart = start ? start.t : 0;
+    l.pulseStart = start ? start.t : NaN;
     const te = crossingAtX(l.disp, l.time, teX);
     if (te) {
       l.teTime = te.t;
+      l.teOffset = te.y - teY;
       l.side = te.y > teY ? 'top' : 'bottom';
       // Only streamlines that hug the airfoil say anything about "top vs bottom".
-      if (Math.abs(te.y - teY) < 0.3) {
+      if (start && Math.abs(te.y - teY) < 0.3) {
         const dt = te.t - l.pulseStart;
         if (l.side === 'top') {
           topSum += dt;
@@ -494,11 +666,12 @@ export function prepareStreamlines(section: SectionFlow): PreparedStreamlines {
 
 /**
  * Index i such that time[i] <= t < time[i + 1] by binary search, or -1 when t is outside the
- * line (before its start or at/after its end).
+ * line (before its start or at/after its end) or NaN.
  */
 export function findSegment(time: Float32Array, t: number): number {
   const n = time.length;
-  if (n < 2 || t < time[0]! || t >= time[n - 1]!) return -1;
+  // `!(t >= start)` also rejects NaN (a line with no timing marker).
+  if (n < 2 || !(t >= time[0]!) || t >= time[n - 1]!) return -1;
   let lo = 0;
   let hi = n - 1;
   while (hi - lo > 1) {

@@ -13,6 +13,9 @@ import {
   fitView,
   positionAtTime,
   prepareStreamlines,
+  sectionPressureTint,
+  separatedLabelAnchor,
+  softMask,
   separationPolygon,
   speedGrid,
   surfaceArrows,
@@ -136,6 +139,71 @@ describe('pressure field image', () => {
     expect(alphaAt(w - 1, h >> 1)).toBeLessThan(centre * 0.2);
     expect(alphaAt(w >> 1, 0)).toBeLessThan(centre * 0.2);
     expect(alphaAt(w >> 1, h - 1)).toBeLessThan(centre * 0.2);
+  });
+
+  it('colours separated dead air as low pressure, not as stagnation red', () => {
+    const stalled = makeSection({ alphaEffective: 0 });
+    const g = stalled.grid;
+    const mask = new Uint8Array(g.nx * g.ny);
+    const dx = (g.xMax - g.xMin) / (g.nx - 1);
+    const dy = (g.yMax - g.yMin) / (g.ny - 1);
+    for (let j = 0; j < g.ny; j++) {
+      for (let i = 0; i < g.nx; i++) {
+        const x = g.xMin + i * dx;
+        const y = g.yMin + j * dy;
+        if (x > 1.05 && x < 1.5 && y > 0.05 && y < 0.3) {
+          const k = i + g.nx * j;
+          g.uv[2 * k] = 0.05; // nearly still air: Bernoulli alone would say Cp ~ 1 (red)
+          g.uv[2 * k + 1] = 0;
+          mask[k] = 1;
+        }
+      }
+    }
+    const sp = speedGrid(stalled);
+    const view = { Xmin: -0.55, Xmax: 1.75, Ymin: -0.6, Ymax: 0.6 };
+    const at = (img: Uint8ClampedArray, X: number, Y: number): [number, number, number, number] => {
+      const i = Math.floor(((X - view.Xmin) / (view.Xmax - view.Xmin)) * w);
+      const j = Math.floor(((view.Ymax - Y) / (view.Ymax - view.Ymin)) * h);
+      const o = 4 * (j * w + i);
+      return [img[o]!, img[o + 1]!, img[o + 2]!, img[o + 3]!];
+    };
+    const plain = new Uint8ClampedArray(w * h * 4);
+    fillFieldImage(stalled, sp, view, w, h, 'pressure', plain);
+    const [r0, , b0] = at(plain, 1.27, 0.18);
+    expect(r0).toBeGreaterThan(b0);
+
+    stalled.separated = mask;
+    const masked = new Uint8ClampedArray(w * h * 4);
+    fillFieldImage(stalled, sp, view, w, h, 'pressure', masked);
+    const [r1, , b1, a1] = at(masked, 1.27, 0.18);
+    expect(b1).toBeGreaterThan(r1);
+    expect(a1).toBeGreaterThan(60);
+
+    const anchor = separatedLabelAnchor(stalled)!;
+    expect(anchor.X).toBeGreaterThan(1.05);
+    expect(anchor.X).toBeLessThan(1.5);
+    expect(anchor.Y).toBeGreaterThan(0.2);
+    expect(separatedLabelAnchor(makeSection())).toBeNull();
+  });
+
+  it('softens the dead-air mask edge', () => {
+    const mask = new Uint8Array(25);
+    mask[12] = 1; // centre of a 5 x 5 grid
+    const soft = softMask(mask, 5, 5);
+    expect(soft[12]).toBeGreaterThan(soft[11]!);
+    expect(soft[11]).toBeGreaterThan(0);
+    expect(soft[0]).toBeGreaterThan(0);
+    expect(soft[12]).toBeLessThan(1);
+  });
+
+  it('gives suction a blue tint and high pressure a red one, both fading to clear at Cp = 0', () => {
+    const rgb: [number, number, number] = [0, 0, 0];
+    expect(sectionPressureTint(0, rgb)).toBe(0);
+    expect(sectionPressureTint(-1, rgb)).toBeGreaterThan(0.6);
+    expect(rgb[2]).toBeGreaterThan(rgb[0]);
+    expect(sectionPressureTint(1, rgb)).toBeGreaterThan(0.6);
+    expect(rgb[0]).toBeGreaterThan(rgb[2]);
+    expect(sectionPressureTint(NaN, rgb)).toBe(0);
   });
 
   it('supports the speed colour mode', () => {
@@ -270,6 +338,23 @@ describe('streamline preparation', () => {
     expect(checked).toBe(prep.lines.length);
   });
 
+  it('keeps the start line upstream when some lines enter through the picture edge', () => {
+    const tilted = makeSection();
+    // A line that only starts below the trailing edge (it entered through the bottom edge).
+    const late = tilted.streamlines[0]!;
+    const n = late.points.length / 2;
+    const keep = Math.floor(n * 0.7);
+    tilted.streamlines[0] = {
+      points: late.points.slice(2 * keep),
+      speed: late.speed.slice(keep),
+      time: late.time.slice(keep),
+    };
+    const p = prepareStreamlines(tilted);
+    expect(p.pulseX).toBeLessThan(0);
+    expect(Number.isNaN(p.lines[0]!.pulseStart)).toBe(true);
+    expect(Number.isFinite(p.lines[5]!.pulseStart)).toBe(true);
+  });
+
   it('lets the air over the top arrive at the trailing edge sooner', () => {
     expect(Number.isFinite(prep.topArrival)).toBe(true);
     expect(Number.isFinite(prep.bottomArrival)).toBe(true);
@@ -319,6 +404,7 @@ describe('time sampling', () => {
       total: 4,
       side: null,
       teTime: NaN,
+      teOffset: NaN,
     };
     const out = new Float32Array(2);
     expect(positionAtTime(line, 0.5, out)).toBe(true);

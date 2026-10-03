@@ -18,6 +18,7 @@ import {
   summarizeCase,
   type CaseSummary,
 } from '../charts/compareData';
+import { icon } from '../components/icons';
 import '../styles/viz.css';
 
 export type CompareRequester = (
@@ -60,6 +61,7 @@ export class ComparePanel {
   private readonly tbody: HTMLTableSectionElement;
   private readonly why: HTMLElement;
   private readonly whyList: HTMLElement;
+  private readonly body: HTMLElement;
   private readonly unsubscribe: (() => void)[] = [];
 
   private open = false;
@@ -111,13 +113,24 @@ export class ComparePanel {
     this.card = h('div', 'viz-compare-card');
 
     const head = h('header', 'viz-compare-head');
+    const titles = h('div');
     const title = h('h2', undefined, 'Compare two aircraft');
     title.id = titleId;
-    this.closeButton = h('button', 'viz-close', '×');
+    titles.append(
+      title,
+      h(
+        'p',
+        'viz-compare-sub',
+        'Both wings are solved by the same physics at their own typical cruise.',
+      ),
+    );
+    this.closeButton = h('button', 'viz-close');
     this.closeButton.type = 'button';
     this.closeButton.setAttribute('aria-label', 'Close comparison');
+    this.closeButton.title = 'Close (Esc)';
+    this.closeButton.appendChild(icon('close', 18));
     this.closeButton.addEventListener('click', () => this.close());
-    head.append(title, this.closeButton);
+    head.append(titles, this.closeButton);
 
     const pickers = h('div', 'viz-compare-pickers');
     const makePicker = (slot: Slot, text: string): HTMLSelectElement => {
@@ -175,7 +188,10 @@ export class ComparePanel {
     this.whyList = h('ul');
     this.why.appendChild(this.whyList);
 
-    this.card.append(head, pickers, blurbs, this.statusEl, this.planformBox, this.table, this.why);
+    this.body = h('div', 'viz-compare-body');
+    this.body.append(this.table, this.why);
+
+    this.card.append(head, pickers, blurbs, this.statusEl, this.planformBox, this.body);
     this.el.append(backdrop, this.card);
     root.appendChild(this.el);
     doc.addEventListener('keydown', this.onKeyDown);
@@ -385,6 +401,7 @@ export class ComparePanel {
     const ready = this.status === 'ready' && this.summaries !== null;
     this.statusEl.hidden = ready;
     this.planformBox.hidden = !ready;
+    this.body.hidden = !ready;
     this.table.hidden = !ready;
     this.why.hidden = !ready;
     this.retryButton.hidden = this.status !== 'error';

@@ -4,7 +4,7 @@ import { GLOSSARY, LESSONS } from '../../content/lessons';
 import { DEFAULT_STATE, type AppState } from '../../state/params';
 import { getPreset } from '../../state/presets';
 import { Store } from '../../state/store';
-import { HIGHLIGHT_CLASS, LESSON_STORAGE_KEY, LessonPanel } from './LessonPanel';
+import { ATTENTION_CLASS, HIGHLIGHT_CLASS, LESSON_STORAGE_KEY, LessonPanel } from './LessonPanel';
 
 let root: HTMLElement;
 let store: Store<AppState>;
@@ -184,6 +184,47 @@ describe('LessonPanel steps', () => {
     const lesson = lessonById('b747-vs-b737');
     for (let i = 1; i < lesson.steps.length; i++) click(q('.lesson-next'));
     expect(store.get().compare).toBeNull();
+  });
+
+  it('folds the step text away and unfolds it on the next step', () => {
+    startLesson('what-is-lift');
+    const fold = q<HTMLButtonElement>('.lesson-fold');
+    expect(fold.getAttribute('aria-expanded')).toBe('true');
+    click(fold);
+    expect(q('.lesson-panel').classList.contains('is-folded')).toBe(true);
+    expect(fold.getAttribute('aria-expanded')).toBe('false');
+    expect(fold.getAttribute('aria-label')).toMatch(/Show/);
+    click(q('.lesson-next'));
+    expect(q('.lesson-panel').classList.contains('is-folded')).toBe(false);
+  });
+
+  it('publishes its height for other overlays and clears it when closed', () => {
+    const shell = document.createElement('div');
+    shell.dataset.shell = 'true';
+    document.body.append(shell);
+    const slot = document.createElement('div');
+    shell.append(slot);
+    const own = new LessonPanel(slot, store);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      height: 321.4,
+    } as DOMRect);
+    own.open();
+    expect(shell.style.getPropertyValue('--lesson-card-h')).toBe('322px');
+    click(slot.querySelector('.lesson-close')!);
+    expect(shell.style.getPropertyValue('--lesson-card-h')).toBe('0px');
+    own.destroy();
+  });
+
+  it('points at the cross-section card when a step frames the section', () => {
+    const card = document.createElement('section');
+    card.className = 'card';
+    card.dataset.card = 'section';
+    document.body.append(card);
+    const lesson = LESSONS.find((l) => l.steps.some((st) => st.camera === 'section'))!;
+    const index = lesson.steps.findIndex((st) => st.camera === 'section');
+    startLesson(lesson.id);
+    for (let i = 0; i < index; i++) click(q('.lesson-next'));
+    expect(card.classList.contains(ATTENTION_CLASS)).toBe(true);
   });
 
   it('renders the try-it text as plain text and hides the callout when absent', () => {

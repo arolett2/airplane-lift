@@ -244,8 +244,18 @@ button {
 }
 
 .shell__lesson > * {
-  width: min(640px, 100%);
+  width: min(760px, 100%);
   pointer-events: auto;
+}
+
+/* A lesson step that opens the aircraft comparison keeps its card on top, below the dialog,
+   and the dialog leaves room for it (LessonPanel publishes --lesson-card-h). */
+.shell:has(.lesson-panel:not([hidden])):has(.viz-compare:not([hidden])) .shell__lesson {
+  z-index: 55;
+}
+
+.shell:has(.lesson-panel:not([hidden])) .viz-compare {
+  padding-bottom: calc(var(--lesson-card-h, 0px) + var(--gutter) * 2);
 }
 
 .shell__compare {

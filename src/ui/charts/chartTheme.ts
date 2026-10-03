@@ -28,12 +28,23 @@ export interface ChartTheme {
 const SERIES_DARK = ['#5aa9ff', '#ffb454', '#7ddc9a', '#d08cff'];
 const SERIES_LIGHT = ['#1f6feb', '#d9730d', '#1a9b55', '#8a4fd0'];
 
-/** True when the page is (or prefers to be) dark. `data-theme` on <html> wins over the OS. */
+/**
+ * True when the page is dark. `data-theme` on <html> wins; otherwise the page's own
+ * `color-scheme` decides (the app declares `color-scheme: dark`, so a visitor whose OS prefers
+ * light still gets dark charts on the dark panels). The OS preference is only the last resort.
+ */
 export function prefersDark(): boolean {
   if (typeof document === 'undefined') return true;
   const attr = document.documentElement.getAttribute('data-theme');
   if (attr === 'dark') return true;
   if (attr === 'light') return false;
+  try {
+    const scheme = getComputedStyle(document.documentElement).colorScheme?.trim();
+    if (scheme === 'dark') return true;
+    if (scheme === 'light') return false;
+  } catch {
+    /* fall through */
+  }
   try {
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
   } catch {
@@ -82,7 +93,7 @@ export function readChartTheme(el: Element): ChartTheme {
     textMuted: dark ? 'rgba(170, 182, 198, 0.78)' : 'rgba(74, 85, 101, 0.82)',
     tooltipBg: dark ? 'rgba(14, 20, 30, 0.94)' : 'rgba(255, 255, 255, 0.96)',
     tooltipText: dark ? '#e8eef7' : '#17202c',
-    halo: dark ? '#0f1621' : '#ffffff',
+    halo: dark ? '#0d1422' : '#ffffff',
     fontFamily: font || 'system-ui, -apple-system, "Segoe UI", sans-serif',
     tokens,
     dark,

@@ -8,7 +8,7 @@ import { EMPTY_RESULTS } from '../../state/results';
 import type { ResultsState } from '../../state/results';
 import { Store } from '../../state/store';
 import { GRAVITY } from '../../shared/units';
-import { ReadoutPanel } from './ReadoutPanel';
+import { ReadoutPanel, machLevel } from './ReadoutPanel';
 
 const preset = PRESETS[0]!;
 
@@ -213,18 +213,46 @@ describe('ReadoutPanel warnings', () => {
     expect(visible('.banner--approach')).toBe(false);
   });
 
-  it('warns when Mach exceeds the critical Mach', () => {
-    setup({}, { aero: makeAero({ mach: 0.85, machCritical: 0.78 }) });
+  it('warns only when Mach is past drag divergence', () => {
+    setup({}, { aero: makeAero({ mach: 0.85, machCritical: 0.78, machDragDivergence: 0.82 }) });
     expect(visible('.banner--mach')).toBe(true);
+    expect(visible('.banner--info')).toBe(false);
     expect(text('.banner--mach')).toContain('0.85');
-    expect(text('.banner--mach')).toContain('0.78');
+    expect(text('.banner--mach')).toContain('0.82');
+    expect(text('.banner--mach')).toContain('drag');
     results.set({ aero: makeAero({ mach: 0.7, machCritical: 0.78 }) });
     expect(visible('.banner--mach')).toBe(false);
+    expect(visible('.banner--info')).toBe(false);
+  });
+
+  it('calls normal cruise above the critical Mach an information note, not a warning', () => {
+    setup({}, { aero: makeAero({ mach: 0.8, machCritical: 0.78, machDragDivergence: 0.82 }) });
+    expect(visible('.banner--mach')).toBe(false);
+    expect(visible('.banner--info')).toBe(true);
+    expect(text('.banner--info')).toContain('supersonic');
+    expect(text('.banner--info')).toMatch(/normal/i);
+  });
+
+  it('says nothing at or below the critical Mach', () => {
+    setup({}, { aero: makeAero({ mach: 0.78, machCritical: 0.78, machDragDivergence: 0.82 }) });
+    expect(visible('.banner--mach')).toBe(false);
+    expect(visible('.banner--info')).toBe(false);
   });
 
   it('ignores a missing critical Mach', () => {
     setup({}, { aero: makeAero({ mach: 0.85, machCritical: NaN }) });
     expect(visible('.banner--mach')).toBe(false);
+    expect(visible('.banner--info')).toBe(false);
+  });
+
+  it('classifies Mach levels', () => {
+    expect(machLevel(0.7, 0.75, 0.8)).toBe('none');
+    expect(machLevel(0.77, 0.75, 0.8)).toBe('info');
+    expect(machLevel(0.81, 0.75, 0.8)).toBe('warning');
+    // Unknown divergence: a typical margin above the critical Mach is assumed.
+    expect(machLevel(0.8, 0.75, NaN)).toBe('info');
+    expect(machLevel(0.9, 0.75, NaN)).toBe('warning');
+    expect(machLevel(0.9, NaN, 0.8)).toBe('none');
   });
 });
 

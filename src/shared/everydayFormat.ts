@@ -5,7 +5,7 @@
  *   speed:     "498 kt", "12% faster than the wind"
  *   pressure:  "1.8% below the air around it", "−1.9 kPa" (kPa, or psi for imperial)
  *   direction: "4° upward"
- *   push:      "about 520 kg on every square metre" / "about 107 lb on every square foot"
+ *   push:      "520 kg" per "square metre" / "110 lb" per "square foot"
  */
 import { formatNumber, formatQuantity, sigDecimals, type UnitSystem } from './units';
 
@@ -160,16 +160,22 @@ export function probeText(r: ProbeTextInput, system: UnitSystem): ProbeText {
 
 /**
  * The average push per area as a resting weight, rounded to two significant figures:
- * "about 520 kg on every square metre" (aviation, metric) or "about 110 lb on every square foot".
+ * { amount: "520 kg", area: "square metre" } (aviation, metric) or
+ * { amount: "110 lb", area: "square foot" } (imperial). The sign is dropped.
  */
-export function formatPushPerArea(massPerAreaKgM2: number, system: UnitSystem): string {
-  if (!Number.isFinite(massPerAreaKgM2)) return '–';
+export function formatPushPerArea(
+  massPerAreaKgM2: number,
+  system: UnitSystem,
+): { amount: string; area: string } {
   const imperial = system === 'imperial';
+  const area = imperial ? 'square foot' : 'square metre';
+  if (!Number.isFinite(massPerAreaKgM2)) return { amount: '–', area };
   const value = Math.abs(imperial ? massPerAreaKgM2 / KG_M2_PER_LB_FT2 : massPerAreaKgM2);
   const rounded = roundSig(value, 2);
-  return imperial
-    ? `${formatNumber(rounded, rounded < 10 ? 1 : 0)} lb on every square foot`
-    : `${formatNumber(rounded, rounded < 10 ? 1 : 0)} kg on every square metre`;
+  return {
+    amount: `${formatNumber(rounded, rounded < 10 ? 1 : 0)} ${imperial ? 'lb' : 'kg'}`,
+    area,
+  };
 }
 
 /** Round to `sig` significant figures. */

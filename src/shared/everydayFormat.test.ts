@@ -86,9 +86,9 @@ describe('everyday wording', () => {
   });
 
   it('turns wing loading into a weight per area', () => {
-    expect(formatPushPerArea(521.6, 'metric')).toBe('520 kg on every square metre');
-    expect(formatPushPerArea(521.6, 'imperial')).toBe('110 lb on every square foot');
-    expect(formatPushPerArea(-48, 'aviation')).toBe('48 kg on every square metre');
+    expect(formatPushPerArea(521.6, 'metric')).toEqual({ amount: '520 kg', area: 'square metre' });
+    expect(formatPushPerArea(521.6, 'imperial')).toEqual({ amount: '110 lb', area: 'square foot' });
+    expect(formatPushPerArea(-48, 'aviation').amount).toBe('48 kg');
   });
 
   it('formats air mass flow and downwash speed', () => {

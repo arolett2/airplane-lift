@@ -66,21 +66,18 @@ export function liftViewsText(
   const push = pressurePush(aero.lift, geometry.referenceArea, pInf);
   const up = aero.lift > 0;
   const where = aero.atmosphere.altitude > 500 ? 'up here' : 'at the ground';
-  const pressure = `The pressure difference pushes ${up ? 'up' : 'down'} with about ${formatPushPerArea(
-    push.massPerArea,
-    system,
-  )} of wing. That is only ${formatPercent(push.fractionOfAtmosphere)} of the air pressure ${where} (${formatPressure(
-    Math.abs(push.meanDelta),
-    system,
-  )} of ${formatPressure(pInf, system)}).`;
+  const per = formatPushPerArea(push.massPerArea, system);
+  const pressure = `Each ${per.area} of wing is pushed ${up ? 'up' : 'down'} with about ${per.amount}: a difference of only ${formatPercent(
+    push.fractionOfAtmosphere,
+  )} of the air pressure ${where} (${formatPressure(Math.abs(push.meanDelta), system)} of ${formatPressure(pInf, system)}).`;
   const m = momentumEstimate(
     aero.lift,
     aero.atmosphere.density,
     aero.velocity,
     geometry.referenceSpan,
   );
-  const newton = `This wing throws about ${formatAirMass(m.massFlow, system)} of air ${
-    up ? 'downward' : 'upward'
+  const newton = `About ${formatAirMass(m.massFlow, system)} of air thrown ${
+    up ? 'down' : 'up'
   } every second, at about ${formatDownwashSpeed(m.downwash, system)}.`;
   return { pressure, newton };
 }
@@ -189,8 +186,8 @@ export class ReadoutPanel {
     'aria-label': 'Same lift, two views',
     hidden: true,
   });
-  private readonly viewsPressure = h('p', { class: 'lift-view__text' });
-  private readonly viewsNewton = h('p', { class: 'lift-view__text' });
+  private readonly viewsPressure = h('span', { class: 'lift-view__text' });
+  private readonly viewsNewton = h('span', { class: 'lift-view__text' });
 
   private readonly engineer = h('section', { class: 'engineer', hidden: true });
   private readonly engineerRows: EngineerRow[] = [];
@@ -266,25 +263,25 @@ export class ReadoutPanel {
     this.views.append(
       h('h3', { class: 'metric__title' }, 'Same lift, two views'),
       h(
-        'div',
+        'p',
         { class: 'lift-view lift-view--pressure' },
-        h('span', { class: 'lift-view__tag' }, 'Pressure'),
+        h('b', { class: 'lift-view__tag' }, 'Pressure push. '),
         this.viewsPressure,
       ),
       h(
-        'div',
+        'p',
         {
           class: 'lift-view lift-view--newton',
           title:
-            'Estimate from momentum theory: the wing acts on the air flowing through a circle as wide as its span (mass flow = density × speed × π × span² / 4) and gives it the downward speed that makes mass flow × speed equal to the lift.',
+            'An estimate from momentum theory: the wing acts on the air flowing through a circle as wide as its span (mass flow = density × speed × π × span² / 4) and gives it the downward speed that makes mass flow × speed equal to the lift.',
         },
-        h('span', { class: 'lift-view__tag' }, 'Air thrown down'),
+        h('b', { class: 'lift-view__tag' }, 'Air thrown down. '),
         this.viewsNewton,
       ),
       h(
         'p',
         { class: 'metric__sub lift-views__note' },
-        'One force, told two ways: the air pushes the wing up because the wing pushes the air down. (The air figures are an estimate.)',
+        'One force, two descriptions: the air pushes the wing up because the wing pushes air down (the air figures are an estimate).',
       ),
     );
   }

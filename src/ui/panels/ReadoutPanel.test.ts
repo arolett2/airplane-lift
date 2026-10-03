@@ -321,10 +321,12 @@ describe('Same lift, two views', () => {
     setup({ view: { ...DEFAULT_STATE.view, units: 'metric' } }, { aero: makeAero(), geometry });
     expect(visible('.lift-views')).toBe(true);
     // 152.3 kN on 124.6 m² = 1222 Pa = 125 kg/m², 1.2% of 101.3 kPa.
-    expect(text('.lift-view--pressure')).toContain('120 kg on every square metre');
+    expect(text('.lift-view--pressure')).toContain(
+      'Each square metre of wing is pushed up with about 120 kg',
+    );
     expect(text('.lift-view--pressure')).toContain('1.2% of the air pressure at the ground');
     // ṁ = 1.225 × 60 × π × 35.8² / 4 = 74 t/s; w = 152300 / 73970 = 2.1 m/s.
-    expect(text('.lift-view--newton')).toContain('74 tonnes of air downward every second');
+    expect(text('.lift-view--newton')).toContain('74 tonnes of air thrown down every second');
     expect(text('.lift-view--newton')).toContain('2.1 m/s');
   });
 
@@ -332,15 +334,15 @@ describe('Same lift, two views', () => {
     setup({}, { aero: makeAero() });
     expect(visible('.lift-views')).toBe(false);
     const down = liftViewsText(makeAero({ lift: -20000, CL: -0.1 }), geometry, 'aviation');
-    expect(down.pressure).toContain('pushes down');
-    expect(down.newton).toContain('upward every second');
+    expect(down.pressure).toContain('pushed down');
+    expect(down.newton).toContain('thrown up every second');
     const none = liftViewsText(makeAero({ lift: 10, CL: 0.0001 }), geometry, 'aviation');
     expect(none.newton).toBe('With no lift, the wing throws no air down.');
   });
 
   it('follows the unit system', () => {
     const t = liftViewsText(makeAero(), geometry, 'imperial');
-    expect(t.pressure).toContain('lb on every square foot');
+    expect(t.pressure).toContain('Each square foot');
     expect(t.pressure).toContain('psi');
     expect(t.newton).toContain('lb of air');
     expect(t.newton).toContain('mph');

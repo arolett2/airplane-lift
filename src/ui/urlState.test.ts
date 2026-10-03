@@ -44,6 +44,8 @@ function busyState(): AppState {
   set('view.sectionEta', 0.8);
   set('view.units', 'imperial');
   set('view.camera', 'tip');
+  set('view.sectionBackdrop', 'terrain');
+  set('view.sectionFrame', 'air');
   return s;
 }
 
@@ -63,7 +65,24 @@ describe('urlState', () => {
     expect(back.view.sectionEta).toBe(0.8);
     expect(back.view.units).toBe('imperial');
     expect(back.view.camera).toBe('tip');
+    expect(back.view.sectionBackdrop).toBe('terrain');
+    expect(back.view.sectionFrame).toBe('air');
     expect(back.presetId).toBeNull();
+  });
+
+  it('reads links made before the cross-section views existed, and never shares the probe', () => {
+    const enc = (v: unknown) =>
+      btoa(JSON.stringify(v)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const good = JSON.parse(atob(encodeState(busyState()).replace(/-/g, '+').replace(/_/g, '/')));
+    const { s: _dropped, ...old } = good;
+    const back = decodeState(enc(old), DEFAULT_STATE);
+    expect(back.view.camera).toBe('tip');
+    expect(back.view.sectionBackdrop).toBe('tint');
+    expect(back.view.sectionFrame).toBe('wing');
+    expect(decodeState(enc({ ...good, s: [9, 0] }), DEFAULT_STATE)).toBe(DEFAULT_STATE);
+
+    const probed = setPath(busyState(), 'view.sectionProbe', { x: 0.3, y: 0.1 });
+    expect(decodeState(encodeState(probed), DEFAULT_STATE).view.sectionProbe).toBeNull();
   });
 
   it('keeps a known preset id and drops an unknown one', () => {

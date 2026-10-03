@@ -51,6 +51,11 @@ const CUTAWAY_SHOTS: ReadonlySet<CameraShot> = new Set<CameraShot>(['side', 'sec
 const CUTAWAY_MIN_DIR_Y = 0.7;
 /** The cut sits this many station chords in front of the station (toward the camera). */
 const CUTAWAY_OFFSET_CHORDS = 0.45;
+/**
+ * Depth of wing kept behind the station, in station chords: the wing is shown as a slab, like a
+ * 2D wind-tunnel model, instead of a long receding wing that converges in perspective.
+ */
+const CUTAWAY_DEPTH_CHORDS: Partial<Record<CameraShot, number>> = { side: 3.5, section: 1.6 };
 /** The visible region never shrinks below this fraction of the canvas on either axis. */
 const MIN_VISIBLE_FRACTION = 0.35;
 
@@ -74,6 +79,11 @@ export interface SceneManagerApi {
 /** Longest frame step handed to animation code (a background tab must not cause a huge jump). */
 const MAX_DT = 0.1;
 const CAMERA_FOV_DEG = 40;
+/**
+ * Side-on shots use a longer lens: the camera backs off and the receding outer wing no longer
+ * converges dramatically, so the airfoil and the smoke round it read like a diagram.
+ */
+const SHOT_FOV_DEG: Partial<Record<CameraShot, number>> = { side: 26, section: 26 };
 
 /** A deep navy -> charcoal vertical gradient; the flow lines pop against it. */
 function createBackgroundTexture(): THREE.CanvasTexture | null {
@@ -121,6 +131,11 @@ export class SceneManager implements SceneManagerApi {
   private frameCallbacks: FrameCallback[] = [];
   private cutawayListeners: Array<(on: boolean) => void> = [];
   private readonly cutPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  /**
+   * Far side of the cutaway slab (keeps y <= station + depth). Not applied globally: the app
+   * gives it to the wing material only, so the tunnel and smoke behind stay whole.
+   */
+  readonly cutawayFarPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
   private readonly scratchDir = new THREE.Vector3();
   private cutActive = false;
   private extents: SceneExtents;
@@ -135,6 +150,9 @@ export class SceneManager implements SceneManagerApi {
   private lastTime = 0;
   private elapsed = 0;
   private lastCallbackError = '';
+  /** Field of view the current shot wants (deg) and how fast to ease toward it (deg/s). */
+  private targetFov = CAMERA_FOV_DEG;
+  private fovRate = 0;
   private readonly tickVisitor: (obj: THREE.Object3D) => void;
   private visitDt = 0;
   private readonly onControlStart: () => void;
@@ -152,6 +170,8 @@ export class SceneManager implements SceneManagerApi {
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Per-material clipping (the wing's side-view slab) needs local clipping.
+    this.renderer.localClippingEnabled = true;
     const canvas = this.renderer.domElement;
     canvas.style.display = 'block';
     canvas.style.width = '100%';
@@ -373,10 +393,13 @@ export class SceneManager implements SceneManagerApi {
 
   /** Move the camera to the current shot, with a tween when `animate` and motion is allowed. */
   private placeCamera(animate: boolean): void {
+    this.targetFov = SHOT_FOV_DEG[this.currentShot] ?? CAMERA_FOV_DEG;
     const pose = this.shotPose();
     const toPos = new THREE.Vector3(...pose.position);
     const toTarget = new THREE.Vector3(...pose.target);
     if (animate && !prefersReducedMotion() && this.hasPlacedCamera) {
+      // Ease the lens over the same time as the move (it lands exactly when the move does).
+      this.fovRate = Math.abs(this.targetFov - this.camera.fov) / DEFAULT_TWEEN_SECONDS;
       this.tween.start(
         this.camera.position,
         this.controls.target,
@@ -386,6 +409,7 @@ export class SceneManager implements SceneManagerApi {
       );
     } else {
       this.tween.cancel();
+      this.setFov(this.targetFov);
       this.camera.position.copy(toPos);
       this.controls.target.copy(toTarget);
       this.camera.lookAt(toTarget);
@@ -440,11 +464,29 @@ export class SceneManager implements SceneManagerApi {
     this.camera.updateProjectionMatrix();
   }
 
+  private setFov(fov: number): void {
+    if (this.camera.fov === fov) return;
+    this.camera.fov = fov;
+    this.camera.updateProjectionMatrix();
+  }
+
+  /** Move the field of view toward the shot's lens at the eased rate. */
+  private easeFov(dt: number): void {
+    const diff = this.targetFov - this.camera.fov;
+    if (diff === 0) return;
+    const step = this.fovRate * dt;
+    this.setFov(
+      Math.abs(diff) <= step || step <= 0
+        ? this.targetFov
+        : this.camera.fov + Math.sign(diff) * step,
+    );
+  }
+
   /** The current shot framed for the visible region (vertical fov and aspect of that region). */
   private shotPose(): CameraPose {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
-    let fov = this.camera.fov;
+    let fov = this.targetFov;
     let aspect = this.camera.aspect;
     if (w >= 2 && h >= 2) {
       const { left, right, top, bottom } = this.clampedInsets(w, h);
@@ -470,6 +512,7 @@ export class SceneManager implements SceneManagerApi {
 
     // The tween writes camera position and target; controls.update() re-derives the orientation.
     this.tween.update(dt, this.camera.position, this.controls.target);
+    this.easeFov(dt);
     this.controls.update();
 
     const callbacks = this.frameCallbacks;
@@ -505,6 +548,8 @@ export class SceneManager implements SceneManagerApi {
       const st = this.extents.wing.station;
       // Keep y >= station - offset (world = display units; the plane keeps n.p + c >= 0).
       this.cutPlane.constant = -(st.le[1] - CUTAWAY_OFFSET_CHORDS * st.chord);
+      const depth = CUTAWAY_DEPTH_CHORDS[this.currentShot] ?? 1e3;
+      this.cutawayFarPlane.constant = st.le[1] + depth * st.chord;
     }
     if (on === this.cutActive) return;
     this.cutActive = on;

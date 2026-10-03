@@ -424,7 +424,7 @@ export class WindTunnel {
       new THREE.MeshBasicMaterial({
         color: 0x8fb0d8,
         transparent: true,
-        opacity: 0.16,
+        opacity: 0.11,
         depthWrite: false,
       }),
     );
@@ -437,7 +437,7 @@ export class WindTunnel {
     const bladeMat = new THREE.MeshBasicMaterial({
       color: 0x9db8dd,
       transparent: true,
-      opacity: 0.07,
+      opacity: 0.045,
       side: THREE.DoubleSide,
       depthWrite: false,
     });

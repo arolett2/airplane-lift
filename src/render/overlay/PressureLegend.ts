@@ -41,6 +41,7 @@ export class PressureLegend {
   private readonly low: HTMLElement;
   private readonly high: HTMLElement;
   private mode: ColorBy | null = null;
+  private compact: boolean | null = null;
 
   constructor(container: HTMLElement) {
     const doc = container.ownerDocument;
@@ -53,14 +54,11 @@ export class PressureLegend {
       bottom: '16px',
       transform: 'translateX(-50%)',
       zIndex: '5',
-      display: 'flex',
-      flexWrap: 'wrap',
+      display: 'grid',
       alignItems: 'center',
-      justifyContent: 'center',
-      gap: '6px 10px',
+      justifyItems: 'center',
       maxWidth: 'calc(100% - 32px)',
-      padding: '7px 12px',
-      borderRadius: '999px',
+      boxSizing: 'border-box',
       background: 'rgba(9, 15, 28, 0.72)',
       border: '1px solid rgba(150, 180, 220, 0.16)',
       boxShadow: '0 4px 18px rgba(0, 0, 0, 0.35)',
@@ -71,7 +69,7 @@ export class PressureLegend {
       pointerEvents: 'none',
       userSelect: 'none',
       whiteSpace: 'nowrap',
-      transition: 'bottom 0.25s ease, left 0.25s ease',
+      transition: 'left 0.25s ease',
     } satisfies Partial<CSSStyleDeclaration>);
 
     this.low = doc.createElement('span');
@@ -88,6 +86,44 @@ export class PressureLegend {
     this.element = el;
     container.appendChild(el);
     this.setMode('pressure');
+    this.setCompact(false);
+  }
+
+  /**
+   * Compact layout for narrow views: the colour bar on top with the two labels under its ends,
+   * instead of one line "label - bar - label".
+   */
+  setCompact(on: boolean): void {
+    if (on === this.compact) return;
+    this.compact = on;
+    const s = this.element.style;
+    const bar = this.bar.style;
+    if (on) {
+      s.gridTemplateColumns = 'auto auto';
+      s.gridTemplateRows = 'auto auto';
+      s.gap = '5px 18px';
+      s.padding = '7px 12px 6px';
+      s.borderRadius = '12px';
+      s.fontSize = '11px';
+      bar.gridColumn = '1 / span 2';
+      bar.gridRow = '1';
+      bar.width = '100%';
+      this.low.style.gridRow = this.high.style.gridRow = '2';
+      this.low.style.justifySelf = 'start';
+      this.high.style.justifySelf = 'end';
+    } else {
+      s.gridTemplateColumns = 'auto 128px auto';
+      s.gridTemplateRows = 'auto';
+      s.gap = '10px';
+      s.padding = '7px 12px';
+      s.borderRadius = '999px';
+      s.fontSize = '12px';
+      bar.gridColumn = '2';
+      bar.gridRow = '1';
+      bar.width = '128px';
+      this.low.style.gridRow = this.high.style.gridRow = '1';
+      this.low.style.justifySelf = this.high.style.justifySelf = 'center';
+    }
   }
 
   /** What the smoke colours mean: pressure (default) or speed. */
@@ -102,16 +138,28 @@ export class PressureLegend {
   }
 
   /**
-   * Centre the key on `centerX` (px from the container's left edge), `bottom` px above the
-   * container's bottom edge.
+   * Place the key `offset` px above the container's bottom edge, centred on `x` (px from the
+   * container's left edge); or, with `fromTop` (while a lesson card occupies the bottom),
+   * `offset` px below the top edge, starting at `x`.
    */
-  setPlacement(centerX: number, bottom: number): void {
-    if (Number.isFinite(centerX)) this.element.style.left = `${Math.round(centerX)}px`;
-    if (Number.isFinite(bottom)) this.element.style.bottom = `${Math.round(Math.max(0, bottom))}px`;
+  setPlacement(x: number, offset: number, fromTop = false): void {
+    const s = this.element.style;
+    // At the bottom the key is centred on x; at the top (out of the way) it starts at x.
+    s.transform = fromTop ? 'none' : 'translateX(-50%)';
+    if (Number.isFinite(x)) s.left = `${Math.round(x)}px`;
+    if (!Number.isFinite(offset)) return;
+    const px = `${Math.round(Math.max(0, offset))}px`;
+    if (fromTop) {
+      s.top = px;
+      s.bottom = 'auto';
+    } else {
+      s.bottom = px;
+      s.top = 'auto';
+    }
   }
 
   setVisible(on: boolean): void {
-    this.element.style.display = on ? 'flex' : 'none';
+    this.element.style.display = on ? 'grid' : 'none';
   }
 
   dispose(): void {

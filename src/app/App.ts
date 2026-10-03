@@ -107,8 +107,16 @@ export async function startApp(root: HTMLElement): Promise<void> {
     const vp = shell.viewport.getBoundingClientRect();
     if (vp.width < 2 || vp.height < 2) return;
     const bar = shell.topBar.getBoundingClientRect();
+    const card = shell.lesson.getBoundingClientRect();
+    const lessonOpen = card.height > 1 && card.top < vp.bottom;
     const insets = { left: 0, right: 0, top: 0, bottom: 0 };
     if (bar.height > 0) insets.top = Math.max(0, bar.bottom - vp.top + PANEL_GAP_PX);
+    // An open lesson card covers the bottom of the view: frame the scene above it, and below
+    // the colour key, which moves to the top meanwhile.
+    if (lessonOpen) {
+      insets.bottom = Math.max(0, vp.bottom - card.top + PANEL_GAP_PX);
+      insets.top += legend.element.offsetHeight + 4;
+    }
     if (wideLayout?.matches ?? vp.width >= 1100) {
       const l = leftPanel?.getBoundingClientRect();
       const r = rightPanel?.getBoundingClientRect();
@@ -116,17 +124,19 @@ export async function startApp(root: HTMLElement): Promise<void> {
       if (r && r.width > 0) insets.right = Math.max(0, vp.right - r.left + PANEL_GAP_PX);
     } else if (tabBar) {
       const t = tabBar.getBoundingClientRect();
-      if (t.height > 0 && t.top < vp.bottom) insets.bottom = Math.max(0, vp.bottom - t.top);
+      if (t.height > 0 && t.top < vp.bottom) {
+        insets.bottom = Math.max(insets.bottom, vp.bottom - t.top);
+      }
     }
     scene.setViewInsets(insets);
-    // The colour key sits at the bottom of the uncovered region, above the lesson card if any.
+    // The colour key sits at the bottom of the uncovered region; while a lesson card takes the
+    // bottom it moves to the top, under the top bar.
     const region = scene.visibleRegion;
-    let bottom = vp.height - (region.y + region.height) + 14;
-    const card = shell.lesson.getBoundingClientRect();
-    if (card.height > 1 && card.top < vp.bottom) {
-      bottom = Math.max(bottom, vp.bottom - card.top + 10);
-    }
-    legend.setPlacement(region.x + 0.5 * region.width, bottom);
+    const centerX = region.x + 0.5 * region.width;
+    legend.setCompact(region.width < 540);
+    if (lessonOpen) {
+      legend.setPlacement(region.x + 10, region.y - legend.element.offsetHeight - 4, true);
+    } else legend.setPlacement(centerX, vp.height - (region.y + region.height) + 14);
   };
   const insetObserver =
     typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => measureInsets()) : null;
@@ -328,6 +338,7 @@ export async function startApp(root: HTMLElement): Promise<void> {
   function applyCutaway(): void {
     const cut = scene.cutawayActive;
     forces.setVisible(store.get().view.showForces && !cut);
+    wingMesh.setClipPlanes(cut ? [scene.cutawayFarPlane] : null);
     const st = framing?.station;
     particles.setLightSheet(cut && st ? { y: st.le[1], halfWidth: 0.6 * st.chord } : null);
   }

@@ -3,85 +3,57 @@
  * thickness line-sources, a uniform grid for particles, solid mask, and streamline tracing.
  * OWNER: physics-flow agent. CONTRACT — keep the exported signatures.
  * Everything here is in the TUNNEL frame, meters, m/s.
+ *
+ * Thickness sources: the VLM leaves `lattice.sources` empty. buildFlowFieldGrid and
+ * traceStreamlines then build them from the geometry automatically (without mutating the
+ * lattice). velocityAt uses exactly the sources the lattice carries; assign
+ * `lattice.sources = buildThicknessSources(geometry, alpha, vInf)` to include thickness there.
+ *
+ * Regularisation: `lattice.coreRadius` is used for the trailing legs in the wake; bound vortices
+ * and on-surface legs use at most 2% of their strip's chord, so a wake-sized core cannot smear
+ * the flow next to a slender wing. Mirror-image root-edge points of the two wing halves (apart
+ * in y when dihedral rolls the camber or a flap's drop sideways) are joined at y = 0, so the
+ * symmetric wing sheds no vortex pair along its centreline. See lattice.ts.
  */
-import type { FlowFieldGrid, Streamline3D, VortexLattice, WingGeometry } from '../types';
-import type { TunnelDomain } from '../domain';
-import type { RakeConfig } from '../../state/params';
-import { notImplemented } from '../../shared/notImplemented';
+import type { VortexLattice, WingGeometry } from '../types';
+import { addInducedExact, getCompiledLattice } from './lattice';
+import { getWingSolid } from './solid';
+
+export { buildThicknessSources, withThicknessSources } from './sources';
+export { createWingSolidTester } from './solid';
+export { buildFlowFieldGrid, sampleGrid } from './grid';
+export type { GridOptions } from './grid';
+export { seedStreamlines, traceStreamlines } from './streamlines';
+export type { StreamlineSeeds } from './streamlines';
+
+const acc = new Float64Array(3);
 
 /** Velocity (freestream vInf along +x plus induced) at (x,y,z). Writes into out[0..2]. */
-export const velocityAt: (
+export function velocityAt(
   lattice: VortexLattice,
   vInf: number,
   x: number,
   y: number,
   z: number,
   out: Float64Array | number[],
-) => void = notImplemented('velocityAt');
-
-/**
- * Spanwise line sources that displace the flow around the wing's thickness
- * (thin-airfoil thickness theory: source strength per unit chord = V_inf * dT/dx).
- */
-export const buildThicknessSources: (
-  geometry: WingGeometry,
-  alpha: number,
-  vInf: number,
-) => VortexLattice['sources'] = notImplemented('buildThicknessSources');
+): void {
+  const c = getCompiledLattice(lattice);
+  acc[0] = vInf;
+  acc[1] = 0;
+  acc[2] = 0;
+  addInducedExact(c, x, y, z, acc);
+  out[0] = acc[0];
+  out[1] = acc[1];
+  out[2] = acc[2];
+}
 
 /** True when the tunnel-frame point lies inside the (pitched) wing or a tip device. */
-export const isInsideWing: (
+export function isInsideWing(
   geometry: WingGeometry,
   alpha: number,
   x: number,
   y: number,
   z: number,
-) => boolean = notImplemented('isInsideWing');
-
-export interface GridOptions {
-  domain: TunnelDomain;
-  /** Approximate total node count (default 120_000); dims are chosen to keep cells ~cubic. */
-  targetNodes?: number;
+): boolean {
+  return getWingSolid(geometry, alpha).contains(x, y, z);
 }
-
-export const buildFlowFieldGrid: (
-  lattice: VortexLattice,
-  vInf: number,
-  geometry: WingGeometry,
-  alpha: number,
-  options: GridOptions,
-  requestId: number,
-) => FlowFieldGrid = notImplemented('buildFlowFieldGrid');
-
-/** Trilinear sample. Returns false (and writes freestream) when outside the grid. */
-export const sampleGrid: (
-  grid: FlowFieldGrid,
-  x: number,
-  y: number,
-  z: number,
-  out: Float64Array | number[],
-) => boolean = notImplemented('sampleGrid');
-
-export interface StreamlineSeeds {
-  /** Interleaved xyz seed points. */
-  points: Float32Array;
-  group: Streamline3D['group'];
-}
-
-/** Seed points for the smoke rake (vertical / horizontal / tip-vortex modes), upstream of the wing. */
-export const seedStreamlines: (
-  geometry: WingGeometry,
-  alpha: number,
-  rake: RakeConfig,
-  domain: TunnelDomain,
-) => StreamlineSeeds[] = notImplemented('seedStreamlines');
-
-/** Integrate streamlines (RK4, adaptive step) through the exact vortex model until they leave the domain. */
-export const traceStreamlines: (
-  lattice: VortexLattice,
-  vInf: number,
-  seeds: StreamlineSeeds[],
-  domain: TunnelDomain,
-  geometry: WingGeometry,
-  alpha: number,
-) => Streamline3D[] = notImplemented('traceStreamlines');

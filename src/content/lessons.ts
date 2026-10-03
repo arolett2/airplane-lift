@@ -483,7 +483,7 @@ export const LESSONS: readonly Lesson[] = [
 <p>That is bad for two reasons. The ailerons that roll the plane sit near the tips, so they stop working just when the pilot needs them. And the swept-back tips are behind the plane's balance point, so losing lift there pitches the nose up, which deepens the stall.</p>
 <p>The cure is <strong>washout</strong>: twist the wing so the tips sit at a smaller angle than the root. Then the stall starts further inboard and the ailerons keep working. Here the 747 has slowed to its approach speed, with its washout taken out.</p>`,
         tryIt:
-          'Raise the angle of attack until part of the wing stalls, and note where. Then add washout (try 4° to 6°) and raise the angle again: the stall now starts further inboard.',
+          'Raise the angle of attack until part of the wing stalls, and note where. Then add washout (try 5° to 6°) and raise the angle again: the stall now starts further inboard.',
         apply: { wing: { washoutDeg: 0 }, flow: { alphaDeg: 12, airspeed: 80, altitude: 0 } },
         camera: 'top',
         highlight: ['flow.alphaDeg', 'wing.washoutDeg'],

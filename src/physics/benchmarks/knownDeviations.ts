@@ -5,12 +5,6 @@
  * `npm run benchmark` and docs/VALIDATION.md. Never widen a tolerance instead of adding an entry.
  */
 
-const LIFT_SLOPE =
-  'Model lift slope is the panel-method slope times a fixed 0.92 boundary-layer factor: ' +
-  '0.111/deg for every 12 % section. Measured 12 % slopes are 0.100-0.108 (Re 3-9e6), so the ' +
-  'model is 4-11 % steep; real decambering grows with thickness and falls with Reynolds number. ' +
-  'A thickness-dependent factor would fix it but shifts every preset cruise trim (follow-up).';
-
 const CD_MIN_LAMINAR =
   'Profile drag uses flat-plate friction with transition fixed at Re_x = 5e5 (mostly turbulent ' +
   'at Re 3-9e6). Smooth tunnel models and XFOIL (n_crit 9) keep 30-60 % of the chord laminar, ' +
@@ -28,8 +22,6 @@ const XFOIL_THIN =
 
 export const KNOWN_DEVIATIONS: Readonly<Record<string, string>> = {
   /* ----- 2D vs experiment ----- */
-  '2d-exp:0012:3940000:liftSlopePerDeg': LIFT_SLOPE,
-  '2d-exp:2412:5700000:liftSlopePerDeg': LIFT_SLOPE,
   '2d-exp:0006:3000000:cdMin': CD_MIN_LAMINAR,
   '2d-exp:0006:6000000:cdMin': CD_MIN_LAMINAR,
   '2d-exp:0012:6000000:cdMin': CD_MIN_LAMINAR,
@@ -38,9 +30,6 @@ export const KNOWN_DEVIATIONS: Readonly<Record<string, string>> = {
     'Re 5.7e6 (ratio 1.053 vs 1.111). The same law matches 4412 and 0006.',
 
   /* ----- 2D vs NeuralFoil ----- */
-  '2d-nf:0012:3000000:liftSlopePerDeg': LIFT_SLOPE,
-  '2d-nf:0012:6000000:liftSlopePerDeg': LIFT_SLOPE,
-  '2d-nf:2412:3000000:liftSlopePerDeg': LIFT_SLOPE,
   ...Object.fromEntries(
     ['0006', '0012', '2412', '4412'].flatMap((s) =>
       ['3000000', '6000000', '9000000'].map((re) => [`2d-nf:${s}:${re}:cdMin`, CD_MIN_LAMINAR]),
@@ -61,15 +50,13 @@ export const KNOWN_DEVIATIONS: Readonly<Record<string, string>> = {
   '2d-nf:0006:9000000:clMax': XFOIL_THIN,
 
   /* ----- 3D vs experiment ----- */
-  '3d-exp:RM-L8D29 35deg AR6:alphaStall':
-    'Strip stall with the empirical cos^0.75(sweep) cl_max factor: the swept wing stalls at ' +
-    '15 deg and CL 1.06 instead of 19 deg and 1.27. Spanwise boundary-layer flow, which delays ' +
-    'the inboard stall of a real swept wing, is not modelled.',
   '3d-exp:RM-L50F16 45deg AR6:CLalpha':
     '6 % section, 45 deg sweep: the model slope is 11 % above the figure value (read to about ' +
-    '+-4 %); half of it is the steep 2D slope (see the lift-slope deviation).',
+    '+-4 %). The 2D slope of the 6 % stand-in now matches the NACA 0006 tunnel slope within 2 %, ' +
+    'so the gap is not the 2D slope. Not resolved: candidates are the 4-digit stand-in for the ' +
+    "wing's 65A006 section and the figure-read reference itself.",
   '3d-exp:RM-L50F16 45deg AR6:CLmax':
     'On this thin, highly swept wing a leading-edge separation vortex carries the lift from CL ' +
     '0.35 to CLmax 1.02 (vortex lift). The model has no vortex lift: its strips stall like 2D ' +
-    'sections and CLmax is 0.54.',
+    'sections and CLmax is 0.53.',
 };

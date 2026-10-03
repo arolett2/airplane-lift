@@ -256,10 +256,10 @@ describe('lesson claims hold in the tunnel (real solvers)', { timeout: 120_000 }
       expect(s.wing.washoutDeg).toBe(0);
       expect(at(s).stall.any).toBe(false); // the person raises the angle themselves
       const plain = firstStall(s.wing, s.flow, s.flow.alphaDeg)!;
-      const four = firstStall({ ...s.wing, washoutDeg: 4 }, s.flow, s.flow.alphaDeg)!;
+      const five = firstStall({ ...s.wing, washoutDeg: 5 }, s.flow, s.flow.alphaDeg)!;
       const six = firstStall({ ...s.wing, washoutDeg: 6 }, s.flow, s.flow.alphaDeg)!;
       expect(plain.meanEta).toBeGreaterThan(0.7);
-      expect(four.meanEta).toBeLessThan(plain.meanEta - 0.1);
+      expect(five.meanEta).toBeLessThan(plain.meanEta - 0.1);
       expect(six.meanEta).toBeLessThan(plain.meanEta - 0.1);
       expect(six.alphaDeg).toBeGreaterThan(plain.alphaDeg);
     });

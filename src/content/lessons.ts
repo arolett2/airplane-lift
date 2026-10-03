@@ -155,7 +155,7 @@ export const LESSONS: readonly Lesson[] = [
         body: `
 <p>So far we have watched from the wing, with the wind streaming past. Switch the cross-section to the <strong>Air's view</strong>. The wind is taken away, and the arrows show only what the passing wing does to the still air (they are exaggerated; the key gives their scale).</p>
 <p>The air <strong>circulates</strong> around the wing: lifted ahead of it, pulled back over the top, pushed forward underneath, and thrown down behind. This swirl is called <strong>circulation</strong>, and its strength is what sets the lift.</p>
-<p>The Numbers card counts the result: this wing throws about <strong>6 tonnes of air downward every second</strong>, at about <strong>3 m/s</strong>. Pushing that much air down is what pushes the wing up. (That figure is an estimate from momentum theory.)</p>`,
+<p>The Numbers card counts the result: this wing throws about <strong>6 tonnes of air downward every second</strong>, at about <strong>3 m/s</strong> (11 km/h, or 6 knots). Pushing that much air down is what pushes the wing up. (That figure is an estimate from momentum theory.)</p>`,
         tryIt:
           'Raise the angle of attack: the circulation grows, and so do the tonnes of air thrown down and the lift. Then try a negative angle and see everything reverse.',
         apply: {

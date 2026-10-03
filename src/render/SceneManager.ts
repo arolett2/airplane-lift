@@ -141,7 +141,7 @@ export class SceneManager implements SceneManagerApi {
   private readonly tween = new CameraTween();
   private readonly resizeObserver: ResizeObserver | null;
   private readonly background: THREE.CanvasTexture | null;
-  private readonly envTarget: THREE.WebGLRenderTarget;
+  private envTarget: THREE.WebGLRenderTarget;
   private readonly keyLight: THREE.DirectionalLight;
 
   private frameCallbacks: FrameCallback[] = [];
@@ -223,12 +223,11 @@ export class SceneManager implements SceneManagerApi {
 
     // Soft studio reflections so the metallic wing has something to reflect. RoomEnvironment is
     // authored Y-up; rotate it so its "ceiling" is our +Z.
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    const room = new RoomEnvironment();
-    this.envTarget = pmrem.fromScene(room, 0.04);
-    room.dispose();
-    pmrem.dispose();
+    this.envTarget = this.renderEnvironment();
     this.scene.environment = this.envTarget.texture;
+    // A restored WebGL context comes back without render-target contents (three.js re-uploads
+    // only textures that keep their image), so the reflections must be rendered again.
+    canvas.addEventListener('webglcontextrestored', this.onContextRestored);
     this.scene.environmentIntensity = 0.6;
     this.scene.environmentRotation.set(Math.PI / 2, 0, 0);
 
@@ -362,6 +361,7 @@ export class SceneManager implements SceneManagerApi {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.renderer.domElement.removeEventListener('webglcontextrestored', this.onContextRestored);
     this.renderer.setAnimationLoop(null);
     this.resizeObserver?.disconnect();
     this.controls.removeEventListener('start', this.onControlStart);
@@ -503,6 +503,24 @@ export class SceneManager implements SceneManagerApi {
         : this.camera.fov + Math.sign(diff) * step,
     );
   }
+
+  /** Render the studio environment map used for reflections (PMREM, cube-UV render target). */
+  private renderEnvironment(): THREE.WebGLRenderTarget {
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const room = new RoomEnvironment();
+    const target = pmrem.fromScene(room, 0.04);
+    room.dispose();
+    pmrem.dispose();
+    return target;
+  }
+
+  private readonly onContextRestored = (): void => {
+    if (this.disposed) return;
+    const old = this.envTarget;
+    this.envTarget = this.renderEnvironment();
+    this.scene.environment = this.envTarget.texture;
+    old.dispose();
+  };
 
   /** The current shot framed for the visible region (vertical fov and aspect of that region). */
   private shotPose(): CameraPose {

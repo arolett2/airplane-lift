@@ -256,3 +256,40 @@ export function writeStored(key: string, value: string): void {
 export function prefersReducedMotion(): boolean {
   return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
+
+/**
+ * Scroll `el` into view inside its nearest scrollable panel ONLY — never the page or the app
+ * shell. Does nothing when that panel is not on screen (e.g. a closed drawer or bottom sheet),
+ * which is exactly when the browser's own scrollIntoView would drag the whole app off-screen.
+ */
+export function scrollWithinPanel(el: HTMLElement, smooth = false): void {
+  let panel = el.parentElement;
+  while (panel) {
+    const style = getComputedStyle(panel);
+    if (/(auto|scroll)/.test(style.overflowY) && panel.scrollHeight > panel.clientHeight) break;
+    panel = panel.parentElement;
+  }
+  if (!panel || panel === document.body || panel === document.documentElement) return;
+  const box = panel.getBoundingClientRect();
+  const onScreen =
+    box.width > 0 && box.height > 0 && box.bottom > 0 && box.top < window.innerHeight;
+  if (!onScreen) return;
+  const r = el.getBoundingClientRect();
+  let delta = 0;
+  if (r.top < box.top) delta = r.top - box.top - 8;
+  else if (r.bottom > box.bottom) delta = Math.min(r.bottom - box.bottom + 8, r.top - box.top - 8);
+  if (delta === 0) return;
+  panel.scrollTo({ top: panel.scrollTop + delta, behavior: smooth ? 'smooth' : 'auto' });
+}
+
+/** Keep a full-viewport container pinned: programmatic scrolls of it are undone at once. */
+export function pinScroll(el: HTMLElement | Element): () => void {
+  const reset = () => {
+    if (el.scrollTop !== 0 || el.scrollLeft !== 0) {
+      el.scrollTop = 0;
+      el.scrollLeft = 0;
+    }
+  };
+  el.addEventListener('scroll', reset);
+  return () => el.removeEventListener('scroll', reset);
+}

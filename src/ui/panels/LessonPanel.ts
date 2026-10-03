@@ -23,6 +23,7 @@ import type { Store } from '../../state/store';
 import { applyLessonUpTo } from '../../content/applyStep';
 import { GLOSSARY, LESSONS } from '../../content/lessons';
 import type { Lesson } from '../../content/types';
+import { scrollWithinPanel } from '../dom';
 
 export const LESSON_STORAGE_KEY = 'airplane-lift:lessons:v1';
 export const HIGHLIGHT_CLASS = 'is-highlighted';
@@ -260,9 +261,7 @@ export class LessonPanel {
   private pointAtSection(): void {
     const card = document.querySelector<HTMLElement>('[data-card="section"]');
     if (!card) return;
-    if (typeof card.scrollIntoView === 'function') {
-      card.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-    }
+    scrollWithinPanel(card, true);
     card.classList.add(ATTENTION_CLASS);
     clearTimeout(this.attentionTimer);
     this.attentionTimer = setTimeout(() => card.classList.remove(ATTENTION_CLASS), ATTENTION_MS);
@@ -499,9 +498,7 @@ export class LessonPanel {
     }
     if (scroll) {
       const first = this.highlighted.values().next().value as HTMLElement | undefined;
-      if (first && typeof first.scrollIntoView === 'function') {
-        first.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      }
+      if (first) scrollWithinPanel(first);
     }
   }
 

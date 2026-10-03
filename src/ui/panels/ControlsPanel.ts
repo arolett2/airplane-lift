@@ -34,7 +34,7 @@ import { createSlider } from '../components/slider';
 import type { SliderControl } from '../components/slider';
 import { createTipDevicePicker } from '../components/tipDevicePicker';
 import { createToggle } from '../components/toggle';
-import { createFrameThrottle, h, prefersReducedMotion, setHidden } from '../dom';
+import { createFrameThrottle, h, prefersReducedMotion, scrollWithinPanel, setHidden } from '../dom';
 import type { FrameThrottle } from '../dom';
 
 /* ------------------------------------------------------------------------------------------ */
@@ -663,10 +663,7 @@ export class ControlsPanel {
           if (section && !section.isOpen()) section.set(true);
           node = node.parentElement;
         }
-        target.scrollIntoView?.({
-          block: 'nearest',
-          behavior: prefersReducedMotion() ? 'auto' : 'smooth',
-        });
+        scrollWithinPanel(target, !prefersReducedMotion());
       }
     });
     this.observer.observe(this.root, {

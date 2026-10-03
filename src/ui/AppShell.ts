@@ -16,7 +16,7 @@ import { createCollapsible } from './components/collapsible';
 import type { CollapsibleControl } from './components/collapsible';
 import { icon } from './components/icons';
 import type { IconName } from './components/icons';
-import { Disposables, h } from './dom';
+import { Disposables, h, pinScroll } from './dom';
 import { TOAST_EVENT } from './panels/TopBar';
 import './styles/tokens.css';
 import './styles/main.css';
@@ -159,6 +159,15 @@ export function createAppShell(root: HTMLElement): AppShell {
     toasts,
   );
   root.replaceChildren(shell);
+  // The app is a fixed full-viewport layout: nothing should ever scroll the page or the shell
+  // itself (browsers will, e.g. to reveal a control inside a closed bottom sheet), so undo it.
+  disposables.add(pinScroll(root));
+  disposables.add(pinScroll(shell));
+  const resetPage = () => {
+    if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
+  };
+  window.addEventListener('scroll', resetPage);
+  disposables.add(() => window.removeEventListener('scroll', resetPage));
 
   // State helpers ----------------------------------------------------------------------------
   const closePanels = () => {

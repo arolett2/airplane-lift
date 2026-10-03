@@ -250,7 +250,8 @@
 /* A calm note, not a warning: normal situations worth explaining (e.g. transonic cruise). */
 .banner--info {
   position: relative;
-  padding-left: calc(var(--space-3) + 14px);
+  padding: 8px var(--space-3) 8px calc(var(--space-3) + 14px);
+  font-size: var(--fs-xs);
   background: rgba(94, 200, 255, 0.07);
   border-color: rgba(94, 200, 255, 0.28);
   border-width: 1px;
@@ -260,7 +261,7 @@
   content: '';
   position: absolute;
   left: var(--space-3);
-  top: 16px;
+  top: 14px;
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -348,7 +349,7 @@
 
 .metric--lift > .metric__value .metric__number {
   color: var(--lift);
-  font-size: 2.25rem;
+  font-size: 2.125rem;
   line-height: 1.05;
 }
 
@@ -367,14 +368,24 @@
 
 /* ---- Lift versus weight gauge (inside the lift card) ---- */
 
+/* Title and percentage share one row; the bar and the sentence run full width below. */
 .metric--gauge {
   --gauge-color: var(--lift);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: var(--space-2);
   margin-top: var(--space-2);
   padding: var(--space-2) 0 0;
   background: none;
   border: 0;
   border-top: 1px solid var(--border);
   border-radius: 0;
+}
+
+.metric--gauge > .gauge,
+.metric--gauge > .metric__sub {
+  grid-column: 1 / -1;
 }
 
 .metric--gauge[data-level='low'] {
@@ -386,7 +397,7 @@
 }
 
 .metric--gauge .metric__value {
-  margin-top: 1px;
+  justify-self: end;
 }
 
 .metric--gauge .metric__number {

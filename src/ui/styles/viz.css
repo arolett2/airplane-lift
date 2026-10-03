@@ -539,7 +539,7 @@
   }
 
   .viz-section.is-large > .viz-section-stage {
-    height: min(52vh, 420px);
+    height: min(44vh, 340px);
   }
 }
 
@@ -949,6 +949,11 @@
 @media (max-width: 640px) {
   .viz-compare {
     padding: 8px;
+  }
+
+  /* The planform drawing shrinks to about half size: keep its labels readable. */
+  .viz-planform text {
+    font-size: 19px;
   }
 
   .viz-compare-card {

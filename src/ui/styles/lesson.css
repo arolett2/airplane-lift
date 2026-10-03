@@ -348,10 +348,21 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 12px -18px -14px;
-  padding: 8px 18px 14px;
-  /* Stays reachable when a long step scrolls; matches the card behind it. */
-  background: linear-gradient(transparent, var(--surface-solid, #0b111d) 30%);
+  margin: 10px -18px -14px;
+  padding: 6px 18px 14px;
+  /* Stays reachable when a long step scrolls; a short fade above it hints at more text. */
+  background: var(--surface-solid, #0b111d);
+}
+
+.lesson-nav::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 18px;
+  pointer-events: none;
+  background: linear-gradient(transparent, var(--surface-solid, #0b111d));
 }
 
 .lesson-prev,
@@ -488,6 +499,11 @@
   .lesson-panel {
     padding: 12px 14px 14px;
     max-height: 66vh;
+  }
+
+  .lesson-nav {
+    margin-inline: -14px;
+    padding-inline: 14px;
   }
 
   .lesson-kicker {

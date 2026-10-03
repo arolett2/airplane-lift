@@ -632,7 +632,10 @@ export class SectionView {
   }
 
   private fit(width: number, height: number, alpha: number): ViewTransform {
-    return fitView(width, height, alpha, this.mode === 'large' ? LARGE_VIEW : CARD_VIEW);
+    // The roomier framing only pays off on a wide picture; a narrow (phone) one keeps the
+    // airfoil as big as the card does.
+    const roomy = this.mode === 'large' && width >= 560;
+    return fitView(width, height, alpha, roomy ? LARGE_VIEW : CARD_VIEW);
   }
 
   private setSize(width: number, height: number, force = false): void {

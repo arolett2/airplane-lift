@@ -187,12 +187,7 @@ export class ReadoutPanel {
     );
     this.gaugeCard.append(
       h('h3', { class: 'metric__title' }, 'Lift compared with weight'),
-      h(
-        'div',
-        { class: 'metric__value' },
-        this.gaugeValue,
-        h('span', { class: 'metric__unit' }, 'of weight'),
-      ),
+      h('div', { class: 'metric__value' }, this.gaugeValue),
       this.gaugeBar,
       this.gaugeText,
     );
@@ -392,12 +387,13 @@ export class ReadoutPanel {
     this.gaugeFill.style.setProperty('--fill', `${clamp(ratio / GAUGE_MAX_RATIO, 0, 1) * 100}%`);
     this.gaugeBar.setAttribute('aria-valuenow', String(clamp(pct, 0, GAUGE_MAX_RATIO * 100)));
     this.gaugeBar.setAttribute('aria-valuetext', `${pct}% of the aircraft's weight`);
+    const name = preset?.shortName ?? 'aircraft';
     this.gaugeText.textContent =
       state_ === 'low'
-        ? `The ${preset?.shortName ?? 'aircraft'} weighs about ${weight}. Not enough lift to stay up: it would sink.`
+        ? `The ${name} weighs about ${weight}: too little lift, it would sink.`
         : state_ === 'ok'
-          ? `Matches the ${preset?.shortName ?? 'aircraft'}'s weight of about ${weight}: steady, level flight.`
-          : `More than the ${preset?.shortName ?? 'aircraft'}'s weight of about ${weight}: it would climb.`;
+          ? `Matches the ${name}'s ${weight}: steady, level flight.`
+          : `More than the ${name}'s ${weight}: it would climb.`;
   }
 
   private renderEngineer(

@@ -120,6 +120,18 @@ export const TOLERANCES = {
       'Swept-wing CLmax depends on spanwise boundary-layer flow and tip stall, which a strip ' +
       'model with an empirical sweep factor approximates; 20 % is DATCOM-level accuracy.',
   },
+  alphaStall3dExperiment: {
+    kind: 'abs',
+    value: 3,
+    why:
+      "The angle of a swept wing's CLmax sits on a flat, rounded peak; 3 deg is the 2D " +
+      "stall-angle tolerance plus the tunnel's 1 deg angle correction uncertainty.",
+  },
+  qualitative: {
+    kind: 'abs',
+    value: 0,
+    why: 'Yes/no behaviour (for example where stall starts): the model must reproduce it.',
+  },
   /* --------------------------------- Aircraft level -------------------------------------- */
   cruiseCl: {
     kind: 'rel',

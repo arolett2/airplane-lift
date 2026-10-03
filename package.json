@@ -20,7 +20,8 @@
     "test:watch": "vitest",
     "coverage": "vitest run --coverage",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test",
-    "snapshot": "node scripts/snapshot.mjs"
+    "snapshot": "node scripts/snapshot.mjs",
+    "benchmark": "node scripts/benchmarks/run.mjs"
   },
   "dependencies": {
     "three": "^0.186.1"

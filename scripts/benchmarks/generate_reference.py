@@ -104,6 +104,30 @@ def base_wing_sections(cfg: dict) -> list[dict]:
     ]
 
 
+def refined_sections(cfg: dict, pieces: int = 8) -> list[dict]:
+    """The sections with every segment split into `pieces`, everything interpolated linearly in
+    span. The app interpolates twist linearly in y between sections; AVL instead interpolates
+    chord * incidence (a ruled loft), which on a tapered wing with washout changes the twist
+    distribution itself (3 deg washout, taper 0.4: CL at alpha 0 differs by 35 %). Dense sections
+    make both codes see the same twist, so the comparison tests the lattice alone. (AVL needs
+    its spanwise vortices set on the SURFACE line for this: per-section counts of one vortex per
+    interval gave e > 1 on a planar wing.)"""
+    secs = base_wing_sections(cfg)
+    out = [secs[0]]
+    for a, b in zip(secs[:-1], secs[1:]):
+        for k in range(1, pieces + 1):
+            f = k / pieces
+            out.append(
+                {
+                    "le": [a["le"][i] + f * (b["le"][i] - a["le"][i]) for i in range(3)],
+                    "chord": a["chord"] + f * (b["chord"] - a["chord"]),
+                    "twist": a["twist"] + f * (b["twist"] - a["twist"]),
+                    "roll": a["roll"],
+                }
+            )
+    return out
+
+
 def reference_quantities(cfg: dict) -> dict:
     cr, taper, b = cfg["rootChord"], max(0.01, cfg["taperRatio"]), cfg["span"]
     s = b * cr * (1 + taper) / 2
@@ -181,7 +205,7 @@ def write_avl_file(path: Path, cfg: dict, nchord: int, nspan: int, mach: float) 
         "YDUPLICATE",
         "0.0",
     ]
-    for sec in base_wing_sections(cfg):
+    for sec in refined_sections(cfg):
         x, y, z = sec["le"]
         lines += [
             "SECTION",
@@ -192,7 +216,7 @@ def write_avl_file(path: Path, cfg: dict, nchord: int, nspan: int, mach: float) 
     path.write_text("\n".join(lines) + "\n")
 
 
-def run_avl(cfg: dict, mach: float, nchord: int = 16, nspan: int = 48) -> dict:
+def run_avl(cfg: dict, mach: float, nchord: int = 16, nspan: int = 96) -> dict:
     from optvl import OVLSolver
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -235,7 +259,7 @@ def run_asb_vlm(cfg: dict) -> dict:
     af = asb.Airfoil(name="bench", coordinates=naca4_coordinates(a["camber"], a["camberPos"], a["thickness"], 80))
     xsecs = [
         asb.WingXSec(xyz_le=sec["le"], chord=sec["chord"], twist=math.degrees(sec["twist"]), airfoil=af)
-        for sec in base_wing_sections(cfg)
+        for sec in refined_sections(cfg)
     ]
     wing = asb.Wing(name="w", symmetric=True, xsecs=xsecs)
     plane = asb.Airplane(
@@ -246,7 +270,7 @@ def run_asb_vlm(cfg: dict) -> dict:
         vlm = asb.VortexLatticeMethod(
             airplane=plane,
             op_point=asb.OperatingPoint(velocity=10, alpha=al),
-            spanwise_resolution=12,
+            spanwise_resolution=3,
             chordwise_resolution=12,
         )
         r = vlm.run()
@@ -262,7 +286,7 @@ def generate_vlm() -> dict:
         machs = [0.0, 0.785] if key == "b737-800-wing" else [0.0]
         for mach in machs:
             fine = run_avl(cfg, mach)
-            coarse = run_avl(cfg, mach, nchord=8, nspan=24)
+            coarse = run_avl(cfg, mach, nchord=8, nspan=48)
             conv = abs(fine["CLalphaPerRad"] / coarse["CLalphaPerRad"] - 1)
             case = {
                 "id": key if mach == 0 else f"{key}-m{mach:g}",
@@ -273,15 +297,15 @@ def generate_vlm() -> dict:
                 "sections": base_wing_sections(cfg),
                 "avl": fine,
                 "avlMeshConvergence": {
-                    "fine": "16 chordwise x 48 spanwise (cosine) per semispan",
-                    "coarse": "8 x 24",
+                    "fine": "16 chordwise x 96 spanwise per semispan, both cosine",
+                    "coarse": "8 x 48",
                     "CLalphaRelativeChange": conv,
                 },
             }
-            # AeroSandbox 4.2 returns nonsense (CL_alpha ~ 46/rad) for the 737 wing: its thin-surface
-            # mesher mishandles a cambered section on a kinked planform with dihedral (each feature
-            # alone is fine). It is only the second code, so it is left out for that case.
-            if mach == 0 and key != "b737-800-wing":
+            # AeroSandbox is a second, independent lattice code (not asserted against; reported).
+            # It must get the refined sections: on the 737 wing's two-segment loft (yehudi kink,
+            # dihedral, camber) AeroSandbox 4.2's own subdivision returned CL_alpha ~ 46/rad.
+            if mach == 0:
                 case["aerosandbox"] = run_asb_vlm(cfg)
             cases.append(case)
             print(f"{case['id']:24s} AVL CLa={fine['CLalphaPerRad']:.4f}/rad  e={fine['points'][2]['e']:.4f}  mesh dCLa={conv:.2%}")

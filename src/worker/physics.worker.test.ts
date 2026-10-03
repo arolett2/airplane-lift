@@ -118,6 +118,15 @@ describe('handleRequest (compute)', () => {
     expect(posted.every((p) => p.msg.requestId === 1)).toBe(true);
   });
 
+  it('reports how long each stage took in the done message', async () => {
+    const { posted, post } = recorder();
+    await handleRequest(request(1, ['aero', 'polar']), post, never, createWorkerState());
+    const done = posted.at(-1)!.msg;
+    if (done.type !== 'done') throw new Error('expected done');
+    expect(Object.keys(done.timingsMs ?? {}).sort()).toEqual(['aero', 'polar']);
+    for (const ms of Object.values(done.timingsMs ?? {})) expect(ms).toBeGreaterThanOrEqual(0);
+  });
+
   it('streams each stage as soon as it is ready, yielding in between', async () => {
     const { posted, post } = recorder();
     const done = handleRequest(request(1, [...STAGE_ORDER]), post, never, createWorkerState());

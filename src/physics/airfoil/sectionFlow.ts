@@ -32,6 +32,12 @@ export interface SectionFlowInput {
   alphaGeometric: number; // rad (root alpha + local twist + flap-free incidence)
   alphaInduced: number; // rad
   reynolds: number;
+  /**
+   * Compressibility factor on the reported lift and pressures (default 1). The wing solver
+   * passes Prandtl-Glauert's 1/beta so `cl`, `cp` and `fieldCl` match the 3D strip at high
+   * Mach; the drawn velocity field and streamlines stay the incompressible-equivalent flow.
+   */
+  liftScale?: number;
 }
 
 export interface SectionFlowOptions {
@@ -587,6 +593,8 @@ export function computeSectionFlow(
   options: SectionFlowOptions = {},
 ): SectionFlowDetailed {
   const re = Number.isFinite(input.reynolds) && input.reynolds > 0 ? input.reynolds : 6e6;
+  const ls = input.liftScale;
+  const liftScale = ls !== undefined && Number.isFinite(ls) && ls > 0 ? ls : 1;
   const alphaE = input.alphaGeometric - input.alphaInduced;
   const polar = model.polar as Partial<ViscousSectionPolar> & typeof model.polar;
   const cl = polar.cl(alphaE, re);
@@ -893,15 +901,15 @@ export function computeSectionFlow(
     alphaGeometric: input.alphaGeometric,
     alphaInduced: input.alphaInduced,
     contour: Float32Array.from(model.geometry.coords),
-    cp: model.chordwiseCp(alphaE, re, 41, cl),
-    cl,
+    cp: model.chordwiseCp(alphaE, re, 41, cl * liftScale),
+    cl: cl * liftScale,
     stalled,
     attachedFraction,
     stagnation: [solution.stagnation[0], solution.stagnation[1]],
     grid: { xMin: W.xMin, xMax: W.xMax, yMin: W.yMin, yMax: W.yMax, nx, ny, uv, inside },
     streamlines,
     separated,
-    fieldCl: solution.cl,
+    fieldCl: solution.cl * liftScale,
   };
 }
 

@@ -327,6 +327,7 @@ import {
   POLAR_ALPHA_MIN_DEG,
   prandtlGlauertFactor,
   stableKey,
+  stallPeakIndex,
   stripGeometricAlpha,
 } from './aero';
 
@@ -544,14 +545,26 @@ describe('computeAero', () => {
     expect(aero.warnings.some((w) => w.includes('Stall') && w.includes('25%'))).toBe(true);
   });
 
-  it('warns about compressibility above the critical Mach number', () => {
+  it('warns about compressibility only past drag divergence and beyond the model range', () => {
     const flow = { alphaDeg: 2, airspeed: 280, altitude: 11000 };
     const { aero } = computeAero(DEFAULT_WING, flow, 1, createAeroCache());
     expect(aero.mach).toBeGreaterThan(0.9);
+    expect(aero.mach).toBeGreaterThan(aero.machDragDivergence);
     expect(aero.CDw).toBeGreaterThan(0);
     expect(aero.CD).toBeCloseTo(aero.CD0 + aero.CDi + aero.CDw, 14);
     expect(aero.warnings.some((w) => w.includes('compressibility'))).toBe(true);
-    expect(aero.warnings.some((w) => w.includes('critical Mach'))).toBe(true);
+    expect(aero.warnings.some((w) => w.includes('drag divergence'))).toBe(true);
+  });
+
+  it('stays calm between the critical and the drag-divergence Mach number', () => {
+    // A swept supercritical wing at Mach ~0.78: weak shocks, a little wave drag, no warning.
+    const wing = { ...DEFAULT_WING, sweepDeg: 25, supercritical: true };
+    const flow = { alphaDeg: 2, airspeed: 231, altitude: 11000 };
+    const { aero } = computeAero(wing, flow, 1, createAeroCache());
+    expect(aero.mach).toBeGreaterThan(aero.machCritical);
+    expect(aero.mach).toBeLessThan(aero.machDragDivergence);
+    expect(aero.CDw).toBeGreaterThan(0);
+    expect(aero.warnings).toEqual([]);
   });
 
   it('warns about very low Reynolds numbers', () => {
@@ -742,5 +755,20 @@ describe('computeSection', () => {
     expect(rootIn.eta).toBe(0);
     expect(tipIn.alphaInduced).toBeCloseTo(alpha - sol.stripAlphaEffective[3]!, 12);
     expect(rootIn.alphaInduced).toBeCloseTo(alpha - sol.stripAlphaEffective[0]!, 12);
+  });
+});
+
+describe('stallPeakIndex', () => {
+  it('finds the first peak that the next few points do not exceed', () => {
+    expect(stallPeakIndex([0, 0.5, 1, 1.2, 1.1, 0.9, 0.8, 0.85, 0.9, 1.3])).toBe(3);
+  });
+
+  it('skips a small wiggle that is followed by more lift', () => {
+    expect(stallPeakIndex([0, 0.5, 0.6, 0.59, 0.8, 1.0, 0.9, 0.8, 0.7, 0.6])).toBe(5);
+  });
+
+  it('falls back to the highest point when the curve never turns down', () => {
+    expect(stallPeakIndex([0, 0.2, 0.4, 0.6])).toBe(3);
+    expect(stallPeakIndex([0.6, 0.4, 0.2])).toBe(0);
   });
 });

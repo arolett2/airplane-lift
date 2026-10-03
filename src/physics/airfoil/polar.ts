@@ -45,6 +45,67 @@ export interface ViscousSectionPolar extends SectionPolar {
   clLinear(alpha: number): number;
   /** True beyond the positive or negative stall angle. */
   isStalled(alpha: number, reynolds: number): boolean;
+  /** The lift limit this polar was built with (NO_LIFT_LIMIT for the plain section). */
+  readonly liftLimit: Required<LiftLimit>;
+  /**
+   * The same section with its maximum lift reduced (see LiftLimit): clMax and |clMin| become
+   * softMin(scale * clMax, cap), and the stall angles, stall shape, drag rise and separation move
+   * with them. Lift slope, zero-lift angle, flap increment and pitching moment are unchanged.
+   * Results are memoised per limit, so calling this every solve is cheap.
+   */
+  withLiftLimit(limit: LiftLimit): ViscousSectionPolar;
+}
+
+/**
+ * A reduction of a section's maximum lift, in the polar's own (incompressible) units:
+ *   clMax_limited = softMin(scale * clMax(Re), cap)
+ * `scale` (0..1] models effects that shrink the whole stall margin (sweep); `cap` an absolute
+ * ceiling that does not depend on Reynolds number (shock-induced separation at high Mach).
+ * The soft minimum (a p-norm, LIFT_LIMIT_SOFTNESS) keeps the limit smooth when both compete.
+ */
+export interface LiftLimit {
+  scale: number;
+  cap: number;
+  /**
+   * Factor on the post-stall (flat-plate) lift, default 1. The wing solver divides every polar
+   * lift by the Prandtl-Glauert beta, but fully separated flow gets no such boost: passing beta
+   * here keeps the deep-stall lift at its plain flat-plate value.
+   */
+  flatPlateScale?: number;
+}
+
+/** The identity limit: the plain section. */
+export const NO_LIFT_LIMIT: LiftLimit = Object.freeze({
+  scale: 1,
+  cap: Infinity,
+  flatPlateScale: 1,
+});
+
+function normalizeLimit(limit: LiftLimit): Required<LiftLimit> {
+  const scale = Number.isFinite(limit.scale) && limit.scale > 0 ? limit.scale : 1;
+  const cap = limit.cap > 0 ? limit.cap : Infinity;
+  const fp = limit.flatPlateScale;
+  const flatPlateScale = fp !== undefined && Number.isFinite(fp) && fp > 0 ? fp : 1;
+  return { scale, cap, flatPlateScale };
+}
+
+/**
+ * Exponent p of the soft minimum (a^-p + b^-p)^(-1/p) used by LiftLimit. p = 4 rounds the
+ * corner where two limits cross (both equal => 0.84 of either) and leaves a limit that is twice
+ * as high only 0.4 % of influence, so low-speed sections are effectively untouched.
+ */
+export const LIFT_LIMIT_SOFTNESS = 4;
+
+/** Soft minimum of two positive numbers (p-norm with LIFT_LIMIT_SOFTNESS); Infinity-safe. */
+export function softMin(a: number, b: number): number {
+  if (!(b < Infinity)) return a;
+  if (!(a < Infinity)) return b;
+  if (a <= 0 || b <= 0) return Math.min(a, b);
+  const p = LIFT_LIMIT_SOFTNESS;
+  const m = Math.min(a, b);
+  // Factor out the smaller value for numerical safety: m * (1 + (m/M)^p)^(-1/p).
+  const r = m / Math.max(a, b);
+  return m * Math.pow(1 + Math.pow(r, p), -1 / p);
 }
 
 const DEG = Math.PI / 180;
@@ -123,6 +184,24 @@ function reynoldsFactor(re: number): number {
   return clamp(Math.pow(sanitizeRe(re) / 6e6, 0.1), 0.75, 1.1);
 }
 
+/** Reynolds number (on chord) where a flat-plate boundary layer turns turbulent. */
+export const TRANSITION_REYNOLDS = 5e5;
+
+/**
+ * Flat-plate skin-friction coefficient with a laminar run: Blasius (1.328 / sqrt(Re)) while the
+ * whole chord is laminar, then Prandtl-Schlichting's mixed formula 0.074 Re^-0.2 - A / Re, where
+ * A removes the turbulent friction of the laminar part ahead of transition at
+ * TRANSITION_REYNOLDS (A ~ 1740). It matters for small, slow wings (a glider at Re ~1.5 million
+ * has a third of its chord laminar: 27 % less friction than fully turbulent) and fades out on
+ * airliners (Re ~30 million: 2 %).
+ */
+export function skinFriction(re: number): number {
+  const rt = TRANSITION_REYNOLDS;
+  if (re <= rt) return 1.328 / Math.sqrt(re);
+  const a = rt * (0.074 * Math.pow(rt, -0.2) - 1.328 / Math.sqrt(rt));
+  return 0.074 * Math.pow(re, -0.2) - a / re;
+}
+
 function sanitizeRe(re: number): number {
   return Number.isFinite(re) ? clamp(re, 1e4, 1e10) : 6e6;
 }
@@ -179,123 +258,149 @@ export function createSectionPolar(
   const cmB = solver.solve(inviscidA0 + 6 * DEG).cmQuarter;
   const cmSlope = (cmB - cmA) / (6 * DEG);
 
-  // ---- Reynolds-dependent stall shape (one-entry cache: strips call repeatedly) --------
-  let cachedRe = NaN;
-  let clMaxRe = 0;
-  let clMinRe = 0;
-  let xsPos = 0; // x = alpha - alpha0 of the positive stall peak
-  let xsNeg = 0; // (negative) x of the negative stall minimum
-  function shape(re: number) {
-    if (re === cachedRe) return;
-    cachedRe = re;
-    const f = reynoldsFactor(re);
-    clMaxRe = Math.max(
-      0.3,
-      (clMaxSym + camberBonus) * f + 0.6 * flapDeltaCl + (options.slat ? 0.7 : 0),
-    );
-    clMinRe = Math.min(-0.3, -(clMaxSym - camberBonus) * f + 0.3 * flapDeltaCl);
-    xsPos = clMaxRe / a + 0.5 * roundWidth;
-    xsNeg = clMinRe / a - 0.5 * roundWidth;
-  }
+  const limited = new Map<string, ViscousSectionPolar>();
 
-  /** Lift with stall, as a function of x = alpha - alpha0 (alpha itself for the flat plate). */
-  function liftCurve(alpha: number, x: number): number {
-    const fp = Math.sin(2 * alpha); // flat plate: 2 sin a cos a
-    if (x >= 0) {
-      if (x <= xsPos - roundWidth) return a * x;
-      if (x <= xsPos) {
-        const d = xsPos - x;
-        return clMaxRe - (a / (2 * roundWidth)) * d * d;
+  function assemble(limit: Required<LiftLimit>): ViscousSectionPolar {
+    const limitScale = limit.scale;
+    const limitCap = limit.cap;
+    const fpScale = limit.flatPlateScale;
+    // ---- Reynolds-dependent stall shape (one-entry cache: strips call repeatedly) --------
+    let cachedRe = NaN;
+    let clMaxRe = 0;
+    let clMinRe = 0;
+    let xsPos = 0; // x = alpha - alpha0 of the positive stall peak
+    let xsNeg = 0; // (negative) x of the negative stall minimum
+    function shape(re: number) {
+      if (re === cachedRe) return;
+      cachedRe = re;
+      const f = reynoldsFactor(re);
+      const clMaxPlain = Math.max(
+        0.3,
+        (clMaxSym + camberBonus) * f + 0.6 * flapDeltaCl + (options.slat ? 0.7 : 0),
+      );
+      const clMinPlain = Math.min(-0.3, -(clMaxSym - camberBonus) * f + 0.3 * flapDeltaCl);
+      // Lift limit (sweep, shock-induced separation); the 0.2 floor keeps a usable curve.
+      clMaxRe = Math.max(0.2, softMin(limitScale * clMaxPlain, limitCap));
+      clMinRe = -Math.max(0.2, softMin(-limitScale * clMinPlain, limitCap));
+      xsPos = clMaxRe / a + 0.5 * roundWidth;
+      xsNeg = clMinRe / a - 0.5 * roundWidth;
+    }
+
+    /** Lift with stall, as a function of x = alpha - alpha0 (alpha itself for the flat plate). */
+    function liftCurve(alpha: number, x: number): number {
+      const fp = fpScale * Math.sin(2 * alpha); // flat plate: 2 sin a cos a
+      if (x >= 0) {
+        if (x <= xsPos - roundWidth) return a * x;
+        if (x <= xsPos) {
+          const d = xsPos - x;
+          return clMaxRe - (a / (2 * roundWidth)) * d * d;
+        }
+        const d = x - xsPos;
+        const w = smoother(d / blendWidth);
+        if (w >= 1) return fp;
+        const remnant = clMaxRe - dropFrac * clMaxRe * (1 - Math.exp(-((d / dropWidth) ** 2)));
+        return (1 - w) * remnant + w * fp;
       }
-      const d = x - xsPos;
+      if (x >= xsNeg + roundWidth) return a * x;
+      if (x >= xsNeg) {
+        const d = x - xsNeg;
+        return clMinRe + (a / (2 * roundWidth)) * d * d;
+      }
+      const d = xsNeg - x;
       const w = smoother(d / blendWidth);
       if (w >= 1) return fp;
-      const remnant = clMaxRe - dropFrac * clMaxRe * (1 - Math.exp(-((d / dropWidth) ** 2)));
+      const remnant = clMinRe - dropFrac * clMinRe * (1 - Math.exp(-((d / dropWidth) ** 2)));
       return (1 - w) * remnant + w * fp;
     }
-    if (x >= xsNeg + roundWidth) return a * x;
-    if (x >= xsNeg) {
-      const d = x - xsNeg;
-      return clMinRe + (a / (2 * roundWidth)) * d * d;
+
+    /** Weight of the post-stall (flat-plate) drag model, 0 attached .. 1 deep stall. */
+    function dragBlend(x: number): number {
+      if (x >= 0) return smoother((x - (xsPos - 2 * DEG)) / (blendWidth + 2 * DEG));
+      return smoother((xsNeg + 2 * DEG - x) / (blendWidth + 2 * DEG));
     }
-    const d = xsNeg - x;
-    const w = smoother(d / blendWidth);
-    if (w >= 1) return fp;
-    const remnant = clMinRe - dropFrac * clMinRe * (1 - Math.exp(-((d / dropWidth) ** 2)));
-    return (1 - w) * remnant + w * fp;
+
+    const polar: ViscousSectionPolar = {
+      alphaZeroLift: alpha0,
+      liftSlope: a,
+      inviscidLiftSlope: inviscidSlope,
+      inviscidAlphaZeroLift: inviscidA0,
+      designCl,
+      flapDeltaCl,
+      liftLimit: limit,
+      withLiftLimit(next: LiftLimit): ViscousSectionPolar {
+        const n = normalizeLimit(next);
+        if (n.scale === 1 && n.cap === Infinity && n.flatPlateScale === 1) return plain;
+        const key = `${n.scale}|${n.cap}|${n.flatPlateScale}`;
+        let hit = limited.get(key);
+        if (!hit) {
+          hit = assemble(n);
+          limited.set(key, hit);
+          // A wing needs a handful of limits at a time (one per Mach number seen recently).
+          if (limited.size > 16) limited.delete(limited.keys().next().value!);
+        }
+        return hit;
+      },
+      clMax(re: number) {
+        shape(re);
+        return clMaxRe;
+      },
+      clMin(re: number) {
+        shape(re);
+        return clMinRe;
+      },
+      alphaStall(re: number) {
+        shape(re);
+        return alpha0 + xsPos;
+      },
+      alphaStallNegative(re: number) {
+        shape(re);
+        return alpha0 + xsNeg;
+      },
+      clLinear(alpha: number) {
+        return a * (alpha - alpha0);
+      },
+      isStalled(alpha: number, re: number) {
+        shape(re);
+        const x = alpha - alpha0;
+        return x > xsPos || x < xsNeg;
+      },
+      cl(alpha: number, re: number) {
+        shape(re);
+        return liftCurve(alpha, alpha - alpha0);
+      },
+      cd(alpha: number, re: number) {
+        shape(re);
+        const cf = skinFriction(sanitizeRe(re));
+        const friction = 2 * cf * (1 + 2 * t + 60 * t ** 4);
+        const x = alpha - alpha0;
+        const dcl = a * x - designCl;
+        const attached = friction + 0.0065 * dcl * dcl + flapDragDelta;
+        const s = Math.sin(alpha);
+        const flatPlate = 1.98 * s * s + friction;
+        const w = dragBlend(x);
+        return attached + w * (flatPlate - attached);
+      },
+      cm(alpha: number, re: number) {
+        shape(re);
+        const x = alpha - alpha0;
+        const attached = cmA + cmSlope * (alpha - inviscidA0);
+        // Deep stall: normal force 1.98 sin(a) acting progressively further aft (Viterna-style).
+        const separated = -1.98 * Math.sin(alpha) * (0.075 + (0.35 * Math.abs(alpha)) / Math.PI);
+        const w = dragBlend(x);
+        return attached + w * (separated - attached);
+      },
+      attachedFraction(alpha: number, re: number) {
+        shape(re);
+        const x = alpha - alpha0;
+        // Separation starts at the trailing edge ~2 deg before the cl peak and creeps forward.
+        const d = x >= 0 ? x - (xsPos - 2 * DEG) : xsNeg + 2 * DEG - x;
+        if (d <= 0) return 1;
+        return 0.1 + 0.9 * Math.exp(-((d / sepWidth) ** 2));
+      },
+    };
+    return polar;
   }
 
-  /** Weight of the post-stall (flat-plate) drag model, 0 attached .. 1 deep stall. */
-  function dragBlend(x: number): number {
-    if (x >= 0) return smoother((x - (xsPos - 2 * DEG)) / (blendWidth + 2 * DEG));
-    return smoother((xsNeg + 2 * DEG - x) / (blendWidth + 2 * DEG));
-  }
-
-  const polar: ViscousSectionPolar = {
-    alphaZeroLift: alpha0,
-    liftSlope: a,
-    inviscidLiftSlope: inviscidSlope,
-    inviscidAlphaZeroLift: inviscidA0,
-    designCl,
-    flapDeltaCl,
-    clMax(re: number) {
-      shape(re);
-      return clMaxRe;
-    },
-    clMin(re: number) {
-      shape(re);
-      return clMinRe;
-    },
-    alphaStall(re: number) {
-      shape(re);
-      return alpha0 + xsPos;
-    },
-    alphaStallNegative(re: number) {
-      shape(re);
-      return alpha0 + xsNeg;
-    },
-    clLinear(alpha: number) {
-      return a * (alpha - alpha0);
-    },
-    isStalled(alpha: number, re: number) {
-      shape(re);
-      const x = alpha - alpha0;
-      return x > xsPos || x < xsNeg;
-    },
-    cl(alpha: number, re: number) {
-      shape(re);
-      return liftCurve(alpha, alpha - alpha0);
-    },
-    cd(alpha: number, re: number) {
-      shape(re);
-      const r = sanitizeRe(re);
-      const cf = 0.074 * Math.pow(r, -0.2);
-      const friction = 2 * cf * (1 + 2 * t + 60 * t ** 4);
-      const x = alpha - alpha0;
-      const dcl = a * x - designCl;
-      const attached = friction + 0.0065 * dcl * dcl + flapDragDelta;
-      const s = Math.sin(alpha);
-      const flatPlate = 1.98 * s * s + friction;
-      const w = dragBlend(x);
-      return attached + w * (flatPlate - attached);
-    },
-    cm(alpha: number, re: number) {
-      shape(re);
-      const x = alpha - alpha0;
-      const attached = cmA + cmSlope * (alpha - inviscidA0);
-      // Deep stall: normal force 1.98 sin(a) acting progressively further aft (Viterna-style).
-      const separated = -1.98 * Math.sin(alpha) * (0.075 + (0.35 * Math.abs(alpha)) / Math.PI);
-      const w = dragBlend(x);
-      return attached + w * (separated - attached);
-    },
-    attachedFraction(alpha: number, re: number) {
-      shape(re);
-      const x = alpha - alpha0;
-      // Separation starts at the trailing edge ~2 deg before the cl peak and creeps forward.
-      const d = x >= 0 ? x - (xsPos - 2 * DEG) : xsNeg + 2 * DEG - x;
-      if (d <= 0) return 1;
-      return 0.1 + 0.9 * Math.exp(-((d / sepWidth) ** 2));
-    },
-  };
-  return polar;
+  const plain = assemble(normalizeLimit(NO_LIFT_LIMIT));
+  return plain;
 }

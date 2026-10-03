@@ -8,7 +8,9 @@
  *   - wing geometry, keyed by the wing config;
  *   - the VLM model (its factorised influence matrix), keyed by wing + Mach bucket (0.02), since
  *     Prandtl-Glauert makes the matrix Mach dependent;
- *   - the airfoil model of every strip (the airfoil module memoises too; this skips its lookup);
+ *   - the airfoil model of every strip (the airfoil module memoises too; this skips its lookup),
+ *     plus its lift-limited view for the current Mach number (sweep + buffet, see
+ *     compressibility.wingLiftLimit);
  *   - the last few coupled solutions + assembled results, keyed by wing + flow;
  *   - the polar sweep, keyed by wing + airspeed + altitude (it does not depend on alpha).
  */
@@ -23,7 +25,7 @@ import type {
   WingGeometry,
 } from './types';
 import type { FlowConditions, WingConfig } from '../state/params';
-import type { AirfoilKey, AirfoilModel } from './airfoil/index';
+import type { AirfoilKey, AirfoilModelInternal } from './airfoil/index';
 import type { CoupledSolution, StripPolarProvider, VlmModel, VlmStrip } from './wing/vlm';
 import { isaAtmosphere, reynoldsNumber } from './atmosphere';
 import { buildWingGeometry } from './wing/geometry';
@@ -32,7 +34,13 @@ import { getAirfoilModel } from './airfoil/index';
 import { computeSectionFlow } from './airfoil/sectionFlow';
 import { buildThicknessSources } from './flow/index';
 import { bodyDirToTunnel, bodyToTunnel } from './math/frames';
-import { compressibilityEstimate, lockWaveDrag } from './compressibility';
+import {
+  buffetLimited,
+  compressibilityEstimate,
+  lockWaveDrag,
+  wingLiftLimit,
+  type MaxLiftInput,
+} from './compressibility';
 
 const DEG = Math.PI / 180;
 
@@ -44,8 +52,14 @@ export const STRIP_CP_STATIONS = 41;
 export const POLAR_ALPHA_MIN_DEG = -6;
 export const POLAR_ALPHA_MAX_DEG = 24;
 export const POLAR_ALPHA_STEP_DEG = 1;
-/** Above this Mach the Prandtl-Glauert correction (and the VLM clamp) is not trustworthy. */
+/** Prandtl-Glauert (and the VLM) clamp the Mach number here, like VLM_MAX_MACH. */
 export const MACH_PG_LIMIT = 0.85;
+/**
+ * Above this Mach the results are flagged as rough. The clamp at MACH_PG_LIMIT barely matters
+ * up to here (lift slope within ~3 %), so airliners at their normal cruise (up to ~0.86) are not
+ * flagged.
+ */
+export const MACH_ROUGH_LIMIT = 0.88;
 /** Below this Reynolds number (at the MAC) the viscous polars are rough. */
 export const LOW_REYNOLDS = 1e5;
 /** A strip closer than this to its clMax is reported as the place stall will start. */
@@ -61,7 +75,9 @@ const MIN_AIRSPEED = 0.5;
 export interface ModelEntry {
   model: VlmModel;
   /** Airfoil model per VLM strip (index-aligned with model.strips), resolved on first use. */
-  stripAirfoils: AirfoilModel[] | null;
+  stripAirfoils: AirfoilModelInternal[] | null;
+  /** The strip airfoils with the last lift limit applied (sweep + Mach), keyed by that limit. */
+  limitedAirfoils: { key: string; airfoils: AirfoilModelInternal[] } | null;
   /** Indices of the right-side base-wing strips, sorted root -> tip by eta. */
   rightWingStrips: number[];
   /** True for strips that belong to the base wing (role 'wing'), false for tip devices. */
@@ -80,6 +96,8 @@ export interface SolvedState {
   dynamicPressure: number;
   /** Root-chord angle of attack (rad). */
   alpha: number;
+  /** Strip airfoils with the lift limit of this Mach number (index-aligned with model.strips). */
+  airfoils: AirfoilModelInternal[];
   /** Reynolds number per strip (local chord). */
   stripReynolds: Float64Array;
   /** Geometric angle of attack per strip (rad): alpha projected on the strip plane + twist. */
@@ -202,7 +220,7 @@ function getModelEntry(
       }
     });
     rightWingStrips.sort((a, b) => model.strips[a]!.eta - model.strips[b]!.eta);
-    entry = { model, stripAirfoils: null, rightWingStrips, isBaseWing };
+    entry = { model, stripAirfoils: null, limitedAirfoils: null, rightWingStrips, isBaseWing };
     lruSet(cache.models, key, entry, cache.capacity);
   }
   return entry;
@@ -233,9 +251,9 @@ export function stripAirfoilKey(strip: VlmStrip, supercritical: boolean): Airfoi
   };
 }
 
-function stripAirfoils(entry: ModelEntry, supercritical: boolean): AirfoilModel[] {
+function stripAirfoils(entry: ModelEntry, supercritical: boolean): AirfoilModelInternal[] {
   if (!entry.stripAirfoils) {
-    const byKey = new Map<string, AirfoilModel>();
+    const byKey = new Map<string, AirfoilModelInternal>();
     entry.stripAirfoils = entry.model.strips.map((strip) => {
       const key = stripAirfoilKey(strip, supercritical);
       const k = stableKey(key);
@@ -250,6 +268,47 @@ function stripAirfoils(entry: ModelEntry, supercritical: boolean): AirfoilModel[
   return entry.stripAirfoils;
 }
 
+/** Inputs of the maximum-lift model (sweep, thickness, section technology) at a Mach number. */
+export function maxLiftInput(wing: WingConfig, geometry: WingGeometry, mach: number): MaxLiftInput {
+  return {
+    mach,
+    sweep: geometry.sweepQuarterChord,
+    thicknessRatio: wing.airfoil.thickness,
+    supercritical: wing.supercritical,
+  };
+}
+
+/**
+ * Strip airfoils with the wing's lift limit at this Mach number: section maximum lift reduced for
+ * sweep and capped by shock-induced separation (see compressibility.wingLiftLimit). The limit is
+ * built with the lattice's own Prandtl-Glauert factor, so the solver's cl / beta peaks at the
+ * real maximum lift.
+ */
+function limitedStripAirfoils(
+  entry: ModelEntry,
+  wing: WingConfig,
+  geometry: WingGeometry,
+  mach: number,
+): AirfoilModelInternal[] {
+  const plain = stripAirfoils(entry, wing.supercritical);
+  const limit = wingLiftLimit(maxLiftInput(wing, geometry, mach), entry.model.beta);
+  const key = `${limit.scale}|${limit.cap}|${limit.flatPlateScale}`;
+  if (entry.limitedAirfoils?.key !== key) {
+    const views = new Map<AirfoilModelInternal, AirfoilModelInternal>();
+    const airfoils = plain.map((m) => {
+      let v = views.get(m);
+      if (!v) {
+        // Models without lift-limit support (test doubles) are used as they are.
+        v = typeof m.withLiftLimit === 'function' ? m.withLiftLimit(limit) : m;
+        views.set(m, v);
+      }
+      return v;
+    });
+    entry.limitedAirfoils = { key, airfoils };
+  }
+  return entry.limitedAirfoils.airfoils;
+}
+
 /** Position of a strip in model.strips (its `index`, verified, with a slow fallback). */
 function stripPosition(model: VlmModel, strip: VlmStrip): number {
   return model.strips[strip.index] === strip ? strip.index : model.strips.indexOf(strip);
@@ -257,7 +316,7 @@ function stripPosition(model: VlmModel, strip: VlmStrip): number {
 
 function makeProvider(
   model: VlmModel,
-  airfoils: AirfoilModel[],
+  airfoils: AirfoilModelInternal[],
   reynolds: Float64Array,
 ): StripPolarProvider {
   return {
@@ -316,7 +375,7 @@ export function solveState(wing: WingConfig, flow: FlowConditions, cache: AeroCa
   const geometry = getGeometry(wing, wingKey, cache);
   const entry = getModelEntry(geometry, wingKey, machBucketIndex(mach), cache);
   const { model } = entry;
-  const airfoils = stripAirfoils(entry, wing.supercritical);
+  const airfoils = limitedStripAirfoils(entry, wing, geometry, mach);
 
   const n = model.strips.length;
   const stripReynolds = new Float64Array(n);
@@ -340,6 +399,7 @@ export function solveState(wing: WingConfig, flow: FlowConditions, cache: AeroCa
     mach,
     dynamicPressure,
     alpha,
+    airfoils,
     stripReynolds,
     stripAlphaGeometric,
     solution,
@@ -448,10 +508,28 @@ function formatReynolds(re: number): string {
   return `${Math.round(re / 1000)} thousand`;
 }
 
+/**
+ * True when the stall is shock-induced (buffet): on the most deeply stalled base-wing strip the
+ * Mach-dependent buffet limit, not the low-speed stall of the section, sets the maximum lift.
+ */
+function highSpeedStall(state: SolvedState): boolean {
+  const { entry, solution: sol } = state;
+  const plain = entry.stripAirfoils;
+  if (!plain) return false;
+  let worst = -1;
+  for (let i = 0; i < sol.stripStalled.length; i++) {
+    if (!sol.stripStalled[i] || !entry.isBaseWing[i]) continue;
+    if (worst < 0 || sol.stripAlphaEffective[i]! > sol.stripAlphaEffective[worst]!) worst = i;
+  }
+  if (worst < 0) return false;
+  const lowSpeedClMax = plain[worst]!.polar.clMax(state.stripReynolds[worst]!);
+  return buffetLimited(maxLiftInput(state.wing, state.geometry, state.mach), lowSpeedClMax);
+}
+
 function assembleAero(state: SolvedState, requestId: number): AeroResult {
   const { wing, geometry, entry, solution: sol, alpha, velocity, mach, dynamicPressure } = state;
   const { model } = entry;
-  const airfoils = stripAirfoils(entry, wing.supercritical);
+  const { airfoils } = state;
   const q = dynamicPressure;
   const S = geometry.referenceArea;
 
@@ -516,16 +594,20 @@ function assembleAero(state: SolvedState, requestId: number): AeroResult {
   const reynoldsMac = reynoldsNumber(state.atmosphere, velocity, geometry.meanAeroChord);
 
   const warnings: string[] = [];
-  if (mach > MACH_PG_LIMIT) {
+  if (mach > MACH_ROUGH_LIMIT) {
     warnings.push(
-      `Mach ${mach.toFixed(2)} is beyond about Mach ${MACH_PG_LIMIT}: the simple compressibility ` +
-        `correction used here stops being reliable, so treat these numbers as rough.`,
+      `At Mach ${mach.toFixed(2)} the simple compressibility corrections used here are pushed ` +
+        `beyond about Mach ${MACH_ROUGH_LIMIT}, so treat these numbers as rough estimates.`,
     );
   }
-  if (mach > comp.machCritical) {
+  // Between the critical and the drag-divergence Mach number the wing has weak shocks and a
+  // little wave drag: that is normal airliner cruise, so it is not a warning (the UI may show
+  // it as information from machCritical / machDragDivergence).
+  if (mach > comp.machDragDivergence) {
     warnings.push(
-      `Above this wing's critical Mach number (about ${comp.machCritical.toFixed(2)}): the air ` +
-        `over the wing goes supersonic and small shock waves add wave drag.`,
+      `Past drag divergence (about Mach ${comp.machDragDivergence.toFixed(2)} for this wing at ` +
+        `this lift): the shock waves over the wing are now strong and wave drag climbs steeply ` +
+        `with every bit of extra speed.`,
     );
   }
   if (reynoldsMac < LOW_REYNOLDS) {
@@ -534,12 +616,15 @@ function assembleAero(state: SolvedState, requestId: number): AeroResult {
         `air behaves more like syrup, and the drag and stall estimates are rough.`,
     );
   }
+  const highSpeed = stall.any && highSpeedStall(state);
   if (stall.any) {
     const pct = Math.round(stall.fraction * 100);
+    const where = pct > 0 ? `over about ${pct}% of the span` : `over part of the wing`;
     warnings.push(
-      pct > 0
-        ? `Stall: the air has separated from the upper surface over about ${pct}% of the span.`
-        : `Stall: the air has separated from part of the wing.`,
+      highSpeed
+        ? `Stall (high-speed buffet): shock waves on the upper surface have made the air ` +
+            `separate ${where}. Near the speed of sound a wing stalls at a much smaller angle.`
+        : `Stall: the air has separated from the upper surface ${where}.`,
     );
   }
   if (!sol.converged) {
@@ -568,7 +653,7 @@ function assembleAero(state: SolvedState, requestId: number): AeroResult {
     liftSlope,
     machCritical: comp.machCritical,
     machDragDivergence: comp.machDragDivergence,
-    stall,
+    stall: { ...stall, highSpeed },
     strips,
     lattice,
     force: [drag, 0, lift],
@@ -597,7 +682,8 @@ export function computeAero(
 /**
  * Whole-wing lift and drag curves for alpha = -6..24 deg (step 1), reusing the cached VLM model,
  * plus the 2D section cl of the root airfoil at the same root angles for comparison (with the
- * same Prandtl-Glauert factor as the 3D solve).
+ * same Prandtl-Glauert factor as the 3D solve, and the same maximum-lift limit as the wing's
+ * strips: reduced for sweep and, at high Mach, capped by buffet).
  * Independent of flow.alphaDeg, so it is cached by wing + airspeed + altitude.
  */
 export function computePolarSweep(
@@ -618,7 +704,7 @@ export function computePolarSweep(
   const machIndex = machBucketIndex(mach);
   const entry = getModelEntry(geometry, wingKey, machIndex, cache);
   const { model } = entry;
-  const airfoils = stripAirfoils(entry, wing.supercritical);
+  const airfoils = limitedStripAirfoils(entry, wing, geometry, mach);
   // The VLM applies Prandtl-Glauert at the bucketed Mach (clamped); scale the 2D curve alike so
   // the finite-vs-infinite wing comparison stays fair at airliner speeds.
   const pgFactor = prandtlGlauertFactor(machIndex * MACH_BUCKET);
@@ -639,7 +725,6 @@ export function computePolarSweep(
   const CL = new Float32Array(n);
   const CD = new Float32Array(n);
   const sectionCl = new Float32Array(n);
-  let best = 0;
   for (let k = 0; k < n; k++) {
     const aDeg = POLAR_ALPHA_MIN_DEG + k * POLAR_ALPHA_STEP_DEG;
     const a = aDeg * DEG;
@@ -659,8 +744,8 @@ export function computePolarSweep(
       sol.CDi +
       lockWaveDrag(mach, comp.machCritical);
     sectionCl[k] = rootPolar ? rootPolar.cl(a + rootIncidence, rootRe) * pgFactor : NaN;
-    if (CL[k]! > CL[best]!) best = k;
   }
+  const best = stallPeakIndex(CL);
   cache.stats.polarSweeps++;
 
   const polar: PolarSweep = {
@@ -674,6 +759,30 @@ export function computePolarSweep(
   };
   lruSet(cache.polars, key, polar, cache.capacity);
   return polar;
+}
+
+/** A lift peak counts as the stall when no lift within this many sweep points beyond it is higher. */
+const STALL_PEAK_LOOKAHEAD = 4;
+
+/**
+ * Index of the stall peak of a lift curve: the first local maximum that the next
+ * STALL_PEAK_LOOKAHEAD points do not exceed (falling back to the highest point). Deep-stall
+ * (flat-plate) lift can climb above a low buffet peak at the far end of the sweep; that is not
+ * the stall, so the first real peak wins.
+ */
+export function stallPeakIndex(cl: ArrayLike<number>): number {
+  const n = cl.length;
+  let best = 0;
+  for (let k = 0; k < n; k++) if (cl[k]! > cl[best]!) best = k;
+  for (let k = 1; k < n - 1; k++) {
+    if (!(cl[k]! >= cl[k - 1]! && cl[k]! > cl[k + 1]!)) continue;
+    let exceeded = false;
+    for (let j = k + 1; j <= Math.min(n - 1, k + STALL_PEAK_LOOKAHEAD); j++) {
+      if (cl[j]! > cl[k]!) exceeded = true;
+    }
+    if (!exceeded) return k;
+  }
+  return best;
 }
 
 /** Linear interpolation of a per-strip quantity over the sorted right-wing strips at eta. */
@@ -712,9 +821,8 @@ export function computeSection(
   cache: AeroCache,
 ): SectionFlow {
   const state = solveState(wing, flow, cache);
-  const { entry, solution: sol } = state;
+  const { entry, solution: sol, airfoils } = state;
   const { model } = entry;
-  const airfoils = stripAirfoils(entry, wing.supercritical);
   const etaClamped = Math.min(1, Math.max(0, Number.isFinite(eta) ? eta : 0));
   if (entry.rightWingStrips.length === 0) throw new Error('computeSection: no right wing strips');
 
@@ -731,6 +839,8 @@ export function computeSection(
     alphaGeometric,
     alphaInduced: alphaGeometric - alphaEffective,
     reynolds,
+    // Same Prandtl-Glauert factor as the strips, so the section's cl and Cp match the 3D wing.
+    liftScale: 1 / model.beta,
   });
   state.section = { eta: etaClamped, flow: flowResult };
   return flowResult;

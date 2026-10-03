@@ -188,7 +188,7 @@ export const LESSONS: readonly Lesson[] = [
         body: `
 <p>Raise the angle too far and something breaks. The air can no longer bend smoothly around the top of the wing. It <strong>separates</strong>: it peels away from the surface and leaves a slow, swirling, messy wake behind.</p>
 <p>That is a <strong>stall</strong>. The suction on top collapses, so lift falls, and the messy wake makes drag shoot up.</p>
-<p>The wing has not run out of speed. It has run out of angle. For a wing like this one, stall typically begins somewhere around 15°.</p>`,
+<p>The wing has not run out of speed. It has run out of angle. For a wing like this one, stall begins at about 18°.</p>`,
         tryIt:
           'Look at the flow over the top of the wing and at the lift reading. Also look for the regions that the wing view marks with a different tint where the flow has separated.',
         apply: { flow: { alphaDeg: 20 }, view: { flowMode: 'both' } },
@@ -344,7 +344,7 @@ export const LESSONS: readonly Lesson[] = [
 <p>How do you cut induced drag? Spread the same lift across a longer wing. A long, narrow wing moves a large mass of air downward by a little, instead of a small mass by a lot. The downwash is gentler, the vortices are weaker, and the drag is lower.</p>
 <p>The measure is <strong>aspect ratio</strong>: the span squared divided by the wing area. This 18 m glider has an aspect ratio of about 31. For the same lift, doubling the span cuts induced drag to a quarter.</p>`,
         tryIt:
-          'Shorten the wingspan from 18 m to about 8 m and watch the drag rise and the glide performance (lift-to-drag ratio) collapse.',
+          'Shorten the wingspan from 18 m to about 8 m. The smaller wing makes less lift, and its lift-to-drag ratio (the glide performance) drops by about a quarter: each unit of lift now costs more induced drag.',
         apply: {
           preset: 'glider-18m',
           view: { showSpanLoad: false, rake: { mode: 'tip-vortex' } },
@@ -418,9 +418,9 @@ export const LESSONS: readonly Lesson[] = [
         body: `
 <p>The 737 MAX replaced the blended winglet with a <strong>split winglet</strong>: a tall upper blade plus a smaller fin pointing down. Together they stand about 2.9 m tall.</p>
 <p>The idea is to work the swirl below the tip as well as above it. Boeing credits the design with roughly 1 to 1.5 percent in fuel savings.</p>
-<p>The wing underneath is almost the same as on the 737-800, so this pair is a fair test of the tip devices. Look at the drag figures in the comparison.</p>`,
+<p>The wing underneath is almost the same as on the 737-800, so this pair is a fair test of the tip devices. Look at the <strong>span efficiency</strong> in the comparison: the higher it is, the less drag the tip vortices cost for each unit of lift.</p>`,
         tryIt:
-          'In the comparison, check how the drag numbers differ between the two wings. Expect a small difference: tip devices are fine-tuning.',
+          'In the comparison, the MAX has the slightly higher span efficiency, yet the lift-to-drag ratios come out about level: the MAX is heavier, and its bigger winglet adds a little friction. Tip devices are fine-tuning.',
         apply: { preset: 'b737-max8', compare: ['b737-800', 'b737-max8'] },
         camera: 'behind',
       },
@@ -468,9 +468,9 @@ export const LESSONS: readonly Lesson[] = [
         title: 'Sweep: sliding the wing back',
         body: `
 <p>Sweeping the wing back is the cure. A swept wing meets the air at a slant, and only the part of the wind that is perpendicular to the wing's leading edge counts for building pressure, suction and shocks.</p>
-<p>That share is the speed times the cosine of the sweep angle. The 747-400's wing is swept 37.5°, so at Mach 0.85 it behaves roughly as if it were flying at Mach 0.67, comfortably below trouble. A 737, swept 25°, at Mach 0.785 sees about 0.71.</p>`,
+<p>That share is the speed times the cosine of the sweep angle. The 747-400's wing is swept 37.5°, so at Mach 0.85 it behaves roughly as if it were flying at Mach 0.67, slow enough to keep its shock waves weak. A 737, swept 25°, at Mach 0.785 sees about 0.71.</p>`,
         tryIt:
-          'Drag Sweep to 0° and back to 37.5°. The straight wing makes more lift at the same angle. The swept wing gives up some of that to gain high-speed performance.',
+          'Drag Sweep to 0°. At Mach 0.85 the straight wing runs into strong shock waves: the drag more than doubles and the air separates from the top, a high-speed stall. Then sweep it back to 37.5°.',
         apply: { preset: 'b747-400' },
         camera: 'top',
         highlight: ['wing.sweepDeg'],
@@ -481,10 +481,10 @@ export const LESSONS: readonly Lesson[] = [
         body: `
 <p>Sweep has a cost. On a swept wing, the air near the tips is more likely to separate than the air near the root. Stall tends to begin at the <strong>tips</strong>.</p>
 <p>That is bad for two reasons. The ailerons that roll the plane sit near the tips, so they stop working just when the pilot needs them. And the swept-back tips are behind the plane's balance point, so losing lift there pitches the nose up, which deepens the stall.</p>
-<p>The cure is <strong>washout</strong>: twist the wing so the tips sit at a smaller angle than the root. Then the root stalls first and the controls stay effective.</p>`,
+<p>The cure is <strong>washout</strong>: twist the wing so the tips sit at a smaller angle than the root. Then the stall starts further inboard and the ailerons keep working. Here the 747 has slowed to its approach speed, with its washout taken out.</p>`,
         tryIt:
-          'Raise the angle of attack until part of the wing stalls. Then add washout (try 3° to 4°) and see where the stall starts.',
-        apply: { wing: { washoutDeg: 0 }, flow: { alphaDeg: 12 } },
+          'Raise the angle of attack until part of the wing stalls, and note where. Then add washout (try 4° to 6°) and raise the angle again: the stall now starts further inboard.',
+        apply: { wing: { washoutDeg: 0 }, flow: { alphaDeg: 12, airspeed: 80, altitude: 0 } },
         camera: 'top',
         highlight: ['flow.alphaDeg', 'wing.washoutDeg'],
       },
@@ -551,7 +551,7 @@ export const LESSONS: readonly Lesson[] = [
         title: 'Cruising speeds',
         body: `
 <p>Now fly the 747-400 on its own. It cruises at Mach 0.85, about 900 km/h. The 737-800 cruises at about Mach 0.785, around 830 km/h.</p>
-<p>The 747's greater sweep is the main reason it can go faster without running into shock waves. Different size, different speed, different tip devices, and the same laws of physics underneath.</p>`,
+<p>The 747's greater sweep is the main reason it can go faster before its shock waves grow strong. Different size, different speed, different tip devices, and the same laws of physics underneath.</p>`,
         tryIt:
           'Use the aircraft picker to switch between the two and compare the angle of attack, lift and drag at cruise.',
         apply: { preset: 'b747-400', compare: null },
@@ -589,8 +589,8 @@ export const LESSONS: readonly Lesson[] = [
         title: 'Flaps: more curve, more lift',
         body: `
 <p><strong>Flaps</strong> are hinged panels on the back of the wing. Lowering them bends the back edge of the wing downward, which adds curve (<em>camber</em>). On many airliners they also slide backward as they drop, which adds wing area.</p>
-<p>The extra curve turns the air downward more, so the wing makes far more lift at the same angle and the same speed. The price is more drag, because the flow is turned harder and the wing gets messier.</p>`,
-        tryIt: 'Move the Flaps slider from 0° to 40° and watch both lift and drag rise.',
+<p>The extra curve turns the air downward more, so the wing makes far more lift at the same angle and the same speed. With 25° of flap, as now, this wing at 7° holds the 737 up. The price is more drag, because the flow is turned harder and the wing gets messier.</p>`,
+        tryIt: 'Move the Flaps slider from 0° to 30° and watch both lift and drag rise.',
         apply: { wing: { flaps: { deflectionDeg: 25 } } },
         camera: 'section',
         highlight: ['wing.flaps.deflectionDeg'],

@@ -345,6 +345,11 @@ export interface AeroResult {
     firstEta: number | null;
     /** min over strips of (clMax - cl), negative when stalled. */
     margin: number;
+    /**
+     * True when the stall is shock-induced (high-speed buffet near the speed of sound) rather
+     * than an ordinary low-speed stall. Absent or false when nothing is stalled.
+     */
+    highSpeed?: boolean;
   };
 
   strips: StripResult[];
@@ -362,7 +367,10 @@ export interface PolarSweep {
   alphaDeg: Float32Array;
   CL: Float32Array;
   CD: Float32Array;
-  /** 2D section cl of the root airfoil at the same alphas, for finite-vs-infinite wing comparison. */
+  /**
+   * 2D section cl of the root airfoil at the same alphas, for finite-vs-infinite wing comparison.
+   * Same Prandtl-Glauert factor and maximum-lift limit (sweep, buffet at high Mach) as the strips.
+   */
   sectionCl: Float32Array;
   /** Alpha (deg) at CLmax. */
   alphaStallDeg: number;

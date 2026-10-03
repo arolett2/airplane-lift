@@ -220,10 +220,58 @@ describe.skipIf(!physicsReady)('aero end-to-end (real solvers)', { timeout: 60_0
       expect(aero.reynoldsMac).toBeGreaterThan(1e7);
     });
 
-    it('adds wave drag and a warning when pushed past the critical Mach number', () => {
-      const fast = solve(B737_LIKE, { ...CRUISE, airspeed: 255 }).aero; // Mach ~0.86
-      expect(fast.CDw).toBeGreaterThan(0);
-      expect(fast.warnings.some((w) => w.includes('critical Mach'))).toBe(true);
+    it('cruises between the critical and the drag-divergence Mach number, without warnings', () => {
+      const aero = cruise();
+      expect(aero.mach).toBeGreaterThan(aero.machCritical);
+      expect(aero.mach).toBeLessThan(aero.machDragDivergence);
+      expect(aero.warnings).toEqual([]);
+    });
+
+    it('adds wave drag and a warning when pushed past drag divergence', () => {
+      const fast = solve(B737_LIKE, { ...CRUISE, airspeed: 262 }).aero; // Mach ~0.88
+      expect(fast.mach).toBeGreaterThan(fast.machDragDivergence);
+      expect(fast.CDw).toBeGreaterThan(0.003);
+      expect(fast.warnings.some((w) => w.includes('drag divergence'))).toBe(true);
+    });
+  });
+
+  describe('maximum lift falls with Mach (sweep + shock-induced separation)', () => {
+    const cruisePolar = lazy(() => computePolarSweep(B737_LIKE, CRUISE, 1, createAeroCache()));
+    const lowPolar = lazy(() =>
+      computePolarSweep(B737_LIKE, { ...CRUISE, airspeed: 75, altitude: 0 }, 1, createAeroCache()),
+    );
+
+    it('has an airliner-like clean CLmax at low speed', () => {
+      const polar = lowPolar();
+      expect(polar.CLmax).toBeGreaterThan(1.3);
+      expect(polar.CLmax).toBeLessThan(1.7);
+    });
+
+    it('buffets at a much lower lift, a few degrees above cruise, near Mach 0.78', () => {
+      const polar = cruisePolar();
+      expect(polar.CLmax).toBeGreaterThan(0.8);
+      expect(polar.CLmax).toBeLessThan(1.25);
+      expect(polar.alphaStallDeg).toBeGreaterThan(CRUISE.alphaDeg + 2);
+      expect(polar.alphaStallDeg).toBeLessThan(CRUISE.alphaDeg + 9);
+      // The 2D "endless wing" curve is limited the same way (no cl ~ 3 at cruise Mach).
+      expect(Math.max(...polar.sectionCl)).toBeLessThan(1.4);
+    });
+
+    it('reports the high-speed stall in the strips, the summary and the warnings', () => {
+      const polar = cruisePolar();
+      const deep = solve(B737_LIKE, { ...CRUISE, alphaDeg: polar.alphaStallDeg + 3 }).aero;
+      expect(deep.stall.any).toBe(true);
+      expect(deep.stall.fraction).toBeGreaterThan(0.1);
+      expect(deep.strips.some((s) => s.stalled)).toBe(true);
+      expect(deep.CL).toBeLessThan(polar.CLmax);
+      expect(deep.warnings.some((w) => w.includes('buffet'))).toBe(true);
+      expect(deep.stall.highSpeed).toBe(true);
+      // The same wing stalling at low speed is an ordinary stall.
+      const slow = solve(B737_LIKE, { alphaDeg: 22, airspeed: 75, altitude: 0 }).aero;
+      expect(slow.stall.any).toBe(true);
+      expect(slow.stall.highSpeed).toBe(false);
+      // Every strip's clMax is the real (compressible) maximum, not a Prandtl-Glauert-inflated one.
+      for (const s of deep.strips.filter((s) => s.eta <= 1)) expect(s.clMax).toBeLessThan(1.4);
     });
   });
 
@@ -271,6 +319,25 @@ describe.skipIf(!physicsReady)('aero end-to-end (real solvers)', { timeout: 60_0
       .reduce((a, b) => (Math.abs(b.eta - 0.35) < Math.abs(a.eta - 0.35) ? b : a));
     expect(section.cl).toBeGreaterThan(0.85 * near.cl);
     expect(section.cl).toBeLessThan(1.15 * near.cl);
+  });
+
+  it('reports the section lift with the same compressibility factor as the strips', () => {
+    const cache = createAeroCache();
+    const { aero } = computeAero(B737_LIKE, CRUISE, 1, cache);
+    const section = computeSection(B737_LIKE, CRUISE, 0.35, cache);
+    const near = aero.strips
+      .filter((s) => s.side === 'right' && s.eta <= 1)
+      .reduce((a, b) => (Math.abs(b.eta - 0.35) < Math.abs(a.eta - 0.35) ? b : a));
+    expect(aero.mach).toBeGreaterThan(0.75);
+    expect(section.cl).toBeGreaterThan(0.85 * near.cl);
+    expect(section.cl).toBeLessThan(1.15 * near.cl);
+    let cpLift = 0;
+    const { xc, upper, lower } = section.cp;
+    for (let k = 1; k < xc.length; k++) {
+      const dx = xc[k]! - xc[k - 1]!;
+      cpLift += 0.5 * dx * (lower[k]! - upper[k]! + lower[k - 1]! - upper[k - 1]!);
+    }
+    expect(cpLift).toBeCloseTo(section.cl, 1);
   });
 
   it('runs the full worker pipeline without errors', async () => {

@@ -197,7 +197,9 @@ export class ProbeMarker {
     s.border = '1px solid rgba(61, 214, 200, 0.6)';
     s.background = 'rgba(8, 14, 24, 0.86)';
     s.boxShadow = '0 6px 18px rgba(0, 0, 0, 0.35)';
-    s.whiteSpace = 'nowrap';
+    s.whiteSpace = 'normal';
+    s.width = 'max-content';
+    s.maxWidth = 'min(330px, 64vw)';
     const title = document.createElement('div');
     title.className = 'al-probe__title';
     Object.assign(title.style, {

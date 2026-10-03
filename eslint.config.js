@@ -24,6 +24,12 @@ export default tseslint.config(
     },
   },
   {
+    // Node-side tooling scripts.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: { ...globals.node } },
+    rules: { 'no-console': 'off' },
+  },
+  {
     // Physics must stay pure: no DOM, no three.js, so it runs in workers and node tests.
     files: ['src/physics/**/*.ts'],
     rules: {

@@ -331,6 +331,27 @@ describe('ParticleSystem', () => {
     ps.dispose();
   });
 
+  it('a paused update(0) applies colour and density changes', () => {
+    const ps = new ParticleSystem();
+    ps.setDomain(domain, null);
+    ps.setField(grid);
+    for (let i = 0; i < 10; i++) ps.update(0.004);
+    const points = findPoints(ps.object, 0);
+    const pressureColours = attr(points.geometry, 'aColor').slice(0, 30);
+    const trails = ps.object.children.find(
+      (c) => (c as { isLineSegments?: boolean }).isLineSegments,
+    ) as unknown as Points;
+    const trailVertsPerParticle = trails.geometry.drawRange.count / 7000;
+    ps.setColorBy('speed');
+    ps.setDensity(0.25);
+    ps.update(0);
+    expect(attr(points.geometry, 'aColor').slice(0, 30)).not.toEqual(pressureColours);
+    expect(points.geometry.drawRange.count).toBe(1750);
+    // No trails left behind without their heads.
+    expect(trails.geometry.drawRange.count).toBe(1750 * trailVertsPerParticle);
+    ps.dispose();
+  });
+
   it('density changes the draw range and respects the cap', () => {
     const ps = new ParticleSystem();
     ps.setDomain(domain, null);

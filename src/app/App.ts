@@ -401,6 +401,9 @@ export async function startApp(root: HTMLElement): Promise<void> {
       simTime += dtSim;
       streamlines.update(simTime, dtSim);
       particles.update(dtSim);
+    } else {
+      // Paused: nothing moves, but colour, density, trail and field changes still reach the GPU.
+      particles.update(0);
     }
     // Adaptive quality: thin the particles if the frame rate sags.
     qualityClock += dt;

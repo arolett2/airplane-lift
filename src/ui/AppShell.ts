@@ -187,13 +187,31 @@ export function createAppShell(root: HTMLElement): AppShell {
     });
   }
 
-  disposables.listen(scrim, 'click', closePanels);
+  /**
+   * Close the open drawer / sheet. If keyboard focus was inside it, hand it to the control that
+   * opened it: the closed panel becomes hidden and focus would otherwise drop to <body>.
+   */
+  const dismissPanels = () => {
+    const drawer = shell.dataset.panel;
+    const sheetOpen = shell.dataset.sheet === 'open';
+    if (drawer === 'none' && !sheetOpen) return;
+    const active = document.activeElement;
+    const focusInside = active instanceof Node && (left.contains(active) || right.contains(active));
+    closePanels();
+    syncTabs();
+    if (!focusInside) return;
+    const opener =
+      drawer === 'left' || drawer === 'right'
+        ? topBar.querySelector<HTMLElement>(`[aria-controls="panel-${drawer}"]`)
+        : sheetOpen
+          ? (tabButtons.get(shell.dataset.tab as SheetTab) ?? null)
+          : null;
+    opener?.focus({ preventScroll: true });
+  };
+
+  disposables.listen(scrim, 'click', dismissPanels);
   disposables.listen(document, 'keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    if (shell.dataset.panel !== 'none' || shell.dataset.sheet === 'open') {
-      closePanels();
-      syncTabs();
-    }
+    if (e.key === 'Escape') dismissPanels();
   });
 
   // Move focus into a drawer when it opens so keyboard users land inside it.

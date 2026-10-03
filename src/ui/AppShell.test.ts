@@ -147,6 +147,42 @@ describe('createAppShell behaviour', () => {
     bar.destroy();
   });
 
+  it('hands focus back to the drawer toggle when Escape closes the drawer around it', () => {
+    const store = new Store<AppState>(DEFAULT_STATE);
+    const bar = new TopBar(shell.topBar, store, {
+      onPulse() {},
+      onOpenLessons() {},
+      onOpenCompare() {},
+    });
+    const toggle = shell.topBar.querySelector<HTMLButtonElement>('.topbar__panel-toggle--right')!;
+    toggle.click();
+    const inside = document.createElement('button');
+    shell.readouts.append(inside);
+    inside.focus();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(shellEl().dataset.panel).toBe('none');
+    expect(document.activeElement).toBe(toggle);
+    // Focus outside the drawer is left where it is.
+    toggle.click();
+    const elsewhere = document.createElement('button');
+    shell.viewport.append(elsewhere);
+    elsewhere.focus();
+    root.querySelector<HTMLElement>('.shell__scrim')!.click();
+    expect(document.activeElement).toBe(elsewhere);
+    bar.destroy();
+  });
+
+  it('hands focus back to the sheet tab when Escape closes the bottom sheet', () => {
+    const tab = root.querySelectorAll<HTMLButtonElement>('.shell__tab')[0]!;
+    tab.click();
+    const inside = document.createElement('button');
+    shell.controls.append(inside);
+    inside.focus();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(shellEl().dataset.sheet).toBe('closed');
+    expect(document.activeElement).toBe(tab);
+  });
+
   it('destroy removes everything', () => {
     shell.destroy();
     expect(root.children).toHaveLength(0);

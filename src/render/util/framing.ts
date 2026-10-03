@@ -86,3 +86,16 @@ export function stationAt(geometry: WingGeometry, eta: number): WingStation {
     chord: a.chord + (b.chord - a.chord) * f,
   };
 }
+
+/**
+ * Where the cross-flow cutaway of the behind / tip shots cuts the wake: a little downstream of
+ * the wing's trailing edge. Linear in its inputs, so it works in physics metres or display units.
+ * @param maxX     most downstream wing point (trailing edge) x
+ * @param semispan wing semispan (same units)
+ */
+export function crossCutX(maxX: number, semispan: number): number {
+  return maxX + CROSS_CUT_SEMISPANS * semispan;
+}
+
+/** Cross-flow cut distance behind the trailing edge, in semispans. */
+export const CROSS_CUT_SEMISPANS = 0.45;

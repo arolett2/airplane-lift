@@ -21,6 +21,7 @@ import { CameraTween, DEFAULT_TWEEN_SECONDS } from './util/cameraTween';
 import { FpsMeter } from './util/fpsMeter';
 import { getFrameTick } from './util/frameTick';
 import { disposeObject3D } from './util/disposal';
+import { crossCutX } from './util/framing';
 import type { WingFraming } from './util/framing';
 import { computeShot, extentsFromDomain } from './util/shots';
 import type { CameraPose, SceneExtents } from './util/shots';
@@ -42,13 +43,23 @@ export interface ViewInsets {
 const NO_INSETS: ViewInsets = { left: 0, right: 0, top: 0, bottom: 0 };
 
 /**
- * Shots that cut the scene open at the smoke-rake station: everything between the camera and
- * the station is clipped away, so the airfoil section and the smoke bending round it are seen
- * unobstructed (the wing's dark interior reads as the cut face).
+ * Cutaways (renderer clipping planes) that open the scene up for particular shots:
+ *  - 'span'  (side, section): everything between the camera and the smoke-rake station is cut
+ *    away, so the airfoil section and the smoke bending round it are seen unobstructed (the
+ *    wing's inside reads as the cut face).
+ *  - 'cross' (behind, tip): the wake is cut across the flow a little behind the wing, so the
+ *    smoke ends on a plane facing the camera, like a laser light sheet across a real tunnel,
+ *    instead of fanning out toward the camera in perspective.
+ * A cutaway stays on while the view direction is within ~45 degrees of the shot's.
  */
-const CUTAWAY_SHOTS: ReadonlySet<CameraShot> = new Set<CameraShot>(['side', 'section']);
-/** The cutaway stays on while the view direction is within ~45 degrees of looking along +y. */
-const CUTAWAY_MIN_DIR_Y = 0.7;
+export type CutawayKind = 'none' | 'span' | 'cross';
+const CUTAWAY_FOR_SHOT: Partial<Record<CameraShot, Exclude<CutawayKind, 'none'>>> = {
+  side: 'span',
+  section: 'span',
+  behind: 'cross',
+  tip: 'cross',
+};
+const CUTAWAY_MIN_ALIGNMENT = 0.7;
 /** The cut sits this many station chords in front of the station (toward the camera). */
 const CUTAWAY_OFFSET_CHORDS = 0.45;
 /**
@@ -80,10 +91,15 @@ export interface SceneManagerApi {
 const MAX_DT = 0.1;
 const CAMERA_FOV_DEG = 40;
 /**
- * Side-on shots use a longer lens: the camera backs off and the receding outer wing no longer
- * converges dramatically, so the airfoil and the smoke round it read like a diagram.
+ * Side-on and end-on shots use a longer lens: the camera backs off, so the receding wing (side)
+ * or wake (behind, tip) no longer fans out in perspective and the flow reads like a diagram.
  */
-const SHOT_FOV_DEG: Partial<Record<CameraShot, number>> = { side: 26, section: 26 };
+const SHOT_FOV_DEG: Partial<Record<CameraShot, number>> = {
+  side: 26,
+  section: 26,
+  behind: 22,
+  tip: 24,
+};
 
 /** A deep navy -> charcoal vertical gradient; the flow lines pop against it. */
 function createBackgroundTexture(): THREE.CanvasTexture | null {
@@ -129,15 +145,16 @@ export class SceneManager implements SceneManagerApi {
   private readonly keyLight: THREE.DirectionalLight;
 
   private frameCallbacks: FrameCallback[] = [];
-  private cutawayListeners: Array<(on: boolean) => void> = [];
+  private cutawayListeners: Array<(kind: CutawayKind) => void> = [];
   private readonly cutPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private readonly cutPlanes = [this.cutPlane];
   /**
    * Far side of the cutaway slab (keeps y <= station + depth). Not applied globally: the app
    * gives it to the wing material only, so the tunnel and smoke behind stay whole.
    */
   readonly cutawayFarPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
   private readonly scratchDir = new THREE.Vector3();
-  private cutActive = false;
+  private cutKind: CutawayKind = 'none';
   private extents: SceneExtents;
   private domain: TunnelDomain = tunnelDomain(10, 1.5);
   private focus: { pivot: Vec3; semispan: number; framing?: WingFraming } | null = null;
@@ -316,13 +333,18 @@ export class SceneManager implements SceneManagerApi {
     this.placeCamera(true);
   }
 
-  /** True while the side / section cutaway clips the scene in front of the rake station. */
+  /** True while a cutaway clips the scene (see CutawayKind). */
   get cutawayActive(): boolean {
-    return this.cutActive;
+    return this.cutKind !== 'none';
   }
 
-  /** Called whenever the cutaway switches on or off; returns an unsubscribe function. */
-  onCutawayChange(cb: (on: boolean) => void): () => void {
+  /** Which cutaway is clipping the scene right now. */
+  get cutaway(): CutawayKind {
+    return this.cutKind;
+  }
+
+  /** Called whenever the cutaway changes kind; returns an unsubscribe function. */
+  onCutawayChange(cb: (kind: CutawayKind) => void): () => void {
     this.cutawayListeners = [...this.cutawayListeners, cb];
     return () => {
       this.cutawayListeners = this.cutawayListeners.filter((f) => f !== cb);
@@ -537,26 +559,31 @@ export class SceneManager implements SceneManagerApi {
     this.labelRenderer.render(this.scene, this.camera);
   };
 
-  /** Switch the side / section cutaway on while such a shot looks along +y at the station. */
+  /** Switch the shot's cutaway on while the camera still looks roughly the shot's way. */
   private updateCutaway(): void {
-    let on = false;
-    if (CUTAWAY_SHOTS.has(this.currentShot)) {
+    let kind: CutawayKind = CUTAWAY_FOR_SHOT[this.currentShot] ?? 'none';
+    if (kind !== 'none') {
       this.camera.getWorldDirection(this.scratchDir);
-      on = this.scratchDir.y > CUTAWAY_MIN_DIR_Y;
+      const along = kind === 'span' ? this.scratchDir.y : -this.scratchDir.x;
+      if (along <= CUTAWAY_MIN_ALIGNMENT) kind = 'none';
     }
-    if (on) {
+    // World = display units; a plane keeps the points with n.p + c >= 0.
+    if (kind === 'span') {
       const st = this.extents.wing.station;
-      // Keep y >= station - offset (world = display units; the plane keeps n.p + c >= 0).
+      this.cutPlane.normal.set(0, 1, 0);
       this.cutPlane.constant = -(st.le[1] - CUTAWAY_OFFSET_CHORDS * st.chord);
       const depth = CUTAWAY_DEPTH_CHORDS[this.currentShot] ?? 1e3;
       this.cutawayFarPlane.constant = st.le[1] + depth * st.chord;
+    } else if (kind === 'cross') {
+      this.cutPlane.normal.set(-1, 0, 0);
+      this.cutPlane.constant = crossCutX(this.extents.wing.max[0], this.extents.semispan);
     }
-    if (on === this.cutActive) return;
-    this.cutActive = on;
-    this.renderer.clippingPlanes = on ? [this.cutPlane] : [];
+    if (kind === this.cutKind) return;
+    this.cutKind = kind;
+    this.renderer.clippingPlanes = kind === 'none' ? [] : this.cutPlanes;
     for (const cb of this.cutawayListeners) {
       try {
-        cb(on);
+        cb(kind);
       } catch (err) {
         this.reportCallbackError(err);
       }

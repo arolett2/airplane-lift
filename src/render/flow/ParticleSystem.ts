@@ -25,6 +25,7 @@ import {
   createSpriteMaterial,
   createTrailMaterial,
   setLightSheet,
+  type LightSheet,
 } from './sprites';
 
 /** Particle sprite diameter relative to the tunnel length. */
@@ -196,12 +197,17 @@ export class ParticleSystem {
   }
 
   /**
-   * Show only the smoke within |y - y0| < halfWidth (physics metres), like smoke lit by a laser
-   * light sheet; null shows all of it. Used by the side / section cutaway.
+   * Show only the smoke within a slab (physics metres), like smoke lit by a laser light sheet;
+   * null shows all of it. Used by the cutaway shots.
    */
-  setLightSheet(sheet: { y: number; halfWidth: number } | null): void {
+  setLightSheet(sheet: LightSheet | null): void {
     setLightSheet(this.material, sheet);
     setLightSheet(this.trailMaterial, sheet);
+  }
+
+  /** Trail length as a fraction of the freestream transit time (null = the default). */
+  setTrailLength(transitFraction: number | null): void {
+    this.sim.setTrailLength(transitFraction);
   }
 
   /** Fraction of the freestream the trail frame drifts with (0 = true particle paths). */

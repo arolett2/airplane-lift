@@ -16,6 +16,7 @@
 import type { CameraShot } from '../../state/params';
 import type { TunnelDomain } from '../../physics/domain';
 import type { Vec3 } from '../../physics/types';
+import { crossCutX } from './framing';
 import type { WingFraming, WingStation } from './framing';
 
 /** Tunnel domain length (x) in display units. */
@@ -244,24 +245,31 @@ export function computeShot(
       return { position: along(target, dir, d), target };
     }
     case 'tip': {
-      // Behind, outboard and above the right tip, looking back along the trailing vortex: its
-      // swirl reads as spirals, with the wingtip that sheds it in the background.
-      const tc = Math.max(tip.chord, 0.12 * chord);
-      const te: Vec3 = [tip.le[0] + tc, tip.le[1], tip.le[2]];
-      const r = Math.max(0.2 * s, 4 * tc);
-      const target: Vec3 = [te[0] + 0.45 * r, te[1] - 0.12 * r, te[2] - 0.06 * r];
-      return {
-        position: [te[0] + 2.5 * r, te[1] + 0.85 * r, te[2] + 0.55 * r],
-        target,
-      };
+      // Nearly end-on to the right tip's trailing vortex, from downstream: the scene manager
+      // cuts the wake across the flow a little behind the wing, and the smoke swirling round
+      // the tip on that cut is framed around the wingtip that sheds it.
+      const tc = Math.max(tip.chord, 0.05 * chord);
+      const r = Math.max(0.26 * s, 1.2 * tc);
+      const cut = crossCutX(max[0], s);
+      const target: Vec3 = [cut, tip.le[1] - 0.08 * r, tip.le[2] - 0.05 * r];
+      const dir: Vec3 = [1, 0.14, 0.12];
+      const pts: Vec3[] = [
+        [cut, target[1] - r, target[2] - 0.75 * r],
+        [cut, target[1] + r, target[2] + 0.75 * r],
+      ];
+      const d = fitPoints(pts, target, dir, fovYDeg, aspect, 0.92, 0.92);
+      return { position: along(target, dir, d), target };
     }
     case 'behind': {
-      // From downstream, slightly above: downwash and both tip vortices.
-      const target: Vec3 = [max[0], wingCenter[1], wingCenter[2] - 0.05 * s];
-      const dir: Vec3 = [1, 0, 0.16];
-      const lo: Vec3 = [min[0], min[1], min[2]];
-      const d = fitPoints(boxCorners(lo, max), target, dir, fovYDeg, aspect, 0.66, 0.6);
-      // May sit outside the outlet: the tunnel fades its fan when looked through.
+      // From far downstream, slightly above, with a long lens: the wake is seen nearly end-on,
+      // so the downwash between the tips and the swirl round each tip read as they would on a
+      // light sheet across the flow. May sit outside the outlet (the fan fades when looked
+      // through).
+      const target: Vec3 = [max[0], wingCenter[1], wingCenter[2] - 0.08 * s];
+      const dir: Vec3 = [1, 0, 0.14];
+      const lo: Vec3 = [min[0], min[1] - 0.15 * s, min[2] - 0.3 * s];
+      const hi: Vec3 = [max[0], max[1] + 0.15 * s, max[2] + 0.1 * s];
+      const d = fitPoints(boxCorners(lo, hi), target, dir, fovYDeg, aspect, 0.9, 0.8);
       return { position: along(target, dir, Math.max(d, 0.05 * s)), target };
     }
     case 'overview':

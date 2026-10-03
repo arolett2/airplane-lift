@@ -12,7 +12,7 @@ import {
   NormalBlending,
   ShaderMaterial,
   Vector2,
-  Vector3,
+  Vector4,
   type Object3D,
   type WebGLRenderer,
 } from 'three';
@@ -30,12 +30,17 @@ export interface SpriteMaterialOptions {
   additive: boolean;
 }
 
-/** Light-sheet fade: uSheet = (y0, half width, enabled). */
+/**
+ * Light-sheet fade: the slab |n.p - offset| < half (model metres).
+ * uSheetPlane = (n, offset), uSheetWidth = (half width, enabled).
+ */
 const SHEET_GLSL = /* glsl */ `
-  uniform vec3 uSheet;
+  uniform vec4 uSheetPlane;
+  uniform vec2 uSheetWidth;
   float sheetFade(vec3 p) {
-    if (uSheet.z < 0.5) return 1.0;
-    return 1.0 - smoothstep(0.55 * uSheet.y, uSheet.y, abs(p.y - uSheet.x));
+    if (uSheetWidth.y < 0.5) return 1.0;
+    float dist = abs(dot(uSheetPlane.xyz, p) - uSheetPlane.w);
+    return 1.0 - smoothstep(0.55 * uSheetWidth.x, uSheetWidth.x, dist);
   }
 `;
 
@@ -120,7 +125,8 @@ export function createSpriteMaterial(opts: SpriteMaterialOptions): ShaderMateria
       uPxRange: { value: new Vector2(opts.minPx, opts.maxPx) },
       uCore: { value: opts.core },
       uOpacity: { value: opts.opacity },
-      uSheet: { value: new Vector3(0, 1, 0) },
+      uSheetPlane: { value: new Vector4(0, 1, 0, 0) },
+      uSheetWidth: { value: new Vector2(1, 0) },
     },
     transparent: true,
     depthWrite: false,
@@ -134,7 +140,10 @@ export function createTrailMaterial(additive: boolean): ShaderMaterial {
   return new ShaderMaterial({
     vertexShader: TRAIL_VERTEX,
     fragmentShader: TRAIL_FRAGMENT,
-    uniforms: { uSheet: { value: new Vector3(0, 1, 0) } },
+    uniforms: {
+      uSheetPlane: { value: new Vector4(0, 1, 0, 0) },
+      uSheetWidth: { value: new Vector2(1, 0) },
+    },
     clipping: true,
     transparent: true,
     depthWrite: false,
@@ -143,19 +152,25 @@ export function createTrailMaterial(additive: boolean): ShaderMaterial {
   });
 }
 
-/**
- * Restrict a flow material to a light sheet |y - y0| < halfWidth (model metres), or show
- * everything again with null.
- */
-export function setLightSheet(
-  material: ShaderMaterial,
-  sheet: { y: number; halfWidth: number } | null,
-): void {
-  const u = material.uniforms['uSheet'];
-  if (!u) return;
-  const v = u.value as Vector3;
-  if (sheet) v.set(sheet.y, Math.max(1e-6, sheet.halfWidth), 1);
-  else v.set(0, 1, 0);
+/** A slab |normal . p - offset| < halfWidth (model metres; `normal` is a unit vector). */
+export interface LightSheet {
+  normal: readonly [number, number, number];
+  offset: number;
+  halfWidth: number;
+}
+
+/** Restrict a flow material to a light sheet, or show everything again with null. */
+export function setLightSheet(material: ShaderMaterial, sheet: LightSheet | null): void {
+  const plane = material.uniforms['uSheetPlane'];
+  const width = material.uniforms['uSheetWidth'];
+  if (!plane || !width) return;
+  if (sheet) {
+    const [x, y, z] = sheet.normal;
+    (plane.value as Vector4).set(x, y, z, sheet.offset);
+    (width.value as Vector2).set(Math.max(1e-6, sheet.halfWidth), 1);
+  } else {
+    (width.value as Vector2).set(1, 0);
+  }
 }
 
 const _size = new Vector2();

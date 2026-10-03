@@ -111,6 +111,8 @@ export class ParticleSim {
   private dtMax = 0;
   /** Sim time since the last history sample. */
   private historyClock = 0;
+  /** Trail length as a fraction of the transit time. */
+  private trailFraction = TRAIL_TRANSIT_FRACTION;
   /** True when attributes need a refresh even though no time passes (e.g. after a field swap). */
   private dirty = true;
 
@@ -143,6 +145,15 @@ export class ParticleSim {
   /** Freestream speed of the current field (m/s), 0 without one. */
   get freestreamSpeed(): number {
     return this.grid?.vInf ?? 0;
+  }
+
+  /** Trail length as a fraction of the freestream transit time (null = the default). */
+  setTrailLength(transitFraction: number | null): void {
+    const f =
+      transitFraction !== null && Number.isFinite(transitFraction) && transitFraction > 0
+        ? Math.min(1, transitFraction)
+        : TRAIL_TRANSIT_FRACTION;
+    this.trailFraction = f;
   }
 
   setColorMode(mode: ColorBy): void {
@@ -333,7 +344,7 @@ export class ParticleSim {
 
   /** Record a new trail sample for every particle once per sample interval. */
   private sampleHistory(dt: number): void {
-    const interval = (TRAIL_TRANSIT_FRACTION * this.transit) / TRAIL_POINTS;
+    const interval = (this.trailFraction * this.transit) / TRAIL_POINTS;
     this.historyClock += dt;
     if (this.historyClock < interval) return;
     this.historyClock = this.historyClock >= 2 * interval ? 0 : this.historyClock - interval;

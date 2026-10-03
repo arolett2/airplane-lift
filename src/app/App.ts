@@ -4,14 +4,14 @@
  */
 import { domainForGeometry, type TunnelDomain } from '../physics/domain';
 import type { WingGeometry } from '../physics/types';
-import { ParticleSystem } from '../render/flow/ParticleSystem';
+import { ParticleSystem, TRAIL_DRIFT } from '../render/flow/ParticleSystem';
 import { simSecondsPerSecond } from '../render/flow/playback';
 import { StreamlineRenderer } from '../render/flow/StreamlineRenderer';
 import { ForceArrows } from '../render/forces/ForceArrows';
 import { SpanLoadViz } from '../render/forces/SpanLoadViz';
 import { PressureLegend } from '../render/overlay/PressureLegend';
 import { SceneManager } from '../render/SceneManager';
-import { wingFraming, type WingFraming } from '../render/util/framing';
+import { crossCutX, wingFraming, type WingFraming } from '../render/util/framing';
 import { WindTunnel } from '../render/tunnel/WindTunnel';
 import { WingMesh } from '../render/wing/WingMesh';
 import { DEFAULT_STATE, INITIAL_PRESET_ID, type AppState } from '../state/params';
@@ -39,6 +39,9 @@ const DEFAULT_COMPARE: [string, string] = ['b747-400', 'b737-800'];
 const WIDE_LAYOUT_QUERY = '(min-width: 1100px)';
 /** Breathing room kept between a floating panel and the framed scene (CSS px). */
 const PANEL_GAP_PX = 8;
+/** Cross-flow light sheet half-thickness (semispans) and its smoke trail length (transits). */
+const CROSS_SHEET_HALF = 0.14;
+const CROSS_TRAIL_LENGTH = 0.3;
 
 function initialState(): AppState {
   const fallback = getPreset(INITIAL_PRESET_ID)
@@ -332,15 +335,30 @@ export async function startApp(root: HTMLElement): Promise<void> {
   }
   store.select(focusEta, () => focusCamera());
 
-  // Side / section cutaway: the scene in front of the station is clipped away; show only the
-  // smoke in a thin "light sheet" at the station, and hide the force arrows (they sit at the
-  // centreline, which the cut removes).
+  // Cutaways (see SceneManager). Side / section: the scene in front of the station is clipped
+  // away; show only the smoke in a thin "light sheet" at the station, keep a slab of wing, and
+  // hide the force arrows (they sit at the centreline, which the cut removes). Behind / tip:
+  // the wake is cut across the flow; show the smoke in a slab just upstream of the cut, with
+  // longer trails, so its swirl round the tips and the downwash between them read clearly.
   function applyCutaway(): void {
-    const cut = scene.cutawayActive;
-    forces.setVisible(store.get().view.showForces && !cut);
-    wingMesh.setClipPlanes(cut ? [scene.cutawayFarPlane] : null);
-    const st = framing?.station;
-    particles.setLightSheet(cut && st ? { y: st.le[1], halfWidth: 0.6 * st.chord } : null);
+    const kind = scene.cutaway;
+    const span = kind === 'span';
+    forces.setVisible(store.get().view.showForces && !span);
+    wingMesh.setClipPlanes(span ? [scene.cutawayFarPlane] : null);
+    particles.setTrailLength(kind === 'cross' ? CROSS_TRAIL_LENGTH : null);
+    // End-on, trails drawn moving with the air show only the cross-flow: arcs round each tip.
+    particles.setTrailDrift(kind === 'cross' ? 1 : TRAIL_DRIFT);
+    if (!framing || !geometry || kind === 'none') {
+      particles.setLightSheet(null);
+    } else if (span) {
+      const st = framing.station;
+      particles.setLightSheet({ normal: [0, 1, 0], offset: st.le[1], halfWidth: 0.6 * st.chord });
+    } else {
+      const s = 0.5 * geometry.overallSpan;
+      const h = CROSS_SHEET_HALF * s;
+      const cut = crossCutX(framing.max[0], s);
+      particles.setLightSheet({ normal: [1, 0, 0], offset: cut - h, halfWidth: h });
+    }
   }
   scene.onCutawayChange(() => applyCutaway());
 

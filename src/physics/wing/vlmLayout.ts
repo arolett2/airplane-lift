@@ -8,6 +8,17 @@
  *   chordDir = +x rotated nose-up by twist about t  = cos(tw) x - sin(tw) n0,
  *   normalDir = n0 rotated the same way              = cos(tw) n0 + sin(tw) x.
  * The airfoil point (x, y) sits at le + chord * (x * chordDir + y * normalDir).
+ *
+ * Robustness rules (each one fixed a lattice that went singular or mesh-dependent):
+ * - Wing edges are projected into the vertical streamwise plane through their leading edge (the
+ *   root into the symmetry plane), so twist, camber and flap droop on a dihedral wing cannot
+ *   push camber lines across y = 0 or across each other (edgePoint).
+ * - Bound vortices and control points lie on the flat panels between edge stations, the same
+ *   piecewise-flat sheet the trailing legs follow.
+ * - A tip device starts exactly on its parent's last strip edge and blends to its own sections
+ *   over its first segment (StripEdge.shift), so junction trailing legs coincide.
+ * - Segments that would carry degenerate horseshoes (nearly streamwise bound vortices, or a strip
+ *   folding over itself) are skipped; the next segment blends back over them (edgesUsable).
  */
 import type { FlapState, LiftingSurface, Naca4Params, Vec3, WingGeometry } from '../types';
 import { camberLine, cosineSpacing } from '../airfoil/naca';
@@ -184,7 +195,8 @@ function sameFlap(a: FlapState | null, b: FlapState | null): boolean {
 
 /**
  * One side edge of a strip: the section it is cut from, the flap camber lines averaged on it,
- * whether it is a wing root that must lie in the symmetry plane, and an optional transition
+ * whether it is flattened into a vertical streamwise plane (wing surfaces, see edgePoint) and
+ * whether that plane is the symmetry plane (wing root), and an optional transition
  * shift: weight * (from - to), pointwise along the chord. A segment that starts on an edge other
  * than its own inboard section (a device on its parent's tip edge, or a segment stretched back
  * over skipped slivers) blends from that edge (weight 1 at the segment start) to its own sections
@@ -193,16 +205,21 @@ function sameFlap(a: FlapState | null, b: FlapState | null): boolean {
 interface StripEdge {
   section: FramedSection;
   flaps: readonly (FlapState | null)[];
+  vertical: boolean;
   onSymmetryPlane: boolean;
   shift?: { from: StripEdge; to: StripEdge; weight: number };
 }
 
 /**
- * Camber-surface point of a strip edge. A root edge on the symmetry plane is projected onto
- * y = 0 along its section span tangent: with dihedral (roll != 0) the section plane is tilted, so
- * camber and twist would otherwise push the root's camber line across y = 0, where it would
- * overlap its own mirror image (crossed root trailing legs pass right next to the root control
- * points, and the error grows without bound as the mesh is refined).
+ * Camber-surface point of a strip edge. On wing surfaces (`vertical`) every edge is projected,
+ * along its section span tangent, onto the vertical streamwise plane through its own leading
+ * edge (the symmetry plane for the root), as in AVL. With dihedral (roll != 0) the WingSection
+ * plane is tilted, so camber, twist and flap droop shift an edge's camber line sideways by
+ * (drop) * sin(roll); near the root that shift exceeds the strip width (a long chord on a short,
+ * twisted span), the camber lines cross y = 0 and overlap their own mirror images, and the
+ * crossed trailing legs pass right next to control points (CL off by orders of magnitude, and
+ * diverging under mesh refinement). The projection moves points by that sideways shift and
+ * changes their height only by (drop) sin(roll) tan(roll).
  */
 function edgePoint(e: StripEdge, x: number): Vec3 {
   const p = camberPoint(e.section, e.flaps, x);
@@ -210,11 +227,12 @@ function edgePoint(e: StripEdge, x: number): Vec3 {
   p[0] += d[0];
   p[1] += d[1];
   p[2] += d[2];
-  if (e.onSymmetryPlane) {
+  if (e.vertical || e.onSymmetryPlane) {
+    const target = e.onSymmetryPlane ? 0 : e.section.le[1] + edgeShift(e, 0)[1];
     const ty = Math.cos(e.section.roll);
     const tz = Math.sin(e.section.roll);
-    if (Math.abs(ty) > 0.2) p[2] -= (p[1] / ty) * tz;
-    p[1] = 0;
+    if (Math.abs(ty) > 0.2) p[2] -= ((p[1] - target) / ty) * tz;
+    p[1] = target;
   }
   return p;
 }
@@ -364,9 +382,10 @@ function edgesUsable(a: StripEdge, b: StripEdge): boolean {
 /** Whether segment k of a surface can carry strips (see edgesUsable). */
 export function segmentUsable(surface: LiftingSurface, k: number): boolean {
   const flap = [segmentFlap(surface, k)];
+  const vertical = surface.role === 'wing';
   return edgesUsable(
-    { section: framedSection(surface, k, 0), flaps: flap, onSymmetryPlane: false },
-    { section: framedSection(surface, k, 1), flaps: flap, onSymmetryPlane: false },
+    { section: framedSection(surface, k, 0), flaps: flap, vertical, onSymmetryPlane: false },
+    { section: framedSection(surface, k, 1), flaps: flap, vertical, onSymmetryPlane: false },
   );
 }
 
@@ -459,11 +478,12 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
       n = Math.max(1, Math.round(options.spanwisePanelsDevice));
       eta0 = 1;
     }
-    const rootOnSymmetryPlane =
-      surface.role === 'wing' && Math.abs(surface.sections[0]!.le[1]) <= symTol;
+    const vertical = surface.role === 'wing';
+    const rootOnSymmetryPlane = vertical && Math.abs(surface.sections[0]!.le[1]) <= symTol;
     const ownEdge = (k: number, f: number): StripEdge => ({
       section: framedSection(surface, k, f),
       flaps: [segmentFlap(surface, k)],
+      vertical,
       onSymmetryPlane: rootOnSymmetryPlane && k === 0 && f === 0,
     });
 
@@ -530,11 +550,13 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
             : {
                 section: framedSection(surface, k, piece.f0),
                 flaps: flapsA,
+                vertical,
                 onSymmetryPlane: rootOnSymmetryPlane && k === 0 && piece.f0 === 0,
               };
       const edgeSpecB: StripEdge = {
         section: framedSection(surface, k, piece.f1),
         flaps: flapsB,
+        vertical,
         onSymmetryPlane: false,
         shift: shift(piece.f1),
       };
@@ -563,22 +585,28 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
       const fc = piece.fc;
       for (let i = 0; i < nc; i++) {
         const x0 = xs[i]!;
-        const x1 = xs[i + 1]!;
-        const xq = x0 + 0.25 * (x1 - x0);
-        const x3 = x0 + 0.75 * (x1 - x0);
-        boundA.push(...edgePoint(edgeSpecA, xq));
-        boundB.push(...edgePoint(edgeSpecB, xq));
+        const x3 = x0 + 0.75 * (xs[i + 1]! - x0);
+        // Flat panels between the edge stations (which lie on the camber surface): the bound
+        // vortex at the panel's 1/4 line and the control point at its 3/4 line lie on the same
+        // piecewise-flat sheet as the trailing legs, which follow the edges station to station.
+        // (On the analytic camber line instead, a coarse panel under a strongly curved mean line
+        // puts the control point above or below the legs' sheet by its sagitta: 1.5% of the chord
+        // for 9% camber at 86%, more than a strip's width on a 20 m chord with a 2 m semispan,
+        // and the lattice went singular.)
+        const pa0 = edgePoint(edgeSpecA, x0);
+        const pa1 = edgePoint(edgeSpecA, xs[i + 1]!);
+        const pb0 = edgePoint(edgeSpecB, x0);
+        const pb1 = edgePoint(edgeSpecB, xs[i + 1]!);
+        const at = (u: Vec3, v: Vec3, f: number): Vec3 => add(u, scaleVec(sub(v, u), f));
+        boundA.push(...at(pa0, pa1, 0.25));
+        boundB.push(...at(pb0, pb1, 0.25));
         trailingA.push(...teA);
         trailingB.push(...teB);
-        const pa3 = edgePoint(edgeSpecA, x3);
-        const pb3 = edgePoint(edgeSpecB, x3);
-        controlPoints.push(
-          pa3[0] + fc * (pb3[0] - pa3[0]),
-          pa3[1] + fc * (pb3[1] - pa3[1]),
-          pa3[2] + fc * (pb3[2] - pa3[2]),
-        );
-        // Normal of the local camber surface: chordwise tangent (camber slope in the centre
-        // section's axes) crossed with the spanwise tangent through the control point.
+        const pa3 = at(pa0, pa1, 0.75);
+        const pb3 = at(pb0, pb1, 0.75);
+        controlPoints.push(...at(pa3, pb3, fc));
+        // Normal of the local camber surface: chordwise tangent (camber slope at the control
+        // point, in the centre section's axes) crossed with the spanwise tangent through it.
         const slope = camberLine(ec.airfoil, flap, x3).slope;
         const tc: Vec3 = [
           ec.chordDir[0] + slope * ec.normalDir[0],
@@ -586,10 +614,6 @@ export function layoutHalfWing(geometry: WingGeometry, options: LayoutOptions): 
           ec.chordDir[2] + slope * ec.normalDir[2],
         ];
         normals.push(...normalize(cross(tc, sub(pb3, pa3))));
-        const pa0 = edgePoint(edgeSpecA, x0);
-        const pa1 = edgePoint(edgeSpecA, x1);
-        const pb0 = edgePoint(edgeSpecB, x0);
-        const pb1 = edgePoint(edgeSpecB, x1);
         panelAreas.push(0.5 * norm(cross(sub(pb1, pa0), sub(pb0, pa1))));
         panelStrip.push(stripIndex);
       }

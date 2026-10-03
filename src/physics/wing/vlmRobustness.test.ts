@@ -302,6 +302,112 @@ describe('vlm degenerate device slivers', () => {
   });
 });
 
+describe('vlm lattice consistency on extreme wings', () => {
+  const alpha = 5 * DEG;
+  const meshes: Partial<VlmOptions>[] = [
+    {},
+    { spanwisePanelsWing: 48, chordwisePanels: 12 },
+    { spanwisePanelsWing: 64, chordwisePanels: 8 },
+  ];
+
+  it('keeps every wing edge in its own streamwise plane (deep flaps on anhedral, short twisted span)', () => {
+    // With dihedral the section planes are tilted, so flap droop, twist and camber move each
+    // edge's trailing edge sideways by drop * sin(roll). Near the root that exceeds the strip
+    // width: edges crossed y = 0 and each other (before: CDi < 0, or CL 0.22 -> 0.08 under
+    // refinement).
+    for (const spec of [
+      {
+        span: 34,
+        rootChord: 15,
+        taper: 0.42,
+        sweepQuarterDeg: 60,
+        dihedralDeg: -10,
+        rootIncidenceDeg: 8,
+        washoutDeg: -3.4,
+        airfoil: { camber: 0.086, camberPos: 0.41, thickness: 0.2 },
+        flap: { chordFrac: 0.4, deflectionDeg: 40, spanFrac: 0.53 },
+      },
+      {
+        span: 4,
+        rootChord: 8,
+        dihedralDeg: 13,
+        rootIncidenceDeg: 8,
+        washoutDeg: -5,
+        airfoil: { camber: 0.06, camberPos: 0.4, thickness: 0.12 },
+      },
+    ] satisfies TestWingSpec[]) {
+      const cl: number[] = [];
+      for (const o of meshes) {
+        const m = buildVlmModel(makeTestWing(spec), o);
+        for (const pts of rightHalfPoints(m)) {
+          for (let i = 1; i < pts.length; i += 3) expect(pts[i]).toBeGreaterThanOrEqual(-1e-12);
+        }
+        const s = solveVlm(m, { alpha });
+        expect(s.CDi).toBeGreaterThan(0);
+        cl.push(s.CL);
+      }
+      expect(relSpread(cl)).toBeLessThan(0.03);
+    }
+  });
+
+  it('puts bound vortices and control points on the flat panels the trailing legs follow', () => {
+    // 9% camber at 86% chord on a 20 m chord with a 2 m semispan: on the analytic camber line the
+    // aft control points sat ~0.3 m off the legs' piecewise-flat sheet, more than a strip width,
+    // and the lattice went singular (CL -5000 at 5 deg; -5e5 on a finer mesh).
+    for (const sweepQuarterDeg of [0, 60]) {
+      const spec: TestWingSpec = {
+        span: 4,
+        rootChord: 20,
+        taper: 0.24,
+        sweepQuarterDeg,
+        rootIncidenceDeg: -3.4,
+        washoutDeg: -1.6,
+        airfoil: { camber: 0.09, camberPos: 0.86, thickness: 0.04 },
+      };
+      for (const o of meshes) {
+        const s = solveVlm(buildVlmModel(makeTestWing(spec), o), { alpha });
+        // Aspect ratio 0.3: CL_alpha ~ pi A / 2 ~ 0.5 per rad, plus the camber.
+        expect(s.CL).toBeGreaterThan(0.03);
+        expect(s.CL).toBeLessThan(0.2);
+        expect(s.CDi).toBeGreaterThan(0);
+        expect(s.CDi).toBeLessThan(0.1);
+      }
+    }
+  });
+
+  it('leaves out tip devices that cut through the wing surface, and says so', () => {
+    // A vertical winglet with 9% camber and 8 deg toe on a 9 m tip chord: its camber surface
+    // bulges across the wing tip's. Unchecked, CL came out 4.1 instead of ~0.9.
+    const spec: TestWingSpec = {
+      span: 58,
+      rootChord: 14,
+      taper: 0.62,
+      sweepQuarterDeg: 57,
+      rootIncidenceDeg: 7,
+      washoutDeg: 5.7,
+      airfoil: { camber: 0.09, camberPos: 0.62, thickness: 0.04 },
+    };
+    const m = buildVlmModel(
+      makeTestWing({
+        ...spec,
+        devices: [{ heightFrac: 0.05, cantDeg: 0, taper: 0.1, twistDeg: 8 }],
+      }),
+    );
+    expect(m.warnings).toHaveLength(1);
+    expect(m.warnings[0]).toMatch(/wingtip devices were left out/);
+    expect(m.strips.some((s) => s.surfaceId.startsWith('device'))).toBe(false);
+    const plain = buildVlmModel(makeTestWing(spec));
+    expect(plain.warnings).toHaveLength(0);
+    expect(solveVlm(m, { alpha }).CL).toBeCloseTo(solveVlm(plain, { alpha }).CL, 12);
+    // A sound winglet on the same wing is kept.
+    const sound = buildVlmModel(
+      makeTestWing({ ...spec, airfoil: NACA4412, devices: [{ heightFrac: 0.05, cantDeg: 20 }] }),
+    );
+    expect(sound.warnings).toHaveLength(0);
+    expect(sound.strips.some((s) => s.surfaceId.startsWith('device'))).toBe(true);
+  });
+});
+
 describe('vlm extreme slider combinations', () => {
   it('stays finite with positive induced drag over the slider extremes', () => {
     // Deterministic corners of the UI ranges (span 4..90, root chord 0.3..20, taper 0.1..1,

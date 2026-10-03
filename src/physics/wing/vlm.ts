@@ -9,11 +9,15 @@
  *
  * Method summary
  * - Layout (vlmLayout.ts): per right-side surface, strips with half-cosine spacing toward the tip
- *   whose edges land on the geometry's sections; cosine-spaced chordwise panels on the camber
- *   surface (flap included). Bound vortex on the panel 1/4-chord line, control point at 3/4 chord,
- *   trailing legs along the strip's side edges on the camber surface to the trailing edge, then
- *   along body +x. (Straight legs from the bound vortex to the trailing edge would cut below a
- *   deflected flap and cost a 40-degree flapped AR-8 wing ~20% of its lift slope.)
+ *   whose edges land on the geometry's sections; cosine-spaced chordwise stations on the camber
+ *   surface (flap included) and flat panels between them. Bound vortex on the panel 1/4-chord
+ *   line, control point at 3/4 chord (normal from the camber slope there), trailing legs along
+ *   the strip's side edges station by station to the trailing edge, then along body +x.
+ *   (Straight legs from the bound vortex to the trailing edge would cut below a deflected flap
+ *   and cost a 40-degree flapped AR-8 wing ~20% of its lift slope.) Wing edges lie in vertical
+ *   streamwise planes (the root in the symmetry plane); a tip device starts exactly on its
+ *   parent's last edge; slivers that would make the lattice singular are left out (see
+ *   vlmLayout.ts). buildVlmModel finally checks the solution for plausibility.
  *   Spanwise, control points (and the Trefftz and Kutta–Joukowski evaluation points) sit at each
  *   strip's mid-ANGLE in the cosine parameter (semicircle method): the arithmetic mid-span near
  *   the root, 3/4 of the strip width at the tip. With plain mid-span points a horseshoe lattice
@@ -175,6 +179,11 @@ export interface VlmModel {
   /** Prandtl–Glauert factor sqrt(1 - M^2) with M clamped to [0, VLM_MAX_MACH]. */
   beta: number;
   solver: VlmSolverData;
+  /**
+   * Problems met while building the lattice, in plain words for AeroResult.warnings (empty when
+   * all is well). See buildVlmModel's lattice health check.
+   */
+  warnings: string[];
 }
 
 export interface VlmSolveInput {
@@ -261,8 +270,66 @@ function mirrorVec(v: Vec3): Vec3 {
   return [v[0], -v[1], v[2]];
 }
 
+/**
+ * Plausibility limits for a sound lattice (all times beta): per-strip lift slope and zero-alpha
+ * cl, whole-wing lift slope and zero-alpha CL. Over the aircraft presets and 800 random slider
+ * settings (flaps to 40 deg, camber to 9%, every tip device, Mach to 0.95) the largest values
+ * are 8.5, 4.3, 7.0 and 3.6; lattices broken by self-intersecting geometry reach hundreds or
+ * thousands. The limits leave about a factor of two.
+ */
+const HEALTHY_STRIP_SLOPE = 16;
+const HEALTHY_STRIP_CL = 8;
+const HEALTHY_WING_SLOPE = 12;
+const HEALTHY_WING_CL = 6;
+
+/** Whether the lattice's linear solution is physically plausible (see HEALTHY_STRIP_SLOPE). */
+function latticeHealthy(model: VlmModel): boolean {
+  const da = 0.1;
+  const a = solveVlm(model, { alpha: 0 });
+  const b = solveVlm(model, { alpha: da });
+  const k = model.beta;
+  for (let j = 0; j < model.halfStripCount; j++) {
+    const slope = (Math.abs(b.stripCl[j]! - a.stripCl[j]!) / da) * k;
+    const cl0 = Math.abs(a.stripCl[j]!) * k;
+    if (!(slope <= HEALTHY_STRIP_SLOPE && cl0 <= HEALTHY_STRIP_CL)) return false;
+  }
+  const wingSlope = (Math.abs(b.CL - a.CL) / da) * k;
+  return wingSlope <= HEALTHY_WING_SLOPE && Math.abs(a.CL) * k <= HEALTHY_WING_CL;
+}
+
+/**
+ * Build (and factorise) the lattice. A health check then solves it at two angles: if any strip's
+ * lift is implausible (see HEALTHY_STRIP_SLOPE) the input geometry is beyond what a vortex lattice
+ * can represent, which in practice means tip-device surfaces that cross the wing's own camber
+ * surface (very large camber, toe and device chord together). The model is then rebuilt without
+ * the tip devices and says so in `warnings`, rather than handing on lift values that are off by
+ * orders of magnitude. Costs two extra solves (~0.2 ms).
+ */
 export function buildVlmModel(geometry: WingGeometry, options?: Partial<VlmOptions>): VlmModel {
   const opts: VlmOptions = { ...DEFAULT_VLM_OPTIONS, ...options };
+  const model = buildLattice(geometry, opts);
+  if (latticeHealthy(model)) return model;
+  const wingOnly = geometry.surfaces.filter((s) => s.role !== 'tip-device');
+  if (wingOnly.length < geometry.surfaces.length) {
+    const bare = buildLattice({ ...geometry, surfaces: wingOnly }, opts);
+    if (latticeHealthy(bare)) {
+      bare.geometry = geometry;
+      bare.warnings.push(
+        'The wingtip devices were left out of the lift calculation: with these settings they ' +
+          'cut through the wing surface, which the calculation cannot handle. Try less camber, ' +
+          'toe or device size.',
+      );
+      return bare;
+    }
+  }
+  model.warnings.push(
+    'This wing shape is beyond what the lift calculation can handle reliably; the numbers may ' +
+      'be far off.',
+  );
+  return model;
+}
+
+function buildLattice(geometry: WingGeometry, opts: VlmOptions): VlmModel {
   const mach = Math.min(Math.max(opts.mach || 0, 0), VLM_MAX_MACH);
   const beta = Math.sqrt(1 - mach * mach);
   const layout = layoutHalfWing(geometry, opts);
@@ -556,6 +623,7 @@ export function buildVlmModel(geometry: WingGeometry, options?: Partial<VlmOptio
       rhs: new Float64Array(N),
       gammaHalf: new Float64Array(N),
     },
+    warnings: [],
   };
 }
 

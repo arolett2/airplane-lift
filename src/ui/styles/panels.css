@@ -247,6 +247,35 @@
   color: var(--warning);
 }
 
+/* A calm note, not a warning: normal situations worth explaining (e.g. transonic cruise). */
+.banner--info {
+  position: relative;
+  padding-left: calc(var(--space-3) + 14px);
+  background: rgba(94, 200, 255, 0.07);
+  border-color: rgba(94, 200, 255, 0.28);
+  border-width: 1px;
+}
+
+.banner--info::before {
+  content: '';
+  position: absolute;
+  left: var(--space-3);
+  top: 16px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--series-1);
+}
+
+.banner--info .banner__title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.banner--info .banner__text {
+  color: var(--muted);
+}
+
 @keyframes stall-pulse {
   50% {
     box-shadow: 0 0 0 3px var(--danger-soft);
@@ -258,30 +287,30 @@
 .metric-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .metric {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
-  padding: var(--space-3);
+  padding: 10px var(--space-3) var(--space-3);
   background: var(--elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
 
-.metric--lift,
-.metric--gauge {
+.metric--lift {
   grid-column: 1 / -1;
 }
 
 .metric__title {
   color: var(--muted);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .metric__value {
@@ -292,9 +321,9 @@
 }
 
 .metric__number {
-  font-size: var(--fs-xl);
+  font-size: 1.625rem;
   font-weight: 700;
-  line-height: 1.1;
+  line-height: 1.15;
   letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
   transition: opacity var(--dur) var(--ease);
@@ -308,23 +337,24 @@
 
 .metric__sub {
   color: var(--muted);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   line-height: 1.45;
 }
 
 .metric--lift {
-  border-color: rgba(74, 222, 128, 0.35);
-  background: linear-gradient(135deg, var(--lift-soft), var(--elevated) 70%);
+  border-color: rgba(74, 222, 128, 0.32);
+  background: linear-gradient(135deg, var(--lift-soft), var(--elevated) 65%);
 }
 
-.metric--lift .metric__number {
+.metric--lift > .metric__value .metric__number {
   color: var(--lift);
-  font-size: var(--fs-hero);
+  font-size: 2.25rem;
+  line-height: 1.05;
 }
 
 .metric--drag {
-  border-color: rgba(251, 146, 60, 0.35);
-  background: linear-gradient(135deg, var(--drag-soft), var(--elevated) 70%);
+  border-color: rgba(251, 146, 60, 0.3);
+  background: linear-gradient(135deg, var(--drag-soft), var(--elevated) 65%);
 }
 
 .metric--drag .metric__number {
@@ -335,10 +365,16 @@
   color: var(--text);
 }
 
-/* ---- Lift versus weight gauge ---- */
+/* ---- Lift versus weight gauge (inside the lift card) ---- */
 
 .metric--gauge {
   --gauge-color: var(--lift);
+  margin-top: var(--space-2);
+  padding: var(--space-2) 0 0;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
 }
 
 .metric--gauge[data-level='low'] {
@@ -349,22 +385,26 @@
   --gauge-color: var(--accent);
 }
 
+.metric--gauge .metric__value {
+  margin-top: 1px;
+}
+
 .metric--gauge .metric__number {
-  font-size: var(--fs-lg);
+  font-size: var(--fs-md);
   color: var(--gauge-color);
 }
 
 .gauge {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   padding-top: 4px;
   transition: opacity var(--dur) var(--ease);
 }
 
 .gauge__track {
   position: relative;
-  height: 12px;
+  height: 8px;
   overflow: hidden;
   background: var(--track);
   border-radius: var(--radius-pill);
@@ -396,7 +436,7 @@
   display: flex;
   justify-content: space-between;
   color: var(--faint);
-  font-size: var(--fs-xs);
+  font-size: 0.6875rem;
 }
 
 /* ---- Engineer table ---- */

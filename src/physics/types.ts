@@ -148,6 +148,13 @@ export interface SectionFlow {
   };
   /** Streamlines in airfoil frame. */
   streamlines: Streamline2D[];
+  /**
+   * Per grid node (length nx*ny): 1 inside the separated dead-air bubble when stalled, else 0.
+   * Pressure there is roughly the low base pressure, NOT 1 - |V|^2 — colour it as suction.
+   */
+  separated?: Uint8Array;
+  /** Lift coefficient carried by the drawn flow field (its circulation), close to `cl`. */
+  fieldCl?: number;
 }
 
 export interface Streamline2D {

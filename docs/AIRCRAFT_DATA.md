@@ -16,7 +16,7 @@ retuned later.
 | `cruise.airspeed`       | cruise Mach x speed of sound, ISA: `a = 340.29 * sqrt(T/288.15)` (T from the standard atmosphere at the cruise altitude).                                                                     |
 | `cruise.alphaDeg`       | Solved with the app's own solver: the root-chord angle (to 0.1 deg) at which `computeAero` gives lift = `typicalCruiseMassKg * g` at the cruise speed and altitude (see "Cruise trim" below). |
 | `approach`              | Typical final-approach speed at sea level; alpha 7 to 8 deg (the lessons deploy flaps separately). The F-16 uses 12 deg, as real F-16 approaches do.                                          |
-| `typicalCruiseMassKg`   | About 85 % of MTOW for airliners (estimate); about 75 to 86 % for light aircraft and the glider; the published "normal loaded" mass for the F-16.                                             |
+| `typicalCruiseMassKg`   | About 85 % of MTOW for airliners (estimate; 82 % for the 737 family, see "Estimates"); about 75 to 86 % for light aircraft and the glider; the published "normal loaded" mass for the F-16.   |
 
 The first estimates of the cruise angle used `alpha = CL/CLalpha + alpha_0L + 0.45 * washout`,
 with `CL = W/(q S)` and the Helmbold / DATCOM lift-curve slope (per radian), with Prandtl-Glauert
@@ -37,24 +37,38 @@ Method: for each preset, bisect the root angle of attack until `computeAero(wing
 lift = typical cruise mass x g, round to the slider step (0.1 deg) and keep the neighbour closest
 to the weight. `src/physics/presets.e2e.test.ts` re-checks all of this on every test run (lift
 within 3 % of the weight, wing-alone L/D by class, Mach margins, maximum lift, tip devices).
-The airliner angles sit at 3.7 to 4 deg. To keep them in a plausible 1 to 4 deg range the 747-400
+The airliner angles sit at 3.3 to 4 deg. To keep them in a plausible 1 to 4 deg range the 747-400
 (camber 1.5 -> 2.1 %, washout 3.5 -> 3 deg), 747-8 (camber 1.7 -> 2.2 %) and 787-9 (camber 2 -> 2.2 %)
 stand-in sections got a little more camber, as real aft-loaded transport sections have. Real
 aircraft also mount the wing at about 2 deg incidence to the fuselage, so the cockpit pitch
 attitude in cruise is smaller than these wing-root angles.
 
+**Recalibration (external benchmarks, docs/VALIDATION.md).** Two model changes moved the trims:
+
+- The 2D viscous lift slope now falls with thickness (factor `0.99 - t/c` on the panel slope,
+  0.87 at 12 %, instead of a fixed 0.92), as measured on NACA sections. Wings with 10 to 12 %
+  sections lost 3 to 5 % of lift at a given angle, so every cruise angle was re-solved: most rose
+  by 0.1 deg (747-8 and Cessna 0.2, glider 0.3); the F-16's 4 % section got slightly steeper (-0.1 deg). The
+  demo wing's mass went from 1,860 to 1,790 kg so the default flight still holds it up.
+- The 737-800 and 737 MAX 8 now use the Korn technology factor 0.90 (`supercritical: false`),
+  like the 747-400, instead of 0.95. Against the benchmark's 737-800 references this moved the
+  buffet-onset CL from 1.04 to 0.73 (reference about 0.74) and the drag-divergence Mach from
+  0.834 to 0.790 (cruise-Mach proxy 0.785). The cruise point had to move with it: at 11 km and
+  67 t the 737 sat past its new M_dd. The 737-800 now cruises at 65 t at FL340 (10,363 m), the
+  MAX at 67.5 t at FL330 (10,058 m), both at Mach 0.785 (see "Estimates").
+
 | Preset       | Cruise alpha (deg) | Mach  | CL    | Lift / weight | Wing L/D | M_crit | M_dd  | CLmax at cruise Mach (alpha) | Clean CLmax, approach (alpha) | CLmax flaps 30 + slats | Approach lift / weight, flaps up |
 | ------------ | ------------------ | ----- | ----- | ------------- | -------- | ------ | ----- | ---------------------------- | ----------------------------- | ---------------------- | -------------------------------- |
-| `b747-400`   | 3.8                | 0.850 | 0.585 | 1.002         | 27.3     | 0.751  | 0.858 | 0.83 (7)                     | 1.37 (16)                     | 2.38                   | 0.41                             |
-| `b747-8`     | 3.8                | 0.855 | 0.611 | 0.989         | 29.8     | 0.793  | 0.900 | 0.99 (8)                     | 1.46 (17)                     | 2.52                   | 0.35                             |
-| `b737-800`   | 3.8                | 0.785 | 0.595 | 1.012         | 33.5     | 0.727  | 0.834 | 1.13 (9)                     | 1.60 (17)                     | 2.71                   | 0.41                             |
-| `b737-max8`  | 4                  | 0.790 | 0.625 | 1.022         | 33.2     | 0.723  | 0.830 | 1.09 (9)                     | 1.54 (16)                     | 2.72                   | 0.39                             |
-| `b787-9`     | 3.8                | 0.850 | 0.640 | 1.006         | 29.8     | 0.763  | 0.870 | 0.94 (7)                     | 1.46 (16)                     | 2.54                   | 0.39                             |
-| `a320neo`    | 3.9                | 0.780 | 0.609 | 0.999         | 33.7     | 0.727  | 0.835 | 1.15 (9)                     | 1.54 (16)                     | 2.76                   | 0.38                             |
-| `a380-800`   | 3.7                | 0.850 | 0.552 | 1.000         | 29.2     | 0.775  | 0.883 | 0.92 (8)                     | 1.46 (17)                     | 2.51                   | 0.34                             |
-| `cessna-172` | 2.7                | 0.187 | 0.326 | 0.989         | 26.8     | 0.640  | 0.747 | 1.52 (19)                    | 1.45 (18)                     | 2.39                   | 0.82                             |
-| `glider-18m` | 4.7                | 0.108 | 0.613 | 1.003         | 47.9     | 0.611  | 0.719 | 1.44 (15)                    | 1.42 (14)                     | 2.66                   | 0.97                             |
-| `f16`        | 3.4                | 0.849 | 0.274 | 1.004         | 20.1     | 0.859  | 0.967 | 0.58 (8)                     | 0.57 (10)                     | 1.48                   | 0.47                             |
+| `b747-400`   | 3.9                | 0.850 | 0.587 | 1.005         | 27.3     | 0.750  | 0.858 | 0.83 (7)                     | 1.36 (16)                     | 2.39                   | 0.40                             |
+| `b747-8`     | 4                  | 0.855 | 0.620 | 1.003         | 29.6     | 0.791  | 0.899 | 0.98 (8)                     | 1.44 (17)                     | 2.49                   | 0.34                             |
+| `b737-800`   | 3.3                | 0.785 | 0.517 | 1.001         | 29.8     | 0.682  | 0.790 | 0.79 (7)                     | 1.57 (17)                     | 2.71                   | 0.41                             |
+| `b737-max8`  | 3.3                | 0.785 | 0.518 | 1.004         | 29.8     | 0.682  | 0.789 | 0.78 (7)                     | 1.57 (17)                     | 2.71                   | 0.39                             |
+| `b787-9`     | 3.9                | 0.850 | 0.638 | 1.004         | 29.8     | 0.763  | 0.871 | 0.93 (7)                     | 1.48 (17)                     | 2.55                   | 0.38                             |
+| `a320neo`    | 4                  | 0.780 | 0.605 | 0.992         | 33.7     | 0.728  | 0.835 | 1.14 (9)                     | 1.56 (17)                     | 2.73                   | 0.37                             |
+| `a380-800`   | 3.8                | 0.850 | 0.550 | 0.997         | 29.2     | 0.776  | 0.883 | 0.91 (8)                     | 1.48 (18)                     | 2.50                   | 0.33                             |
+| `cessna-172` | 2.9                | 0.187 | 0.328 | 0.996         | 26.8     | 0.639  | 0.747 | 1.53 (20)                    | 1.46 (19)                     | 2.37                   | 0.79                             |
+| `glider-18m` | 5                  | 0.108 | 0.611 | 1.000         | 47.9     | 0.611  | 0.719 | 1.44 (15)                    | 1.43 (15)                     | 2.62                   | 0.92                             |
+| `f16`        | 3.3                | 0.849 | 0.270 | 0.990         | 20.1     | 0.860  | 0.968 | 0.58 (8)                     | 0.58 (10)                     | 1.47                   | 0.47                             |
 
 How to read it (lift coefficients use the app's reference area, the trapezoid without the inboard
 trailing-edge extension, e.g. 114.5 m2 for the 737-800 against the published 124.6 m2, so they
@@ -63,17 +77,30 @@ read about 8 % higher than coefficients based on the published area):
 - **Mach margins.** Every airliner cruises above its critical Mach number (weak shocks, a little
   wave drag: normal) and at or just below its drag-divergence Mach number, as real airliners do.
   The app warns only past drag divergence. `M_dd` comes from the Korn equation with technology
-  factor 0.95 (supercritical) or 0.90 (older transport sections such as the 747-400's; plain
-  NACA 6-series sections would be 0.87, which would put the 747-400's M_dd near 0.83, below its
-  published Mach 0.85 cruise).
+  factor 0.95 (supercritical) or 0.90 (older transport sections; plain NACA 6-series sections
+  would be 0.87, which would put the 747-400's M_dd near 0.83, below its published Mach 0.85
+  cruise). Which presets get which factor:
+  - **0.90: 747-400, 737-800, 737 MAX 8.** For the 747-400 this matches the cruise-Mach proxy
+    to 0.003. The 737NG wing has advanced transonic sections, but it is not counted among the
+    full supercritical designs, and the benchmark settles it: with 0.95 the 737-800's buffet
+    onset and M_dd were 40 % and 0.05 too high, with 0.90 they are within 2 % and 0.005. The MAX
+    kept the NG wing, so it follows.
+  - **0.95: 747-8, 787-9, A320neo, A380.** The 787 and A380 are 2000s supercritical designs; the
+    747-8 has a redesigned wing; the A320 family was designed with aft-loaded supercritical-type
+    sections. None of them has an external reference in the benchmark suite, and the three that
+    cruise at Mach 0.85 would sit past drag divergence at their published cruise Mach with 0.90
+    (M_dd 0.84 for the 747-8, 0.82 for the 787-9, 0.83 for the A380), which contradicts how they are
+    flown. The A320neo is the open question: it cruises at the 737's Mach number on the same 25 deg
+    sweep, and with 0.95 its buffet margin (1.9 g) looks generous. With 0.90 its M_dd would be 0.781
+    at Mach 0.78, right at drag divergence. Without a reference value for it, it stays at 0.95.
 - **Maximum lift falls with Mach.** A strip's maximum lift is
   `softMin(cos^0.75(sweep) * clMax_lowSpeed, cl_buffet(M))` (see `physics/compressibility.ts`):
   the sweep factor is DATCOM's high-lift sweep correction, and `cl_buffet` is the Korn
   drag-divergence lift at that Mach number plus 0.2 (shock-induced separation, i.e. buffet).
-  So clean airliner wings reach CL 1.4 to 1.6 at approach speed, 2.4 to 2.8 with flaps and slats,
-  but only 0.8 to 1.15 at cruise Mach, 3 to 5 deg above the cruise angle. Real airliners keep a
-  1.3 g or larger margin to buffet onset in cruise; here the margin is 1.4 g (747-400) to 1.9 g
-  (A320neo), because the Korn equation is generous to the 737/A320 sections.
+  So clean airliner wings reach CL 1.4 to 1.6 at approach speed, 2.4 to 2.7 with flaps and slats,
+  but only 0.78 to 1.14 at cruise Mach, 3 to 5 deg above the cruise angle. Real airliners keep a
+  1.3 g or larger margin to buffet onset in cruise; here the margin is 1.4 g (747-400), 1.5 g
+  (737 family) and up to 1.9 g (A320neo, whose Korn factor is probably generous; see above).
 - **Approach with flaps up** the clean wing makes only a third to two fifths of the weight at
   the approach angle (7 to 7.5 deg); flaps and slats (lesson "Flaps and slats") make up the rest.
 - **Wing L/D** is the wing alone: no fuselage, tail or engines. Profile drag uses flat-plate
@@ -92,7 +119,7 @@ read about 8 % higher than coefficients based on the published area):
 | `b747-400`   | 64.44 [1][2]                                 | 525 (5,650 sq ft) [3]; some sources: 541 [2]                                       | 37.5 [4]                             | 396,890 (875,000 lb) [1][3]        | Mach 0.85 at 35,000 ft [3]                |
 | `b747-8`     | 68.40 (224 ft 7 in) [5]                      | 554 (5,960 sq ft) [5]                                                              | 37.5 (basic 747 sweep) [4][5]        | 442,000 (975,000 lb) [5]           | Mach 0.855 [5]                            |
 | `b737-800`   | 35.79 with winglets, 34.32 without [6]       | 124.6 (1,341 sq ft) [6][7]                                                         | 25 (estimate from memory, see below) | 79,016 (174,200 lb) [6]            | Mach 0.785 typical; 0.82 max [6]          |
-| `b737-max8`  | 35.90 to 35.92 (about 117 ft 10 in) [9]      | 124.6 (same wing as NG, estimate)                                                  | 25 (as 737-800)                      | 82,191 [9] (Wikipedia: 82,600) [8] | about Mach 0.79 (estimate)                |
+| `b737-max8`  | 35.90 to 35.92 (about 117 ft 10 in) [9]      | 124.6 (same wing as NG, estimate)                                                  | 25 (as 737-800)                      | 82,191 [9] (Wikipedia: 82,600) [8] | about Mach 0.79 (estimate; preset 0.785)  |
 | `b787-9`     | 60.12 (197 ft 3 in) [10][11]                 | 377 (4,058 sq ft) [10][11]                                                         | 32 [12] (32.2 in design papers)      | 254,011 (560,000 lb) [10][12]      | Mach 0.85 [10][12]; ceiling 13,100 m [10] |
 | `a320neo`    | 35.80 [13] (34.1 for the ceo with fences)    | 122.6 (commonly quoted A320-family figure; not confirmed in a primary source) [14] | 25 [14]                              | 79,000 [13][15]                    | Mach 0.78 [13]                            |
 | `a380-800`   | 79.75 [16][17]                               | 845 [16][17]                                                                       | 33.5 [16][17]                        | 575,000 [17]                       | Mach 0.85 [16][17]                        |
@@ -155,8 +182,9 @@ disagree with real life:
   2.2 %, max camber 45 to 50 % chord). The 747-400 uses 10 % (its wing runs from about 13 % at the
   root to about 8 % at the tip; estimate). The Cessna uses NACA 2412 (published); the F-16 uses a 4 %
   thick, nearly symmetric section (the real section is NACA 64A204).
-- **`supercritical`**: `true` for the 747-8, 737 family, 787, A320neo and A380 (modern designs);
-  `false` for the 747-400 (older conventional section), Cessna, glider and F-16.
+- **`supercritical`**: `true` for the 747-8, 787, A320neo and A380 (Korn factor 0.95); `false`
+  for the 747-400 and the 737 family (Korn factor 0.90, see "Mach margins" above), Cessna, glider
+  and F-16.
 - **Tip-device sizes and angles**: the 747-400 winglet cant (29 deg) is from memory and not
   re-checked; the 737-800 and A320neo blended-winglet cants (17 deg) and the MAX split-winglet cant
   (19 deg) are chosen so base span + `2 h sin(cant)` reproduces the published overall span. The 747-8
@@ -165,9 +193,14 @@ disagree with real life:
 - **Base wing of the 737 MAX 8**: same as the 737-800 (the MAX kept the Next Generation planform).
   The MAX reference area of 124.6 m2 is therefore an inference, not a quoted figure.
 - **Flap geometry** (chord 0.25 to 0.3, span 0.5 to 0.7 of the semispan).
-- **Typical cruise mass**: about 85 % of MTOW for the airliners; 1,000 kg for the Cessna 172;
+- **Typical cruise mass**: about 85 % of MTOW for the airliners, except the 737 family at about
+  82 % (737-800 65 t, the mass the benchmark's cruise-CL reference uses; MAX 8 67.5 t). 85 % would
+  put both above their maximum landing mass (about 66 t and 69 t, Boeing figures quoted from
+  memory, not re-checked), which is heavy for a typical mid-cruise; 1,000 kg for the Cessna 172;
   450 kg for the glider (pilot, no water); 12,000 kg for the F-16 (published "normal loaded").
-- **Cruise altitudes**: airliners 10,668 m (35,000 ft), 11,000 m or 11,900 m; the F-16 at 9,000 m,
+- **Cruise altitudes**: airliners 10,668 m (35,000 ft), 11,000 m or 11,900 m; the 737-800 at
+  10,363 m (FL340) and the 737 MAX 8 at 10,058 m (FL330), low enough that at Mach 0.785 they stay
+  just below drag divergence with the 0.90 Korn factor; the F-16 at 9,000 m,
   the Cessna at 2,438 m (8,000 ft), the glider at 1,500 m.
 - **Cruise angle of attack** for every preset: solved with the app's solver (see "Cruise trim"),
   so it is only as good as the stand-in sections, washout and the solver. Real aircraft also get

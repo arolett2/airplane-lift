@@ -106,6 +106,14 @@ class Figure {
 }
 
 const percentTick = (v: number): string => `${Math.round(v * 100)}%`;
+
+/** Round up to 1, 2, 2.5 or 5 times a power of ten, for a tidy axis end. */
+function niceCeil(v: number): number {
+  if (!(v > 0)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (m * p >= v - 1e-12) return m * p;
+  return 10 * p;
+}
 const percentTip = (v: number): string => `${(v * 100).toFixed(0)}%`;
 
 export class ChartsPanel {
@@ -540,9 +548,21 @@ export class ChartsPanel {
         dash: [6, 4],
       });
     }
+    // Past the stall (or deep into wave drag) the drag shoots up; showing all of it squashes
+    // the useful part of the curve into the corner. Show the region around the best glide and
+    // the current operating point.
+    let cdMax = 0;
+    for (let i = 0; i < data.CD.length; i++) cdMax = Math.max(cdMax, data.CD[i]!);
+    const focus = Math.max((data.bestGlide?.CD ?? 0) * 6, (data.current?.CD ?? 0) * 2);
+    const xMax = focus > 0 && focus < cdMax ? focus : undefined;
     fig.show(
       {
-        x: { label: 'Drag coefficient', short: 'CD', includeZero: true },
+        x: {
+          label: 'Drag coefficient',
+          short: 'CD',
+          includeZero: true,
+          ...(xMax ? { max: niceCeil(xMax) } : {}),
+        },
         y: { label: 'Lift coefficient', short: 'CL', includeZero: true },
         series,
         markers: data.current

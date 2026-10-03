@@ -214,6 +214,16 @@ describe('explainDifferences', () => {
     expect(explainDifferences(big, small).find((s) => /larger wing/.test(s))).toContain('60.0 m');
   });
 
+  it('calls a long but small-area wing long and narrow, not "larger"', () => {
+    const glider = summary('glider', { span: 18, rootChord: 0.8, tipChord: 0.35 });
+    const fighter = summary('fighter', { span: 9.4, rootChord: 5, tipChord: 1 });
+    const out = explainDifferences(glider, fighter);
+    expect(out.some((s) => /larger wing/.test(s))).toBe(false);
+    const line = out.find((s) => /long and narrow/.test(s))!;
+    expect(line).toContain('glider');
+    expect(line).toContain('less wing area');
+  });
+
   it('ties sweep to cruise speed only when the numbers agree', () => {
     const swept = summary('swept', { sweepOffset: 6, mach: 0.85 });
     const straight = summary('straight', { sweepOffset: 0, mach: 0.3 });

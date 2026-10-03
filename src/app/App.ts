@@ -430,7 +430,9 @@ export async function startApp(root: HTMLElement): Promise<void> {
     (window as unknown as { __tunnel?: unknown }).__tunnel = { store, results, scene };
   }
 
-  window.addEventListener('pagehide', () => {
+  window.addEventListener('pagehide', (event: PageTransitionEvent) => {
+    // A page kept in the back/forward cache comes back as it was: tear down only on a real unload.
+    if (event.persisted) return;
     insetObserver?.disconnect();
     wideLayout?.removeEventListener?.('change', measureInsets);
     for (const p of panels) p.destroy();

@@ -153,3 +153,47 @@ describe('createAppShell behaviour', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
   });
 });
+
+describe('view insets', () => {
+  const rect = (left: number, top: number, width: number, height: number) =>
+    ({
+      left,
+      top,
+      width,
+      height,
+      right: left + width,
+      bottom: top + height,
+      x: left,
+      y: top,
+      toJSON() {},
+    }) as DOMRect;
+
+  it('reports how much of the viewport the floating panels cover', () => {
+    const rects = new Map<Element, DOMRect>([
+      [shell.viewport, rect(0, 0, 1440, 900)],
+      [shell.topBar, rect(12, 12, 1416, 52)],
+      [root.querySelector('#panel-left')!, rect(12, 76, 320, 800)],
+      [root.querySelector('#panel-right')!, rect(1068, 76, 360, 800)],
+    ]);
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element,
+    ) {
+      return rects.get(this) ?? rect(0, 0, 0, 0);
+    });
+    vi.spyOn(Element.prototype, 'getClientRects').mockImplementation(function (this: Element) {
+      return (rects.has(this) ? [rects.get(this)] : []) as unknown as DOMRectList;
+    });
+    expect(shell.getViewInsets()).toEqual({ top: 64, right: 372, bottom: 0, left: 332 });
+  });
+
+  it('notifies listeners once per frame and stops after unsubscribe', async () => {
+    const seen: unknown[] = [];
+    const off = shell.onViewInsetsChange((insets) => seen.push(insets));
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(seen).toHaveLength(1);
+    off();
+    shellEl().dataset.panel = 'left';
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(seen).toHaveLength(1);
+  });
+});

@@ -34,9 +34,25 @@ export interface ShellSlots {
   compare: HTMLElement; // modal / drawer host
 }
 
+/** CSS pixels of the viewport covered by floating UI on each side. */
+export interface ViewInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
 export interface AppShell extends ShellSlots {
   /** Show or hide the subtle "computing" shimmer along the top edge. */
   setBusy(on: boolean): void;
+  /**
+   * How much of the viewport the floating panels, top bar, tab bar and lesson card cover on
+   * each side, so the 3D camera can frame the model in the free area between them. Drawers and
+   * the bottom sheet count only while open.
+   */
+  getViewInsets(): ViewInsets;
+  /** Called (at most once per frame) whenever the insets change. Returns an unsubscribe. */
+  onViewInsetsChange(listener: (insets: ViewInsets) => void): () => void;
   /** Show a short message that fades away by itself. */
   toast(message: string): void;
   /** Remove the shell and every listener it added. */
@@ -215,6 +231,85 @@ export function createAppShell(root: HTMLElement): AppShell {
     disposables.add(() => drawer.removeEventListener?.('change', onChange));
   }
 
+  // View insets ------------------------------------------------------------------------------
+  const isShown = (el: HTMLElement): boolean => {
+    if (!el.isConnected || el.getClientRects().length === 0) return false;
+    const style = getComputedStyle(el);
+    return style.visibility !== 'hidden' && style.display !== 'none';
+  };
+  const getViewInsets = (): ViewInsets => {
+    const view = viewport.getBoundingClientRect();
+    const insets: ViewInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+    if (!(view.width > 0 && view.height > 0)) return insets;
+    const coverTop = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      if (r.height > 0) insets.top = Math.max(insets.top, r.bottom - view.top);
+    };
+    const coverBottom = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      if (r.height > 0 && r.top < view.bottom)
+        insets.bottom = Math.max(insets.bottom, view.bottom - r.top);
+    };
+    coverTop(topBar);
+    const phone = typeof matchMedia === 'function' && matchMedia(PHONE_QUERY).matches;
+    if (phone) {
+      coverBottom(shell.dataset.sheet === 'open' ? panels : tabBar);
+    } else {
+      if (isShown(left)) {
+        const r = left.getBoundingClientRect();
+        if (r.right > view.left) insets.left = Math.max(0, r.right - view.left);
+      }
+      if (isShown(right)) {
+        const r = right.getBoundingClientRect();
+        if (r.left < view.right) insets.right = Math.max(0, view.right - r.left);
+      }
+    }
+    const card = lesson.firstElementChild;
+    if (card instanceof HTMLElement && isShown(card)) coverBottom(card);
+    for (const k of ['top', 'right', 'bottom', 'left'] as const) insets[k] = Math.round(insets[k]);
+    return insets;
+  };
+
+  const insetListeners = new Set<(insets: ViewInsets) => void>();
+  let lastInsets = '';
+  let insetFrame = 0;
+  const emitInsets = () => {
+    insetFrame = 0;
+    if (insetListeners.size === 0) return;
+    const insets = getViewInsets();
+    const key = `${insets.top},${insets.right},${insets.bottom},${insets.left}`;
+    if (key === lastInsets) return;
+    lastInsets = key;
+    for (const listener of insetListeners) listener(insets);
+  };
+  const scheduleInsets = () => {
+    if (insetFrame || insetListeners.size === 0) return;
+    if (typeof requestAnimationFrame === 'function') insetFrame = requestAnimationFrame(emitInsets);
+    else emitInsets();
+  };
+  if (typeof ResizeObserver !== 'undefined') {
+    const observer = new ResizeObserver(scheduleInsets);
+    for (const el of [viewport, topBar, left, right, lesson, tabBar]) observer.observe(el);
+    disposables.add(() => observer.disconnect());
+  }
+  if (typeof MutationObserver !== 'undefined') {
+    // Drawers / sheet opening, and the lesson card appearing or folding.
+    const observer = new MutationObserver(scheduleInsets);
+    observer.observe(shell, { attributes: true, attributeFilter: ['data-panel', 'data-sheet'] });
+    observer.observe(lesson, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['hidden', 'class'],
+      childList: true,
+    });
+    disposables.add(() => observer.disconnect());
+  }
+  disposables.listen(shell, 'transitionend', scheduleInsets);
+  disposables.add(() => {
+    if (insetFrame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(insetFrame);
+    insetListeners.clear();
+  });
+
   // Toasts -----------------------------------------------------------------------------------
   const toastTimers = new Set<ReturnType<typeof setTimeout>>();
   const later = (fn: () => void, ms: number) => {
@@ -253,6 +348,13 @@ export function createAppShell(root: HTMLElement): AppShell {
       viewport.setAttribute('aria-busy', String(on));
     },
     toast,
+    getViewInsets,
+    onViewInsetsChange(listener) {
+      insetListeners.add(listener);
+      lastInsets = '';
+      scheduleInsets();
+      return () => insetListeners.delete(listener);
+    },
     destroy() {
       disposables.dispose();
       for (const t of toastTimers) clearTimeout(t);

@@ -724,7 +724,6 @@ export function computePolarSweep(
   const CL = new Float32Array(n);
   const CD = new Float32Array(n);
   const sectionCl = new Float32Array(n);
-  let best = 0;
   for (let k = 0; k < n; k++) {
     const aDeg = POLAR_ALPHA_MIN_DEG + k * POLAR_ALPHA_STEP_DEG;
     const a = aDeg * DEG;
@@ -744,8 +743,8 @@ export function computePolarSweep(
       sol.CDi +
       lockWaveDrag(mach, comp.machCritical);
     sectionCl[k] = rootPolar ? rootPolar.cl(a + rootIncidence, rootRe) * pgFactor : NaN;
-    if (CL[k]! > CL[best]!) best = k;
   }
+  const best = stallPeakIndex(CL);
   cache.stats.polarSweeps++;
 
   const polar: PolarSweep = {
@@ -759,6 +758,30 @@ export function computePolarSweep(
   };
   lruSet(cache.polars, key, polar, cache.capacity);
   return polar;
+}
+
+/** A lift peak counts as the stall when no lift within this many sweep points beyond it is higher. */
+const STALL_PEAK_LOOKAHEAD = 4;
+
+/**
+ * Index of the stall peak of a lift curve: the first local maximum that the next
+ * STALL_PEAK_LOOKAHEAD points do not exceed (falling back to the highest point). Deep-stall
+ * (flat-plate) lift can climb above a low buffet peak at the far end of the sweep; that is not
+ * the stall, so the first real peak wins.
+ */
+export function stallPeakIndex(cl: ArrayLike<number>): number {
+  const n = cl.length;
+  let best = 0;
+  for (let k = 0; k < n; k++) if (cl[k]! > cl[best]!) best = k;
+  for (let k = 1; k < n - 1; k++) {
+    if (!(cl[k]! >= cl[k - 1]! && cl[k]! > cl[k + 1]!)) continue;
+    let exceeded = false;
+    for (let j = k + 1; j <= Math.min(n - 1, k + STALL_PEAK_LOOKAHEAD); j++) {
+      if (cl[j]! > cl[k]!) exceeded = true;
+    }
+    if (!exceeded) return k;
+  }
+  return best;
 }
 
 /** Linear interpolation of a per-strip quantity over the sorted right-wing strips at eta. */

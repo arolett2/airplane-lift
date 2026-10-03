@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { FlapState, Naca4Params } from '../types';
 import { generateAirfoil } from './naca';
 import { createPanelSolver } from './panel';
-import { createSectionPolar, NO_LIFT_LIMIT, softMin, thinAirfoilTheory } from './polar';
+import {
+  createSectionPolar,
+  NO_LIFT_LIMIT,
+  skinFriction,
+  softMin,
+  thinAirfoilTheory,
+  TRANSITION_REYNOLDS,
+} from './polar';
 
 const DEG = Math.PI / 180;
 const RE = 6e6;
@@ -195,7 +202,7 @@ describe('section polar', () => {
     expect(Math.abs(p2412.cl(bestAlpha, RE) - p2412.designCl)).toBeLessThan(0.05);
     expect(p2412.designCl).toBeGreaterThan(0.1);
     expect(p2412.designCl).toBeLessThan(0.4);
-    // Turbulent flat-plate friction level for a 12% section.
+    // Flat-plate friction level (short laminar run, then turbulent) for a 12% section.
     expect(best).toBeGreaterThan(0.006);
     expect(best).toBeLessThan(0.011);
     // Symmetric section: minimum at zero lift.
@@ -303,6 +310,32 @@ describe('lift limits (sweep, shock-induced separation)', () => {
       const cl = lim.cl(deg * DEG, RE);
       expect(Math.abs(cl - prev), `jump at ${deg.toFixed(2)} deg`).toBeLessThan(0.02);
       prev = cl;
+    }
+  });
+});
+
+describe('skin friction with a laminar run', () => {
+  it('is Blasius below transition and continuous at it', () => {
+    expect(skinFriction(1e5)).toBeCloseTo(1.328 / Math.sqrt(1e5), 12);
+    const rt = TRANSITION_REYNOLDS;
+    expect(skinFriction(rt * (1 + 1e-9))).toBeCloseTo(skinFriction(rt), 9);
+  });
+
+  it('approaches the fully turbulent 0.074 Re^-0.2 at high Reynolds number', () => {
+    const turb = (re: number) => 0.074 * Math.pow(re, -0.2);
+    // Prandtl-Schlichting with transition at 5e5: A ~ 1740.
+    expect((turb(1e7) - skinFriction(1e7)) * 1e7).toBeCloseTo(1742, -1);
+    expect(skinFriction(3e7) / turb(3e7)).toBeGreaterThan(0.97);
+    expect(skinFriction(1.5e6) / turb(1.5e6)).toBeLessThan(0.8);
+  });
+
+  it('stays below fully turbulent friction and is continuous (with the transition bump)', () => {
+    let prev = skinFriction(TRANSITION_REYNOLDS);
+    for (let re = TRANSITION_REYNOLDS * 1.02; re < 1e9; re *= 1.02) {
+      const cf = skinFriction(re);
+      expect(cf).toBeLessThan(0.074 * Math.pow(re, -0.2));
+      expect(Math.abs(cf - prev) / prev).toBeLessThan(0.05);
+      prev = cf;
     }
   });
 });

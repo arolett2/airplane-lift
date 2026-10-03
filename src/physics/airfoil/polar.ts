@@ -184,6 +184,24 @@ function reynoldsFactor(re: number): number {
   return clamp(Math.pow(sanitizeRe(re) / 6e6, 0.1), 0.75, 1.1);
 }
 
+/** Reynolds number (on chord) where a flat-plate boundary layer turns turbulent. */
+export const TRANSITION_REYNOLDS = 5e5;
+
+/**
+ * Flat-plate skin-friction coefficient with a laminar run: Blasius (1.328 / sqrt(Re)) while the
+ * whole chord is laminar, then Prandtl-Schlichting's mixed formula 0.074 Re^-0.2 - A / Re, where
+ * A removes the turbulent friction of the laminar part ahead of transition at
+ * TRANSITION_REYNOLDS (A ~ 1740). It matters for small, slow wings (a glider at Re ~1.5 million
+ * has a third of its chord laminar: 27 % less friction than fully turbulent) and fades out on
+ * airliners (Re ~30 million: 2 %).
+ */
+export function skinFriction(re: number): number {
+  const rt = TRANSITION_REYNOLDS;
+  if (re <= rt) return 1.328 / Math.sqrt(re);
+  const a = rt * (0.074 * Math.pow(rt, -0.2) - 1.328 / Math.sqrt(rt));
+  return 0.074 * Math.pow(re, -0.2) - a / re;
+}
+
 function sanitizeRe(re: number): number {
   return Number.isFinite(re) ? clamp(re, 1e4, 1e10) : 6e6;
 }
@@ -352,8 +370,7 @@ export function createSectionPolar(
       },
       cd(alpha: number, re: number) {
         shape(re);
-        const r = sanitizeRe(re);
-        const cf = 0.074 * Math.pow(r, -0.2);
+        const cf = skinFriction(sanitizeRe(re));
         const friction = 2 * cf * (1 + 2 * t + 60 * t ** 4);
         const x = alpha - alpha0;
         const dcl = a * x - designCl;

@@ -327,6 +327,7 @@ import {
   POLAR_ALPHA_MIN_DEG,
   prandtlGlauertFactor,
   stableKey,
+  stallPeakIndex,
   stripGeometricAlpha,
 } from './aero';
 
@@ -754,5 +755,20 @@ describe('computeSection', () => {
     expect(rootIn.eta).toBe(0);
     expect(tipIn.alphaInduced).toBeCloseTo(alpha - sol.stripAlphaEffective[3]!, 12);
     expect(rootIn.alphaInduced).toBeCloseTo(alpha - sol.stripAlphaEffective[0]!, 12);
+  });
+});
+
+describe('stallPeakIndex', () => {
+  it('finds the first peak that the next few points do not exceed', () => {
+    expect(stallPeakIndex([0, 0.5, 1, 1.2, 1.1, 0.9, 0.8, 0.85, 0.9, 1.3])).toBe(3);
+  });
+
+  it('skips a small wiggle that is followed by more lift', () => {
+    expect(stallPeakIndex([0, 0.5, 0.6, 0.59, 0.8, 1.0, 0.9, 0.8, 0.7, 0.6])).toBe(5);
+  });
+
+  it('falls back to the highest point when the curve never turns down', () => {
+    expect(stallPeakIndex([0, 0.2, 0.4, 0.6])).toBe(3);
+    expect(stallPeakIndex([0.6, 0.4, 0.2])).toBe(0);
   });
 });

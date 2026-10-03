@@ -60,5 +60,10 @@ export type PhysicsResponse =
       requestId: number;
       results: { id: string; geometry: WingGeometry; aero: AeroResult }[];
     }
-  | { type: 'done'; requestId: number }
+  | {
+      type: 'done';
+      requestId: number;
+      /** Wall time each stage of this request took in the worker (ms), for profiling. */
+      timingsMs?: Partial<Record<PhysicsStage, number>>;
+    }
   | { type: 'error'; requestId: number; stage: PhysicsStage | 'compare'; message: string };

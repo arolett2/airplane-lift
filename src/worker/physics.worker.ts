@@ -29,6 +29,14 @@ import { domainForGeometry } from '../physics/domain';
 /** Flow-field grid node budget at fieldQuality = 1 (the flow module's default). */
 export const DEFAULT_FIELD_NODES = 120_000;
 
+/**
+ * Time budget per stage (ms). A slower stage makes the tunnel lag behind a dragged slider, so it
+ * is reported with console.warn (all stages also report their time in the 'done' message).
+ */
+export const STAGE_BUDGET_MS = 600;
+
+const now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
 /** Posts one response; `transfer` lists ArrayBuffers the worker gives away (zero-copy). */
 export type PostFn = (msg: PhysicsResponse, transfer?: Transferable[]) => void;
 
@@ -141,20 +149,27 @@ async function handleCompute(
     return solved;
   };
 
+  const timingsMs: Partial<Record<PhysicsStage, number>> = {};
   for (let k = 0; k < stages.length; k++) {
     const stage = stages[k]!;
     // Yield before every stage (including the first) so requests queued behind this one get
     // dispatched and this one can be abandoned without doing any work.
     await yieldToEventLoop();
     if (isStale()) return;
+    const t0 = now();
     try {
       runStage(stage, req, post, state, ensureSolved);
     } catch (err) {
       post({ type: 'error', requestId, stage, message: errorMessage(err) });
     }
+    const ms = now() - t0;
+    timingsMs[stage] = ms;
+    if (ms > STAGE_BUDGET_MS) {
+      console.warn(`physics worker: stage "${stage}" took ${Math.round(ms)} ms`);
+    }
   }
   if (isStale()) return;
-  post({ type: 'done', requestId });
+  post({ type: 'done', requestId, timingsMs });
 }
 
 function runStage(

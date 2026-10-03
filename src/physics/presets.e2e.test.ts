@@ -11,7 +11,7 @@ import type { TipDeviceKind, WingConfig } from '../state/params';
 import { PRESETS, getPreset } from '../state/presets';
 import { DEFAULT_VIEW, TIP_DEVICE_DEFAULTS } from '../state/params';
 import { STAGE_ORDER } from '../worker/protocol';
-import { createWorkerState, handleRequest } from '../worker/physics.worker';
+import { createWorkerState, handleRequest, STAGE_BUDGET_MS } from '../worker/physics.worker';
 import { computeAero, computePolarSweep, createAeroCache } from './aero';
 
 const G = 9.80665;
@@ -170,14 +170,9 @@ describe('tip devices on the 737-800 wing (real solvers)', { timeout: 120_000 },
 });
 
 describe('worker pipeline per preset', { timeout: 120_000 }, () => {
-  /** Stage budget: anything slower makes the tunnel feel sluggish while dragging a slider. */
-  const STAGE_BUDGET_MS = 600;
-
   it.each(PRESETS.map((p) => [p.id, p] as const))(
     '%s: every stage succeeds, each well inside the time budget',
     async (_id, p) => {
-      const durations: Partial<Record<PhysicsResponse['type'], number>> = {};
-      let t = performance.now();
       const posted: PhysicsResponse[] = [];
       await handleRequest(
         {
@@ -190,23 +185,17 @@ describe('worker pipeline per preset', { timeout: 120_000 }, () => {
           stages: [...STAGE_ORDER],
           fieldQuality: 1,
         },
-        (msg) => {
-          const now = performance.now();
-          durations[msg.type] = now - t;
-          t = now;
-          posted.push(msg);
-        },
+        (msg) => posted.push(msg),
         () => false,
         createWorkerState(),
       );
       expect(posted.filter((m) => m.type === 'error')).toEqual([]);
       expect(posted.map((m) => m.type)).toEqual([...STAGE_ORDER, 'done']);
+      const done = posted.at(-1)!;
+      if (done.type !== 'done') throw new Error('expected done');
       for (const stage of STAGE_ORDER) {
-        const ms = durations[stage]!;
-        if (ms > STAGE_BUDGET_MS) {
-          console.warn(`${p.id}: worker stage "${stage}" took ${ms.toFixed(0)} ms`);
-        }
-        // Hard limit with headroom for slow CI machines; the budget above is the real target.
+        const ms = done.timingsMs?.[stage] ?? NaN;
+        // The worker itself warns above STAGE_BUDGET_MS; fail only far beyond it (slow CI).
         expect(ms, `${p.id} ${stage}`).toBeLessThan(5 * STAGE_BUDGET_MS);
       }
     },

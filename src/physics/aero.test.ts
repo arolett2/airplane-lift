@@ -567,6 +567,16 @@ describe('computeAero', () => {
     expect(aero.warnings).toEqual([]);
   });
 
+  it("passes on the lattice's own warnings, such as tip devices left out", () => {
+    const note = 'The wingtip devices were left out of the lift calculation.';
+    fakes.buildVlmModel.mockImplementationOnce((geometry, options) => ({
+      ...fakes.buildVlmModel.getMockImplementation()!(geometry, options),
+      warnings: [note],
+    }));
+    const { aero } = computeAero(DEFAULT_WING, DEFAULT_FLOW, 1, createAeroCache());
+    expect(aero.warnings).toEqual([note]);
+  });
+
   it('warns about very low Reynolds numbers', () => {
     const tiny = { ...DEFAULT_WING, span: 0.5, rootChord: 0.1 };
     const { aero } = computeAero(tiny, { ...DEFAULT_FLOW, airspeed: 5 }, 1, createAeroCache());

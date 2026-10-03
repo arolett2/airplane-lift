@@ -593,7 +593,8 @@ function assembleAero(state: SolvedState, requestId: number): AeroResult {
 
   const reynoldsMac = reynoldsNumber(state.atmosphere, velocity, geometry.meanAeroChord);
 
-  const warnings: string[] = [];
+  // Problems met while building the lattice (e.g. tip devices left out of the calculation).
+  const warnings: string[] = [...(model.warnings ?? [])];
   if (mach > MACH_ROUGH_LIMIT) {
     warnings.push(
       `At Mach ${mach.toFixed(2)} the simple compressibility corrections used here are pushed ` +

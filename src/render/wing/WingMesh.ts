@@ -38,12 +38,19 @@ function installStallHatch(material: THREE.MeshStandardMaterial, spacing: { valu
         {
           float g = (vHatchPos.x + vHatchPos.y) / uHatchSpacing;
           float aa = max(fwidth(g), 1e-4);
-          float stripe = smoothstep(0.22 - aa, 0.22 + aa, abs(fract(g) - 0.5));
-          diffuseColor.rgb *= 1.0 - 0.3 * vStall * stripe;
+          float stripe = smoothstep(0.25 - aa, 0.25 + aa, abs(fract(g) - 0.5));
+          diffuseColor.rgb *= 1.0 - 0.5 * vStall * stripe;
         }`,
+      )
+      .replace(
+        '#include <dithering_fragment>',
+        `#include <dithering_fragment>
+        // Seen through the side / section cutaway, the inside of the skin is drawn flat slate
+        // (unlit), so the cut reads as a solid airfoil section.
+        if (!gl_FrontFacing) gl_FragColor.rgb = vec3(0.16, 0.19, 0.26);`,
       );
   };
-  material.customProgramCacheKey = () => 'wing-stall-hatch-v1';
+  material.customProgramCacheKey = () => 'wing-stall-hatch-v3';
 }
 
 export class WingMesh {
@@ -88,7 +95,7 @@ export class WingMesh {
     this.lofted = lofted;
     this.object.position.set(geometry.pivot[0], geometry.pivot[1], geometry.pivot[2]);
     this.body.position.set(-geometry.pivot[0], -geometry.pivot[1], -geometry.pivot[2]);
-    this.hatchSpacing.value = Math.max(0.01, 0.07 * geometry.meanAeroChord);
+    this.hatchSpacing.value = Math.max(0.01, 0.16 * geometry.meanAeroChord);
     this.uploadBuffers(lofted);
     this.bindings = bindStrips(lofted, this.strips);
     this.recolor();
@@ -105,6 +112,19 @@ export class WingMesh {
     if (!this.lofted) return;
     this.bindings = bindStrips(this.lofted, strips);
     this.recolor();
+  }
+
+  /**
+   * Extra clipping planes for the wing only (world space), e.g. the far side of the side-view
+   * cutaway slab; null removes them.
+   */
+  setClipPlanes(planes: THREE.Plane[] | null): void {
+    const list = planes ?? [];
+    for (const m of [this.pressureMaterial, this.plainMaterial]) {
+      const before = m.clippingPlanes?.length ?? 0;
+      m.clippingPlanes = list.length ? list : null;
+      if (before !== list.length) m.needsUpdate = true;
+    }
   }
 
   /** false => plain light-grey metallic wing without pressure colours. */

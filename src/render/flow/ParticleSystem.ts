@@ -1,8 +1,10 @@
 /**
- * Wind-tunnel "dust": tens of thousands of tiny particles carried through the 3D velocity field,
- * drawn as soft round sprites plus short fading motion trails (so the swirl of the tip vortex
- * reads clearly). Simulation lives in ParticleSim (pure CPU, typed arrays); this class only owns
- * the three.js objects and copies/flags the attributes each frame without allocating.
+ * Wind-tunnel smoke: a few thousand particles released as a thin sheet at wing height and round
+ * the tips (see spawn.ts), carried through the 3D velocity field and drawn as small soft sprites
+ * with fading motion trails, so the split over and under the wing, the downwash behind it and the
+ * curl of the tip vortices read clearly. Undisturbed smoke is dim; smoke the wing has sped up or
+ * slowed down is bright. Simulation lives in ParticleSim (pure CPU, typed arrays); this class only
+ * owns the three.js objects and copies/flags the attributes each frame without allocating.
  */
 import {
   BufferAttribute,
@@ -16,16 +18,31 @@ import {
 import type { TunnelDomain } from '../../physics/domain';
 import type { FlowFieldGrid, WingGeometry } from '../../physics/types';
 import type { ColorBy } from '../../state/params';
-import { MAX_PARTICLES, ParticleSim, particleCountFor } from './particleSim';
-import { makeSpawnRegion, type SpawnRegion } from './spawn';
-import { bindSpriteViewport, createSpriteMaterial, createTrailMaterial } from './sprites';
+import { MAX_PARTICLES, ParticleSim, TRAIL_POINTS, particleCountFor } from './particleSim';
+import { makeSmokeSources, makeSpawnRegion, type SpawnRegion } from './spawn';
+import {
+  bindSpriteViewport,
+  createSpriteMaterial,
+  createTrailMaterial,
+  setLightSheet,
+  type LightSheet,
+} from './sprites';
 
 /** Particle sprite diameter relative to the tunnel length. */
-const SPRITE_SIZE_FRACTION = 0.005;
-const SPRITE_MIN_PX = 1.8;
-const SPRITE_MAX_PX = 7;
+const SPRITE_SIZE_FRACTION = 0.0032;
+const SPRITE_MIN_PX = 1.5;
+const SPRITE_MAX_PX = 5;
 /** Opacity of the trail at the head end (the tail end is transparent). */
-const TRAIL_HEAD_ALPHA = 0.55;
+const TRAIL_HEAD_ALPHA = 0.75;
+/**
+ * Trails are drawn as seen from a frame drifting downstream at this fraction of the freestream
+ * speed: a particle in undisturbed air leaves a short straight streak, while the ways the wing
+ * deflects the air (upwash ahead, downwash behind, the swirl round each tip) show up as
+ * clearly bent, curling trails instead of being lost in the fast through-flow. 0 = true paths.
+ */
+export const TRAIL_DRIFT = 0.8;
+/** Trail vertices per particle: head + history samples, as TRAIL_POINTS segments. */
+const TRAIL_VERTS = 2 * TRAIL_POINTS;
 
 export interface ParticleSystemOptions {
   /** Additive blending (suits dark backgrounds); default normal blending. */
@@ -50,6 +67,10 @@ export class ParticleSystem {
 
   private visible = true;
   private trailsOn = true;
+  private trailDrift = TRAIL_DRIFT;
+  private domain: TunnelDomain | null = null;
+  private geometry: WingGeometry | null = null;
+  private alpha = 0;
   private density = 1;
   private hasField = false;
   /** GPU attributes need a refresh even though the simulation did not advance. */
@@ -65,7 +86,7 @@ export class ParticleSystem {
       minPx: SPRITE_MIN_PX,
       maxPx: SPRITE_MAX_PX,
       core: 0,
-      opacity: 0.75,
+      opacity: 0.9,
       additive,
     });
     this.trailMaterial = createTrailMaterial(additive);
@@ -93,10 +114,11 @@ export class ParticleSystem {
     this.points.renderOrder = 2;
     bindSpriteViewport(this.points, this.material, SPRITE_MIN_PX, SPRITE_MAX_PX);
 
-    // Trails: two vertices (head, lagging tail) per particle.
-    this.trailPos = new Float32Array(MAX_PARTICLES * 6);
-    this.trailColor = new Float32Array(MAX_PARTICLES * 6);
-    this.trailAlpha = new Float32Array(MAX_PARTICLES * 2);
+    // Trails: a polyline per particle, head -> newest sample -> ... -> oldest sample, drawn as
+    // TRAIL_POINTS line segments (two vertices each) fading toward the oldest end.
+    this.trailPos = new Float32Array(MAX_PARTICLES * TRAIL_VERTS * 3);
+    this.trailColor = new Float32Array(MAX_PARTICLES * TRAIL_VERTS * 3);
+    this.trailAlpha = new Float32Array(MAX_PARTICLES * TRAIL_VERTS);
     this.trailGeometry.setAttribute(
       'position',
       new BufferAttribute(this.trailPos, 3).setUsage(DynamicDrawUsage),
@@ -138,15 +160,24 @@ export class ParticleSystem {
     this.applyVisibility();
   }
 
-  /** Set the spawn region: the tunnel inlet plane, concentrated around the wing's footprint. */
+  /**
+   * Set the spawn region: smoke sources on the tunnel inlet plane, shaped to the wing (a sheet at
+   * leading-edge height across the span plus disks round the tips).
+   */
   setDomain(domain: TunnelDomain, geometry: WingGeometry | null): void {
-    const halfWidth = 0.5 * (domain.max[1] - domain.min[1]);
-    // tunnelDomain() sizes the half-width as 1.5 semispans, which is the fallback without geometry.
-    const semispan = geometry ? 0.5 * geometry.overallSpan : halfWidth / 1.5;
-    const centerZ = geometry ? geometry.pivot[2] : 0;
-    this.sim.setSpawnRegion(makeSpawnRegion(domain, semispan, centerZ));
+    this.domain = domain;
+    this.geometry = geometry;
+    this.updateSpawnRegion();
     const lengthMeters = domain.max[0] - domain.min[0];
     this.material.uniforms['uWorldSize']!.value = SPRITE_SIZE_FRACTION * lengthMeters;
+  }
+
+  /** The wing's pitch (rad): the smoke sheet follows its leading-edge height. */
+  setAlpha(alphaRad: number): void {
+    const a = Number.isFinite(alphaRad) ? alphaRad : 0;
+    if (Math.abs(a - this.alpha) < 1e-4) return;
+    this.alpha = a;
+    if (this.domain) this.updateSpawnRegion();
   }
 
   /** Particle budget multiplier (0.25 .. 2); base budget is ~14000, capped at 30000. */
@@ -163,6 +194,26 @@ export class ParticleSystem {
   setVisible(on: boolean): void {
     this.visible = on;
     this.applyVisibility();
+  }
+
+  /**
+   * Show only the smoke within a slab (physics metres), like smoke lit by a laser light sheet;
+   * null shows all of it. Used by the cutaway shots.
+   */
+  setLightSheet(sheet: LightSheet | null): void {
+    setLightSheet(this.material, sheet);
+    setLightSheet(this.trailMaterial, sheet);
+  }
+
+  /** Trail length as a fraction of the freestream transit time (null = the default). */
+  setTrailLength(transitFraction: number | null): void {
+    this.sim.setTrailLength(transitFraction);
+  }
+
+  /** Fraction of the freestream the trail frame drifts with (0 = true particle paths). */
+  setTrailDrift(fraction: number): void {
+    this.trailDrift = Math.min(1, Math.max(0, Number.isFinite(fraction) ? fraction : 0));
+    this.buffersStale = true;
   }
 
   /** Turn the motion trails off (cheaper) or on. */
@@ -189,6 +240,18 @@ export class ParticleSystem {
 
   /* ---------------------------------------------------------------------------------------- */
 
+  private updateSpawnRegion(): void {
+    const domain = this.domain;
+    if (!domain) return;
+    const geometry = this.geometry;
+    const halfWidth = 0.5 * (domain.max[1] - domain.min[1]);
+    // tunnelDomain() sizes the half-width as 1.5 semispans, which is the fallback without geometry.
+    const semispan = geometry ? 0.5 * geometry.overallSpan : halfWidth / 1.5;
+    const centerZ = geometry ? geometry.pivot[2] : 0;
+    const smoke = geometry?.surfaces ? makeSmokeSources(geometry, this.alpha) : null;
+    this.sim.setSpawnRegion(makeSpawnRegion(domain, semispan, centerZ, undefined, smoke));
+  }
+
   private applyVisibility(): void {
     this.object.visible = this.visible && this.hasField;
     this.trails.visible = this.trailsOn;
@@ -204,34 +267,64 @@ export class ParticleSystem {
 
     if (!this.trailsOn) return;
     const pos = this.sim.pos;
-    const tail = this.sim.tail;
+    const hist = this.sim.history;
+    const head = this.sim.historyHead;
+    const histTime = this.sim.historyTime;
+    const valid = this.sim.historyCount;
+    const now = this.sim.time;
+    const drift = this.trailDrift * this.sim.freestreamSpeed;
     const color = this.sim.color;
     const alpha = this.sim.alpha;
     const tp = this.trailPos;
     const tc = this.trailColor;
     const ta = this.trailAlpha;
+    const K = TRAIL_POINTS;
     for (let i = 0; i < n; i++) {
       const o3 = i * 3;
-      const o6 = i * 6;
-      tp[o6] = pos[o3]!;
-      tp[o6 + 1] = pos[o3 + 1]!;
-      tp[o6 + 2] = pos[o3 + 2]!;
-      tp[o6 + 3] = tail[o3]!;
-      tp[o6 + 4] = tail[o3 + 1]!;
-      tp[o6 + 5] = tail[o3 + 2]!;
       const r = color[o3]!;
       const g = color[o3 + 1]!;
       const b = color[o3 + 2]!;
-      tc[o6] = r;
-      tc[o6 + 1] = g;
-      tc[o6 + 2] = b;
-      tc[o6 + 3] = r;
-      tc[o6 + 4] = g;
-      tc[o6 + 5] = b;
-      ta[i * 2] = alpha[i]! * TRAIL_HEAD_ALPHA;
-      ta[i * 2 + 1] = 0;
+      const a0 = alpha[i]! * TRAIL_HEAD_ALPHA;
+      const base = i * K * 3;
+      let v = i * TRAIL_VERTS;
+      // Segment start = previous point (the head first), end = next older history sample.
+      let px = pos[o3]!;
+      let py = pos[o3 + 1]!;
+      let pz = pos[o3 + 2]!;
+      const nValid = valid[i]!;
+      for (let k = 0; k < K; k++) {
+        const slot = (head - k + K) % K;
+        const h = base + slot * 3;
+        let qx = px;
+        let qy = py;
+        let qz = pz;
+        if (k < nValid) {
+          qx = hist[h]! + drift * (now - histTime[slot]!);
+          qy = hist[h + 1]!;
+          qz = hist[h + 2]!;
+        }
+        const p3 = v * 3;
+        tp[p3] = px;
+        tp[p3 + 1] = py;
+        tp[p3 + 2] = pz;
+        tp[p3 + 3] = qx;
+        tp[p3 + 4] = qy;
+        tp[p3 + 5] = qz;
+        tc[p3] = r;
+        tc[p3 + 1] = g;
+        tc[p3 + 2] = b;
+        tc[p3 + 3] = r;
+        tc[p3 + 4] = g;
+        tc[p3 + 5] = b;
+        ta[v] = a0 * (1 - k / K);
+        ta[v + 1] = a0 * (1 - (k + 1) / K);
+        px = qx;
+        py = qy;
+        pz = qz;
+        v += 2;
+      }
     }
-    this.trailGeometry.setDrawRange(0, n * 2);
+    this.trailGeometry.setDrawRange(0, n * TRAIL_VERTS);
     flag(this.trailGeometry, ['position', 'aColor', 'aAlpha']);
   }
 }

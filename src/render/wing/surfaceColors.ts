@@ -1,33 +1,32 @@
 /**
  * Pure vertex colouring of a lofted wing from strip results: chordwise Cp mapped through the
- * shared pressure colour map, blended between the nearest strips of the same surface, with a
- * desaturated orange tint over the separated (stalled) part of the upper surface.
+ * 3D wing palette (render/util/palette.ts: the shared colour meaning, saturating sooner so an
+ * airliner's upper surface reads clearly blue), blended between the nearest strips of the same
+ * surface, with an amber tint over the separated (stalled) part of the upper surface.
  *
- * Output colours are LINEAR RGB (three.js working space), so the on-screen result matches the
- * sRGB colours the 2D views draw with the same `pressureColor` map.
+ * Output colours are LINEAR RGB (three.js working space).
  */
-import { CP_MIN, pressureColor } from '../../shared/colormaps';
 import type { RGB } from '../../shared/colormaps';
+import { srgbToLinear, wingPressureColor } from '../util/palette';
 import type { ChordwiseCp, StripResult } from '../../physics/types';
 import { VERTEX_SLAT } from './loft';
 import type { LoftedWing } from './loft';
 import { clamp, smoothstep } from '../util/math';
 
-function srgbToLinear(c: number): number {
-  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-}
+/** Display range of the wing colours: Cp is clamped to [WING_CP_MIN, 1]. */
+export const WING_CP_MIN = -2;
 
 const LUT_SIZE = 1024;
 let pressureLut: Float32Array | null = null;
 
-/** Lookup table Cp -> linear RGB over [CP_MIN, 1], built on first use. */
+/** Lookup table Cp -> linear RGB over [WING_CP_MIN, 1], built on first use. */
 function getPressureLut(): Float32Array {
   if (pressureLut) return pressureLut;
   const lut = new Float32Array(3 * LUT_SIZE);
   const tmp: RGB = [0, 0, 0];
   for (let i = 0; i < LUT_SIZE; i++) {
-    const cp = CP_MIN + ((1 - CP_MIN) * i) / (LUT_SIZE - 1);
-    pressureColor(cp, tmp);
+    const cp = WING_CP_MIN + ((1 - WING_CP_MIN) * i) / (LUT_SIZE - 1);
+    wingPressureColor(cp, tmp);
     lut[3 * i] = srgbToLinear(tmp[0]);
     lut[3 * i + 1] = srgbToLinear(tmp[1]);
     lut[3 * i + 2] = srgbToLinear(tmp[2]);
@@ -36,11 +35,11 @@ function getPressureLut(): Float32Array {
   return lut;
 }
 
-/** Linear-RGB colour of the stalled / separated region (desaturated orange). */
+/** Linear-RGB colour of the stalled / separated region (amber: "the air has let go here"). */
 export const STALL_TINT_LINEAR: Readonly<RGB> = [
-  srgbToLinear(0.84),
-  srgbToLinear(0.5),
-  srgbToLinear(0.22),
+  srgbToLinear(0.95),
+  srgbToLinear(0.62),
+  srgbToLinear(0.12),
 ];
 /** Neutral light-grey metal used for parts without a pressure (slats). */
 export const NEUTRAL_LINEAR: Readonly<RGB> = [
@@ -50,7 +49,7 @@ export const NEUTRAL_LINEAR: Readonly<RGB> = [
 ];
 
 /** Fraction of the stall tint blended into the pressure colour where flow is separated. */
-const STALL_BLEND = 0.72;
+const STALL_BLEND = 0.85;
 
 /** Strips of one surface in root-to-tip order with their normalised span positions. */
 export interface StripBinding {
@@ -122,8 +121,8 @@ export function sampleChordwise(cp: ChordwiseCp, x: number, upper: boolean): num
 /** Write the linear colour for pressure coefficient `cp` into `colors[offset..offset+2]`. */
 export function writePressureColor(cp: number, colors: Float32Array, offset: number): void {
   const lut = getPressureLut();
-  const t = clamp(Number.isFinite(cp) ? cp : 0, CP_MIN, 1);
-  const f = ((t - CP_MIN) / (1 - CP_MIN)) * (LUT_SIZE - 1);
+  const t = clamp(Number.isFinite(cp) ? cp : 0, WING_CP_MIN, 1);
+  const f = ((t - WING_CP_MIN) / (1 - WING_CP_MIN)) * (LUT_SIZE - 1);
   const i0 = Math.floor(f);
   const i1 = Math.min(LUT_SIZE - 1, i0 + 1);
   const w = f - i0;

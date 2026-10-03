@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { BAND_FRACTION, makeRng, makeSpawnRegion, spawnAnywhere, spawnOnInlet } from './spawn';
+import {
+  BAND_FRACTION,
+  KIND_AMBIENT,
+  KIND_SHEET,
+  KIND_TIP,
+  SHEET_FRACTION,
+  TIP_FRACTION,
+  makeRng,
+  makeSmokeSources,
+  makeSpawnRegion,
+  spawnAnywhere,
+  spawnOnInlet,
+} from './spawn';
 import { tunnelDomain } from '../../physics/domain';
+import { makeTestWing } from '../util/testFixtures';
 
 describe('makeRng', () => {
   it('is deterministic and uniform-ish in [0, 1)', () => {
@@ -97,5 +110,49 @@ describe('spawn region', () => {
     expect(tiny.bandHalfY).toBeLessThanOrEqual(1);
     expect(tiny.bandHalfZ).toBeLessThanOrEqual(0.2);
     expect(tiny.bandCenterZ + tiny.bandHalfZ).toBeLessThanOrEqual(0.2);
+  });
+});
+
+describe('smoke sources round a wing', () => {
+  const geo = makeTestWing({ semispan: 10, rootChord: 2, tipChord: 1, sweepDeg: 20 });
+  const domain = tunnelDomain(20, 2);
+  const smoke = makeSmokeSources(geo, 0)!;
+  const region = makeSpawnRegion(domain, 10, 0, undefined, smoke);
+
+  it('releases mostly a thin sheet at wing height, plus tip disks and a little dust', () => {
+    const rng = makeRng(11);
+    const out = new Float32Array(3);
+    const counts = [0, 0, 0];
+    let sheetNearWing = 0;
+    const n = 20000;
+    for (let i = 0; i < n; i++) {
+      const kind = spawnOnInlet(region, rng, 0, out, 0);
+      counts[kind]!++;
+      if (kind === KIND_SHEET) {
+        expect(Math.abs(out[1]!)).toBeLessThanOrEqual(smoke.halfSpan + 1e-6);
+        // Within the sheet thickness of the wing (whose LE is at z = 0 here).
+        if (Math.abs(out[2]!) < 0.7) sheetNearWing++;
+      }
+    }
+    expect(counts[KIND_SHEET]! / n).toBeCloseTo(SHEET_FRACTION, 1);
+    expect(counts[KIND_TIP]! / n).toBeCloseTo(TIP_FRACTION, 1);
+    expect(counts[KIND_AMBIENT]! / n).toBeLessThan(0.15);
+    expect(sheetNearWing / counts[KIND_SHEET]!).toBeGreaterThan(0.95);
+  });
+
+  it('puts the tip disks round both tips', () => {
+    expect(smoke.tips[0]!).toBeGreaterThan(8);
+    expect(smoke.tips[3]!).toBeLessThan(-8);
+    expect(smoke.tips[2]!).toBeGreaterThan(0);
+  });
+
+  it('follows the leading edge down as the wing pitches nose-up behind the pivot', () => {
+    const pitched = makeSmokeSources(geo, (10 * Math.PI) / 180)!;
+    // Swept wing: the outer leading edge is behind the pivot, so nose-up pitch lowers it.
+    expect(pitched.z[0]!).toBeLessThan(smoke.z[0]!);
+  });
+
+  it('is null without a usable right wing', () => {
+    expect(makeSmokeSources({ ...geo, surfaces: [] }, 0)).toBeNull();
   });
 });

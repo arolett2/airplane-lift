@@ -4,12 +4,14 @@
  */
 import { domainForGeometry, type TunnelDomain } from '../physics/domain';
 import type { WingGeometry } from '../physics/types';
-import { ParticleSystem } from '../render/flow/ParticleSystem';
+import { ParticleSystem, TRAIL_DRIFT } from '../render/flow/ParticleSystem';
 import { simSecondsPerSecond } from '../render/flow/playback';
 import { StreamlineRenderer } from '../render/flow/StreamlineRenderer';
 import { ForceArrows } from '../render/forces/ForceArrows';
 import { SpanLoadViz } from '../render/forces/SpanLoadViz';
+import { PressureLegend } from '../render/overlay/PressureLegend';
 import { SceneManager } from '../render/SceneManager';
+import { crossCutX, wingFraming, type WingFraming } from '../render/util/framing';
 import { WindTunnel } from '../render/tunnel/WindTunnel';
 import { WingMesh } from '../render/wing/WingMesh';
 import { DEFAULT_STATE, INITIAL_PRESET_ID, type AppState } from '../state/params';
@@ -33,6 +35,13 @@ const STANDARD_GRAVITY = 9.80665;
 const IDLE_STAGE_DELAY_MS = 220;
 const IDLE_STAGES: readonly PhysicsStage[] = ['polar', 'field'];
 const DEFAULT_COMPARE: [string, string] = ['b747-400', 'b737-800'];
+/** Same breakpoint as the shell's floating-panel layout (ui/AppShell.ts). */
+const WIDE_LAYOUT_QUERY = '(min-width: 1100px)';
+/** Breathing room kept between a floating panel and the framed scene (CSS px). */
+const PANEL_GAP_PX = 8;
+/** Cross-flow light sheet half-thickness (semispans) and its smoke trail length (transits). */
+const CROSS_SHEET_HALF = 0.14;
+const CROSS_TRAIL_LENGTH = 0.3;
 
 function initialState(): AppState {
   const fallback = getPreset(INITIAL_PRESET_ID)
@@ -79,6 +88,7 @@ export async function startApp(root: HTMLElement): Promise<void> {
   const spanLoad = new SpanLoadViz();
   const streamlines = new StreamlineRenderer();
   const particles = new ParticleSystem();
+  const legend = new PressureLegend(shell.viewport);
   scene.modelRoot.add(
     tunnel.object,
     wingMesh.object,
@@ -87,6 +97,58 @@ export async function startApp(root: HTMLElement): Promise<void> {
     streamlines.object,
     particles.object,
   );
+
+  /* ---------------------------------------------------------------- framing around the panels */
+  // The panels float over the full-bleed canvas; tell the camera which part is really visible so
+  // the wing is centred and framed in the gap between them rather than hidden behind them.
+  const shellRoot = shell.viewport.parentElement ?? root;
+  const leftPanel = shell.controls.closest<HTMLElement>('.panel');
+  const rightPanel = shell.readouts.closest<HTMLElement>('.panel');
+  const tabBar = shellRoot.querySelector<HTMLElement>('.shell__tabs');
+  const wideLayout = window.matchMedia?.(WIDE_LAYOUT_QUERY);
+  const measureInsets = () => {
+    const vp = shell.viewport.getBoundingClientRect();
+    if (vp.width < 2 || vp.height < 2) return;
+    const bar = shell.topBar.getBoundingClientRect();
+    const card = shell.lesson.getBoundingClientRect();
+    const lessonOpen = card.height > 1 && card.top < vp.bottom;
+    const insets = { left: 0, right: 0, top: 0, bottom: 0 };
+    if (bar.height > 0) insets.top = Math.max(0, bar.bottom - vp.top + PANEL_GAP_PX);
+    // An open lesson card covers the bottom of the view: frame the scene above it, and below
+    // the colour key, which moves to the top meanwhile.
+    if (lessonOpen) {
+      insets.bottom = Math.max(0, vp.bottom - card.top + PANEL_GAP_PX);
+      insets.top += legend.element.offsetHeight + 4;
+    }
+    if (wideLayout?.matches ?? vp.width >= 1100) {
+      const l = leftPanel?.getBoundingClientRect();
+      const r = rightPanel?.getBoundingClientRect();
+      if (l && l.width > 0) insets.left = Math.max(0, l.right - vp.left + PANEL_GAP_PX);
+      if (r && r.width > 0) insets.right = Math.max(0, vp.right - r.left + PANEL_GAP_PX);
+    } else if (tabBar) {
+      const t = tabBar.getBoundingClientRect();
+      if (t.height > 0 && t.top < vp.bottom) {
+        insets.bottom = Math.max(insets.bottom, vp.bottom - t.top);
+      }
+    }
+    scene.setViewInsets(insets);
+    // The colour key sits at the bottom of the uncovered region; while a lesson card takes the
+    // bottom it moves to the top, under the top bar.
+    const region = scene.visibleRegion;
+    const centerX = region.x + 0.5 * region.width;
+    legend.setCompact(region.width < 540);
+    if (lessonOpen) {
+      legend.setPlacement(region.x + 10, region.y - legend.element.offsetHeight - 4, true);
+    } else legend.setPlacement(centerX, vp.height - (region.y + region.height) + 14);
+  };
+  const insetObserver =
+    typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => measureInsets()) : null;
+  for (const el of [shell.viewport, shell.topBar, shell.lesson, leftPanel, rightPanel, tabBar]) {
+    if (el) insetObserver?.observe(el);
+  }
+  wideLayout?.addEventListener?.('change', measureInsets);
+  requestAnimationFrame(measureInsets);
+  measureInsets();
 
   /* ---------------------------------------------------------------- physics worker */
   const physics = new PhysicsClient();
@@ -256,16 +318,56 @@ export async function startApp(root: HTMLElement): Promise<void> {
         }
       }
       tunnel.setMountPoint(g.pivot);
-      scene.setFocus(g.pivot, g.overallSpan / 2);
+      focusCamera();
       particles.setDomain(next, g);
     },
   );
+
+  // Side / section shots look at the smoke-rake station (or the 2D section's station).
+  const focusEta = (s: AppState) =>
+    s.view.rake.mode === 'vertical' ? s.view.rake.eta : s.view.sectionEta;
+  let framing: WingFraming | null = null;
+  function focusCamera(): void {
+    if (!geometry) return;
+    framing = wingFraming(geometry, focusEta(store.get()));
+    scene.setFocus(geometry.pivot, geometry.overallSpan / 2, framing);
+    applyCutaway();
+  }
+  store.select(focusEta, () => focusCamera());
+
+  // Cutaways (see SceneManager). Side / section: the scene in front of the station is clipped
+  // away; show only the smoke in a thin "light sheet" at the station, keep a slab of wing, and
+  // hide the force arrows (they sit at the centreline, which the cut removes). Behind / tip:
+  // the wake is cut across the flow; show the smoke in a slab just upstream of the cut, with
+  // longer trails, so its swirl round the tips and the downwash between them read clearly.
+  function applyCutaway(): void {
+    const kind = scene.cutaway;
+    const span = kind === 'span';
+    forces.setVisible(store.get().view.showForces && !span);
+    wingMesh.setClipPlanes(span ? [scene.cutawayFarPlane] : null);
+    particles.setTrailLength(kind === 'cross' ? CROSS_TRAIL_LENGTH : null);
+    // End-on, trails drawn moving with the air show only the cross-flow: arcs round each tip.
+    particles.setTrailDrift(kind === 'cross' ? 1 : TRAIL_DRIFT);
+    if (!framing || !geometry || kind === 'none') {
+      particles.setLightSheet(null);
+    } else if (span) {
+      const st = framing.station;
+      particles.setLightSheet({ normal: [0, 1, 0], offset: st.le[1], halfWidth: 0.6 * st.chord });
+    } else {
+      const s = 0.5 * geometry.overallSpan;
+      const h = CROSS_SHEET_HALF * s;
+      const cut = crossCutX(framing.max[0], s);
+      particles.setLightSheet({ normal: [1, 0, 0], offset: cut - h, halfWidth: h });
+    }
+  }
+  scene.onCutawayChange(() => applyCutaway());
 
   results.select(
     (r) => r.aero,
     (aero) => {
       if (!aero) return;
       wingMesh.setAlpha(aero.alpha);
+      particles.setAlpha(aero.alpha);
       wingMesh.setStrips(aero.strips);
       forces.update(aero, geometry, weightN());
       spanLoad.update(aero, geometry);
@@ -300,9 +402,11 @@ export async function startApp(root: HTMLElement): Promise<void> {
       particles.setVisible(view.flowMode === 'particles' || view.flowMode === 'both');
       streamlines.setColorBy(view.colorBy);
       particles.setColorBy(view.colorBy);
+      legend.setMode(view.colorBy);
+      legend.setVisible(view.showSurfacePressure || view.flowMode !== 'off');
       particles.setDensity(view.particleDensity);
       wingMesh.setPressureVisible(view.showSurfacePressure);
-      forces.setVisible(view.showForces);
+      forces.setVisible(view.showForces && !scene.cutawayActive);
       spanLoad.setVisible(view.showSpanLoad);
       if (view.camera !== prev.camera && !firstFrame) scene.flyTo(view.camera);
     },
@@ -359,9 +463,12 @@ export async function startApp(root: HTMLElement): Promise<void> {
   }
 
   window.addEventListener('pagehide', () => {
+    insetObserver?.disconnect();
+    wideLayout?.removeEventListener?.('change', measureInsets);
     for (const p of panels) p.destroy();
     physics.dispose();
-    for (const r of [tunnel, wingMesh, forces, spanLoad, streamlines, particles]) r.dispose();
+    for (const r of [tunnel, wingMesh, forces, spanLoad, streamlines, particles, legend])
+      r.dispose();
     scene.dispose();
   });
 }

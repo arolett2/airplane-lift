@@ -25,11 +25,33 @@ interface ArrowSpec {
   cssColor: string;
   /** Unit direction of the arrow in the tunnel frame. */
   dir: Vec3;
+  /** Label anchor (CSS2DObject.center): which point of the label sits on the arrow tip. */
+  labelCenter: [number, number];
 }
 
-const LIFT: ArrowSpec = { name: 'Lift', color: 0x3be57f, cssColor: '#7dffb0', dir: [0, 0, 1] };
-const DRAG: ArrowSpec = { name: 'Drag', color: 0xff9638, cssColor: '#ffbd7a', dir: [1, 0, 0] };
-const WEIGHT: ArrowSpec = { name: 'Weight', color: 0x9aa4b4, cssColor: '#c8d0dc', dir: [0, 0, -1] };
+// Lift's label sits above its tip, weight's below its tip, and drag's (a short arrow lying on
+// the wing) beside its tip so it does not cover the wing root and the lift arrow.
+const LIFT: ArrowSpec = {
+  name: 'Lift',
+  color: 0x3be57f,
+  cssColor: '#7dffb0',
+  dir: [0, 0, 1],
+  labelCenter: [0.5, 1.15],
+};
+const DRAG: ArrowSpec = {
+  name: 'Drag',
+  color: 0xff9638,
+  cssColor: '#ffbd7a',
+  dir: [1, 0, 0],
+  labelCenter: [-0.08, -0.25],
+};
+const WEIGHT: ArrowSpec = {
+  name: 'Weight',
+  color: 0x9aa4b4,
+  cssColor: '#c8d0dc',
+  dir: [0, 0, -1],
+  labelCenter: [0.5, -0.2],
+};
 
 /** One arrow: unit shaft + head meshes scaled per frame, plus a label at the tip. */
 class Arrow {
@@ -62,7 +84,10 @@ class Arrow {
       this.group.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
     else this.group.quaternion.setFromUnitVectors(from, to);
     this.label = createLabel(spec.name, { color: spec.cssColor, className: 'al-label--force' });
-    if (this.label) this.group.add(this.label);
+    if (this.label) {
+      this.label.center.set(spec.labelCenter[0], spec.labelCenter[1]);
+      this.group.add(this.label);
+    }
     this.group.visible = false;
   }
 
@@ -139,7 +164,7 @@ export class ForceArrows {
     if (this.drag.label) {
       setLabelText(
         this.drag.label,
-        `Drag ${formatKilonewtons(aero.drag)} (arrow x${DRAG_VISUAL_SCALE})`,
+        `Drag ${formatKilonewtons(aero.drag)} (arrow ×${DRAG_VISUAL_SCALE})`,
       );
     }
     if (this.weight.label && w !== null) {

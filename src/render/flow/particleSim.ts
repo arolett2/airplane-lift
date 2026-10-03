@@ -9,20 +9,44 @@
 import type { FlowFieldGrid, Vec3 } from '../../physics/types';
 import type { ColorBy } from '../../state/params';
 import { getColorLut, lutIndex } from './flowColors';
+import type { ColorLut } from './flowColors';
 import { FlowSampler, SAMPLE_SOLID } from './gridSampler';
-import { makeRng, makeSpawnRegion, spawnAnywhere, spawnOnInlet } from './spawn';
+import {
+  KIND_AMBIENT,
+  KIND_TIP,
+  makeRng,
+  makeSpawnRegion,
+  spawnAnywhere,
+  spawnOnInlet,
+} from './spawn';
 import type { SpawnRegion } from './spawn';
 
-/** Particle budget at density 1. */
-export const BASE_PARTICLES = 14000;
+/** Particle budget at density 1 (smoke is released where it tells the story, so few suffice). */
+export const BASE_PARTICLES = 7000;
 /** Hard cap (density 2 would otherwise exceed it). */
-export const MAX_PARTICLES = 30000;
+export const MAX_PARTICLES = 14000;
 
 /** Number of particles for a density multiplier (0.25 .. 2). */
 export function particleCountFor(density: number): number {
   if (!(density > 0)) return 0;
   return Math.min(MAX_PARTICLES, Math.round(BASE_PARTICLES * density));
 }
+
+/**
+ * Opacity of smoke in undisturbed air, relative to strongly disturbed air: the freestream
+ * recedes and the flow the wing changes stands out.
+ */
+export const FREESTREAM_ALPHA = 0.36;
+/** Extra opacity factor for the ambient dust (the sheet and tip smoke are the story). */
+export const AMBIENT_ALPHA = 0.45;
+/**
+ * Velocity perturbation |V - Vinf| / Vinf at which a particle is fully emphasised. Unlike the
+ * pressure (speed) emphasis this also catches cross-flow: the swirl of a tip vortex and the
+ * downwash barely change the air's speed, but they are what the wing does to it.
+ */
+export const PERTURBATION_FULL = 0.12;
+/** Tip smoke is always drawn at least this emphasised (it marks the vortex). */
+const TIP_MIN_EMPHASIS = 0.3;
 
 /** Particle lifetime as a multiple of the freestream transit time (min, max). */
 const LIFE_MIN = 1.6;
@@ -32,8 +56,13 @@ const FADE_IN = 0.035;
 const FADE_OUT = 0.12;
 /** Fade out over this fraction of the tunnel length before the outlet. */
 const OUTLET_FADE = 0.07;
-/** Motion-trail length: how far behind (in sim time) the tail point lags, as a fraction of transit time. */
-export const TRAIL_TRANSIT_FRACTION = 0.028;
+/**
+ * Motion trails are short polylines through each particle's recent positions: TRAIL_POINTS
+ * samples spread over TRAIL_TRANSIT_FRACTION of the freestream transit time. Curved paths
+ * (the downwash, the swirl round a tip vortex) therefore read as curves, not straight dashes.
+ */
+export const TRAIL_POINTS = 5;
+export const TRAIL_TRANSIT_FRACTION = 0.13;
 /** Never move a particle further than this fraction of a grid cell per sub-step... */
 const MAX_STEP_CELLS = 0.9;
 /** ...using at most this many sub-steps per update (longer frames just run slow). */
@@ -46,13 +75,28 @@ export class ParticleSim {
   /** xyz per particle (tunnel frame, m). */
   readonly pos: Float32Array;
   /** Lagging point behind each particle, for the motion trail. */
-  readonly tail: Float32Array;
+  /**
+   * Trail history: TRAIL_POINTS past positions per particle, xyz each, laid out
+   * [particle][sample][xyz]. Sample `historyHead` is the newest, the one before it (cyclically)
+   * the next older, and so on.
+   */
+  readonly history: Float32Array;
+  /** Index (0 .. TRAIL_POINTS-1) of the newest history sample. */
+  historyHead = 0;
+  /** Simulation time at which each history sample was taken. */
+  readonly historyTime = new Float64Array(TRAIL_POINTS);
+  /** How many of each particle's history samples are valid (0 right after a (re)spawn). */
+  readonly historyCount: Uint8Array;
+  /** Simulation time advanced so far (s). */
+  time = 0;
   readonly age: Float32Array;
   readonly maxAge: Float32Array;
   /** Per-particle RGB from the colour LUT (updated by update()). */
   readonly color: Float32Array;
   /** Per-particle opacity 0..1 including fades (updated by update()). */
   readonly alpha: Float32Array;
+  /** What each particle was released as (spawn.ts KIND_*). */
+  readonly kind: Uint8Array;
   /** Number of active particles. */
   count = 0;
 
@@ -61,21 +105,27 @@ export class ParticleSim {
   private grid: FlowFieldGrid | null = null;
   private region: SpawnRegion | null = null;
   private explicitRegion = false;
-  private lut: Float32Array = getColorLut('pressure').rgb;
+  private lut: ColorLut = getColorLut('pressure');
   private transit = 1; // freestream transit time (s)
   private invVInf = 0;
   private dtMax = 0;
+  /** Sim time since the last history sample. */
+  private historyClock = 0;
+  /** Trail length as a fraction of the transit time. */
+  private trailFraction = TRAIL_TRANSIT_FRACTION;
   /** True when attributes need a refresh even though no time passes (e.g. after a field swap). */
   private dirty = true;
 
   constructor(capacity = MAX_PARTICLES, seed = 0x5eed) {
     this.capacity = capacity;
     this.pos = new Float32Array(capacity * 3);
-    this.tail = new Float32Array(capacity * 3);
+    this.history = new Float32Array(capacity * TRAIL_POINTS * 3);
+    this.historyCount = new Uint8Array(capacity);
     this.age = new Float32Array(capacity);
     this.maxAge = new Float32Array(capacity);
     this.color = new Float32Array(capacity * 3);
     this.alpha = new Float32Array(capacity);
+    this.kind = new Uint8Array(capacity);
     this.rng = makeRng(seed);
   }
 
@@ -92,8 +142,22 @@ export class ParticleSim {
     return this.transit;
   }
 
+  /** Freestream speed of the current field (m/s), 0 without one. */
+  get freestreamSpeed(): number {
+    return this.grid?.vInf ?? 0;
+  }
+
+  /** Trail length as a fraction of the freestream transit time (null = the default). */
+  setTrailLength(transitFraction: number | null): void {
+    const f =
+      transitFraction !== null && Number.isFinite(transitFraction) && transitFraction > 0
+        ? Math.min(1, transitFraction)
+        : TRAIL_TRANSIT_FRACTION;
+    this.trailFraction = f;
+  }
+
   setColorMode(mode: ColorBy): void {
-    this.lut = getColorLut(mode).rgb;
+    this.lut = getColorLut(mode);
     this.dirty = true;
   }
 
@@ -140,10 +204,8 @@ export class ParticleSim {
     const pos = this.pos;
     for (let i = from; i < to; i++) {
       const o = i * 3;
-      spawnAnywhere(region, rng, pos, o);
-      this.tail[o] = pos[o]!;
-      this.tail[o + 1] = pos[o + 1]!;
-      this.tail[o + 2] = pos[o + 2]!;
+      this.kind[i] = spawnAnywhere(region, rng, pos, o);
+      this.resetHistory(i);
       const life = (LIFE_MIN + (LIFE_MAX - LIFE_MIN) * rng()) * this.transit;
       this.maxAge[i] = life;
       // Age consistent with distance travelled so lifetimes are staggered like in steady state.
@@ -155,7 +217,7 @@ export class ParticleSim {
   }
 
   /**
-   * Advance every particle by dtSim physical seconds and refresh colour/alpha/tail.
+   * Advance every particle by dtSim physical seconds and refresh colour/alpha/trail history.
    * Returns false when nothing changed (paused, no field), so callers can skip GPU uploads.
    */
   update(dtSim: number): boolean {
@@ -176,18 +238,19 @@ export class ParticleSim {
     const sampler = this.sampler;
     const rng = this.rng;
     const pos = this.pos;
-    const tail = this.tail;
     const ageArr = this.age;
     const maxAgeArr = this.maxAge;
     const color = this.color;
     const alpha = this.alpha;
-    const lut = this.lut;
+    const kind = this.kind;
+    const lut = this.lut.rgb;
+    const emphasis = this.lut.emphasis;
     const invVInf = this.invVInf;
+    const vInf = grid.vInf;
     const transit = this.transit;
     const [xMin, yMin, zMin] = region.min;
     const [xMax, yMax, zMax] = region.max;
     const lx = xMax - xMin;
-    const tailK = dt > 0 ? 1 - Math.exp(-dt / (TRAIL_TRANSIT_FRACTION * transit)) : 0;
     const fadeInInv = 1 / (FADE_IN * transit);
     const fadeOutInv = 1 / (FADE_OUT * transit);
     const outletInv = 1 / (OUTLET_FADE * lx);
@@ -201,6 +264,7 @@ export class ParticleSim {
       const age = ageArr[i]! + dt;
       let alive = age <= maxAgeArr[i]!;
       let speed = 1;
+      let perturb = 0;
 
       if (alive) {
         for (let s = 0; s < nSub; s++) {
@@ -223,6 +287,8 @@ export class ParticleSim {
           y += h * uy;
           z += h * uz;
           speed = Math.sqrt(ux * ux + uy * uy + uz * uz) * invVInf;
+          const du = ux - vInf;
+          perturb = Math.sqrt(du * du + uy * uy + uz * uz) * invVInf;
           if (!(x >= xMin && x <= xMax && y >= yMin && y <= yMax && z >= zMin && z <= zMax)) {
             alive = false;
             break;
@@ -231,13 +297,8 @@ export class ParticleSim {
       }
 
       if (!alive) {
-        spawnOnInlet(region, rng, jitterX, pos, o);
-        x = pos[o]!;
-        y = pos[o + 1]!;
-        z = pos[o + 2]!;
-        tail[o] = x;
-        tail[o + 1] = y;
-        tail[o + 2] = z;
+        kind[i] = spawnOnInlet(region, rng, jitterX, pos, o);
+        this.resetHistory(i);
         ageArr[i] = 0;
         maxAgeArr[i] = (LIFE_MIN + (LIFE_MAX - LIFE_MIN) * rng()) * transit;
         alpha[i] = 0;
@@ -252,11 +313,9 @@ export class ParticleSim {
       pos[o + 1] = y;
       pos[o + 2] = z;
       ageArr[i] = age;
-      tail[o] = tail[o]! + (x - tail[o]!) * tailK;
-      tail[o + 1] = tail[o + 1]! + (y - tail[o + 1]!) * tailK;
-      tail[o + 2] = tail[o + 2]! + (z - tail[o + 2]!) * tailK;
 
-      const c = lutIndex(speed) * 3;
+      const li = lutIndex(speed);
+      const c = li * 3;
       color[o] = lut[c]!;
       color[o + 1] = lut[c + 1]!;
       color[o + 2] = lut[c + 2]!;
@@ -266,9 +325,58 @@ export class ParticleSim {
       if (fo < a) a = fo;
       const fx = (xMax - x) * outletInv;
       if (fx < a) a = fx;
-      alpha[i] = a < 0 ? 0 : a > 1 ? 1 : a;
+      a = a < 0 ? 0 : a > 1 ? 1 : a;
+      // Undisturbed air recedes; ambient dust stays in the background.
+      let e = perturb >= PERTURBATION_FULL ? 1 : Math.pow(perturb / PERTURBATION_FULL, 0.75);
+      if (emphasis[li]! > e) e = emphasis[li]!;
+      const k = kind[i];
+      if (k === KIND_TIP && e < TIP_MIN_EMPHASIS) e = TIP_MIN_EMPHASIS;
+      a *= FREESTREAM_ALPHA + (1 - FREESTREAM_ALPHA) * e;
+      if (k === KIND_AMBIENT) a *= AMBIENT_ALPHA;
+      alpha[i] = a;
+    }
+    if (dt > 0) {
+      this.time += dt;
+      this.sampleHistory(dt);
     }
     return true;
+  }
+
+  /** Record a new trail sample for every particle once per sample interval. */
+  private sampleHistory(dt: number): void {
+    const interval = (this.trailFraction * this.transit) / TRAIL_POINTS;
+    this.historyClock += dt;
+    if (this.historyClock < interval) return;
+    this.historyClock = this.historyClock >= 2 * interval ? 0 : this.historyClock - interval;
+    const head = (this.historyHead + 1) % TRAIL_POINTS;
+    this.historyHead = head;
+    this.historyTime[head] = this.time;
+    const pos = this.pos;
+    const hist = this.history;
+    const valid = this.historyCount;
+    for (let i = 0, n = this.count; i < n; i++) {
+      const o = i * 3;
+      const h = (i * TRAIL_POINTS + head) * 3;
+      hist[h] = pos[o]!;
+      hist[h + 1] = pos[o + 1]!;
+      hist[h + 2] = pos[o + 2]!;
+      if (valid[i]! < TRAIL_POINTS) valid[i] = valid[i]! + 1;
+    }
+  }
+
+  /** Collapse particle i's trail onto its current position (after a (re)spawn). */
+  private resetHistory(i: number): void {
+    const o = i * 3;
+    const x = this.pos[o]!;
+    const y = this.pos[o + 1]!;
+    const z = this.pos[o + 2]!;
+    const hist = this.history;
+    this.historyCount[i] = 0;
+    for (let k = 0, h = i * TRAIL_POINTS * 3; k < TRAIL_POINTS; k++, h += 3) {
+      hist[h] = x;
+      hist[h + 1] = y;
+      hist[h + 2] = z;
+    }
   }
 
   /** Recompute transit time, step limits and (when not given) the spawn region from the grid. */

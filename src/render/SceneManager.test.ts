@@ -24,6 +24,8 @@ vi.mock('three', async (importOriginal) => {
     domElement = document.createElement('canvas');
     toneMapping = 0;
     toneMappingExposure = 1;
+    clippingPlanes: unknown[] = [];
+    localClippingEnabled = false;
     outputColorSpace = '';
     loop: ((t: number) => void) | null = null;
     renders = 0;
@@ -203,7 +205,8 @@ describe('SceneManager', () => {
     expect(sm.camera.position.x).toBeCloseTo(pose.position[0], 3);
     expect(sm.camera.position.y).toBeCloseTo(pose.position[1], 3);
     expect(sm.camera.position.z).toBeCloseTo(pose.position[2], 3);
-    expect(sm.controls.target.toArray()).toEqual(pose.target);
+    // OrbitControls re-normalises the target (clampLength), which can cost an ulp.
+    sm.controls.target.toArray().forEach((v, i) => expect(v).toBeCloseTo(pose.target[i]!, 9));
     expect(early.distanceTo(sm.camera.position)).toBeGreaterThan(1);
     // Side view: the camera looks along +y with +x to the screen's right.
     const dir = new THREE.Vector3();
@@ -263,6 +266,61 @@ describe('SceneManager', () => {
     expect(sm.camera.position.x).toBeCloseTo(pose.position[0], 3);
     expect(sm.camera.position.y).toBeCloseTo(pose.position[1], 3);
     expect(sm.camera.position.distanceTo(defaultPose)).toBeGreaterThan(0.05);
+  });
+
+  it('centres the projection in the region the floating panels leave uncovered', () => {
+    sm.setDomain(tunnelDomain(30, 3));
+    sm.setViewInsets({ left: 200, right: 100, top: 50 });
+    const view = sm.camera.view!;
+    expect(view.enabled).toBe(true);
+    // Shift the frustum so the optical centre lands mid-gap: (200 - 100) / 2 px left of centre.
+    expect(view.offsetX).toBeCloseTo(-50, 6);
+    expect(view.offsetY).toBeCloseTo(-25, 6);
+    expect(sm.visibleRegion).toEqual({ x: 200, y: 50, width: 500, height: 450 });
+    sm.setViewInsets({});
+    expect(sm.camera.view?.enabled ?? false).toBe(false);
+  });
+
+  it('never lets panels squeeze the visible region below a minimum', () => {
+    sm.setViewInsets({ left: 600, right: 600 });
+    const r = sm.visibleRegion;
+    expect(r.width).toBeGreaterThan(0.3 * 800);
+    expect(r.x).toBeCloseTo(0.5 * (800 - r.width), 6);
+  });
+
+  it('cuts the scene open for side shots and the wake for the behind shot', () => {
+    sm.setDomain(tunnelDomain(30, 3));
+    const seen: string[] = [];
+    const off = sm.onCutawayChange((k) => seen.push(k));
+    sm.flyTo('side');
+    for (let i = 0; i < 80; i++) frame(sm, 16);
+    expect(sm.cutaway).toBe('span');
+    const planes = sm.renderer.clippingPlanes;
+    expect(planes).toHaveLength(1);
+    expect(planes[0]!.normal.y).toBe(1);
+    sm.flyTo('behind');
+    for (let i = 0; i < 80; i++) frame(sm, 16);
+    expect(sm.cutaway).toBe('cross');
+    expect(sm.renderer.clippingPlanes[0]!.normal.x).toBe(-1);
+    sm.flyTo('overview');
+    for (let i = 0; i < 80; i++) frame(sm, 16);
+    expect(sm.cutawayActive).toBe(false);
+    expect(sm.renderer.clippingPlanes).toHaveLength(0);
+    // While the camera swings between the two shots neither cut applies.
+    expect(seen).toEqual(['span', 'none', 'cross', 'none']);
+    off();
+  });
+
+  it('uses a longer lens for the side shot, eased in with the move', () => {
+    sm.setDomain(tunnelDomain(30, 3));
+    for (let i = 0; i < 80; i++) frame(sm, 16);
+    const wide = sm.camera.fov;
+    sm.flyTo('side');
+    frame(sm, 16);
+    expect(sm.camera.fov).toBeLessThan(wide);
+    expect(sm.camera.fov).toBeGreaterThan(26);
+    for (let i = 0; i < 80; i++) frame(sm, 16);
+    expect(sm.camera.fov).toBe(26);
   });
 
   it('dispose stops the loop, releases GL and removes its DOM; it is idempotent', () => {

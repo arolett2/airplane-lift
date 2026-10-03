@@ -143,7 +143,9 @@ async function handleCompute(
 
   for (let k = 0; k < stages.length; k++) {
     const stage = stages[k]!;
-    if (k > 0) await yieldToEventLoop();
+    // Yield before every stage (including the first) so requests queued behind this one get
+    // dispatched and this one can be abandoned without doing any work.
+    await yieldToEventLoop();
     if (isStale()) return;
     try {
       runStage(stage, req, post, state, ensureSolved);

@@ -7,3 +7,7 @@ coverage/
 .env*
 !.env.example
 *.tsbuildinfo
+
+# Local editor/agent tooling
+.claude/
+snapshots/

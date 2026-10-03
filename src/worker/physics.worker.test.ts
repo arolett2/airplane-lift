@@ -121,8 +121,8 @@ describe('handleRequest (compute)', () => {
   it('streams each stage as soon as it is ready, yielding in between', async () => {
     const { posted, post } = recorder();
     const done = handleRequest(request(1, [...STAGE_ORDER]), post, never, createWorkerState());
-    // The first stage runs synchronously; the rest wait for the event loop.
-    expect(posted.map((p) => p.msg.type)).toEqual(['aero']);
+    // Every stage, including the first, waits for the event loop so queued requests can win.
+    expect(posted).toEqual([]);
     await done;
     expect(posted.map((p) => p.msg.type)).toEqual([...STAGE_ORDER, 'done']);
   });
@@ -133,7 +133,9 @@ describe('handleRequest (compute)', () => {
     const run = handleRequest(request(1, [...STAGE_ORDER]), post, () => stale, createWorkerState());
     stale = true;
     await run;
-    expect(posted.map((p) => p.msg.type)).toEqual(['aero']);
+    // Superseded before its first stage ran: no work done, nothing posted.
+    expect(posted).toEqual([]);
+    expect(fakes.computeAero).not.toHaveBeenCalled();
     expect(fakes.computePolarSweep).not.toHaveBeenCalled();
   });
 
@@ -290,7 +292,7 @@ describe('createMessageHandler', () => {
     await Promise.all([first, second]);
     const forOne = posted.filter((p) => p.msg.requestId === 1).map((p) => p.msg.type);
     const forTwo = posted.filter((p) => p.msg.requestId === 2).map((p) => p.msg.type);
-    expect(forOne).toEqual(['aero']);
+    expect(forOne).toEqual([]);
     expect(forTwo).toEqual([...STAGE_ORDER, 'done']);
   });
 

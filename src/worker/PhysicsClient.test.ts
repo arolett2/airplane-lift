@@ -173,6 +173,29 @@ describe('PhysicsClient.compare', () => {
   });
 });
 
+describe('PhysicsClient.probe', () => {
+  it('resolves with its own sample, without broadcasting it', async () => {
+    const { worker, client, received } = setup();
+    const p = client.probe([1, 2, 3]);
+    const req = worker.posted[0] as Extract<PhysicsRequest, { type: 'probe' }>;
+    expect(req).toEqual({ type: 'probe', requestId: 1, point: [1, 2, 3] });
+    worker.reply({ type: 'probe', requestId: 1, sample: null });
+    await expect(p).resolves.toBeNull();
+    expect(received).toEqual([]);
+  });
+
+  it('rejects on a probe error and when the worker crashes', async () => {
+    const { worker, client, received } = setup();
+    const p1 = client.probe([0, 0, 0]);
+    worker.reply({ type: 'error', requestId: 1, stage: 'probe', message: 'nope' });
+    await expect(p1).rejects.toThrow('nope');
+    expect(received).toEqual([]);
+    const p2 = client.probe([0, 0, 0]);
+    worker.crash('worker died');
+    await expect(p2).rejects.toThrow('worker died');
+  });
+});
+
 describe('PhysicsClient.dispose', () => {
   it('terminates the worker, rejects pending compares and goes quiet', async () => {
     const { worker, client, received } = setup();

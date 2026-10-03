@@ -243,10 +243,13 @@ export async function startApp(root: HTMLElement): Promise<void> {
         console.error(`[physics:${msg.stage}]`, msg.message);
         results.set((r) => ({ ...r, error: msg.message }));
         // A failed stage is settled too: it is not retried until its inputs change again.
-        if (msg.stage !== 'compare') scheduler.settle(msg.stage, msg.requestId);
+        if (msg.stage !== 'compare' && msg.stage !== 'probe') {
+          scheduler.settle(msg.stage, msg.requestId);
+        }
         return;
       case 'done':
       case 'compare':
+      case 'probe':
         return;
     }
     scheduler.settle(msg.type, msg.requestId);

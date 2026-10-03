@@ -105,13 +105,14 @@ describe('LessonPanel steps', () => {
     expect(prev.disabled).toBe(false);
 
     click(next);
-    expect(store.get().view.camera).toBe('side'); // step 3 switches to the side view
-    expect(store.get().view.camera).toBe('side');
+    expect(store.get().view.camera).toBe('section'); // step 3 switches to the section shot
+    expect(store.get().view.sectionProbe).not.toBeNull(); // and places the probe
 
     click(prev);
     expect(title()).toBe(lesson.steps[1]!.title);
     expect(store.get().lesson.step).toBe(1);
     expect(store.get().view.camera).toBe('overview'); // replayed, so step 3's camera is gone
+    expect(store.get().view.sectionProbe).toBeNull();
   });
 
   it('shows one step dot per step, marks the current one, and jumps when clicked', () => {

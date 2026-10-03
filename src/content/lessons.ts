@@ -31,7 +31,23 @@ const BASE_VIEW: ViewPatch = {
   paused: false,
   playbackSpeed: 1,
   rake: { mode: 'vertical', eta: 0.35, height: 0, count: 24 },
+  sectionBackdrop: 'tint',
+  sectionFrame: 'wing',
+  sectionProbe: null,
 };
+
+/**
+ * Non-slider controls a step may highlight (besides the PARAM_SPECS paths): the cross-section's
+ * backdrop and point-of-view switches and its probe button.
+ */
+export const EXTRA_HIGHLIGHTS: readonly string[] = [
+  'view.sectionBackdrop',
+  'view.sectionFrame',
+  'view.sectionProbe',
+];
+
+/** Probe spots in the cross-section (chords from the leading edge, display frame). */
+const PROBE_ABOVE = { x: 0.3, y: 0.12 } as const;
 
 /** BASE_VIEW with overrides (deep-merged, so `rake: { mode }` keeps the other rake fields). */
 const view = (overrides: ViewPatch = {}): ViewPatch => deepMerge(BASE_VIEW, overrides);
@@ -42,7 +58,7 @@ export const LESSONS: readonly Lesson[] = [
     id: 'what-is-lift',
     title: 'What is lift?',
     summary: 'See why a wing holds an airplane up: pressure, speed, and air pushed downward.',
-    minutes: 6,
+    minutes: 10,
     steps: [
       {
         id: 'what-is-lift-welcome',
@@ -75,16 +91,44 @@ export const LESSONS: readonly Lesson[] = [
         highlight: ['flow.alphaDeg'],
       },
       {
-        id: 'what-is-lift-fast-air',
-        title: 'Fast air, low pressure',
+        id: 'what-is-lift-probe',
+        title: 'Measure it with a probe',
         body: `
-<p>Why is the pressure lower on top? Because the air up there is moving faster than the air far away.</p>
-<p>Fast air and low pressure always arrive together. In a smooth flow, where the air speeds up its pressure drops, and where it slows down its pressure rises. This is <strong>Bernoulli's principle</strong>. It describes the trade, but it does not say what makes the air speed up in the first place. The wing's shape and tilt do that, by bending the whole flow around it.</p>
-<p>Because fast air and low pressure go together, the blue smoke over the top is also the fastest air. Watch the puffs on each smoke line: they are released at equal time steps, so they spread apart where the air is fast.</p>`,
+<p>The <strong>Cross-section</strong> card shows one slice of the wing, with the air flowing left to right. A <strong>probe</strong> now sits just above the wing, about a third of the way back. Under the picture it reads what the air is doing there.</p>
+<p>Here the air moves about <strong>30% faster than the wind</strong>, and its pressure is about <strong>1.5% below</strong> the air around it. Just under the wing the air is a little slower than the wind, and its pressure a little above normal.</p>
+<p>Those are small differences. Even the strongest suction on this wing, just behind the front edge, is only about 2% of normal air pressure. But they act on every square metre of the wing, so they add up: the Numbers card shows each square metre of this wing being pushed up with about 120 kg.</p>`,
         tryIt:
-          'Look at the top of the wing: the fastest, bluest air sits just behind the front edge.',
-        apply: { view: { colorBy: 'pressure', flowMode: 'streamlines' } },
-        camera: 'side',
+          'Drag the probe in the cross-section (or click the picture and use the arrow keys). Move it under the wing and watch the pressure turn from lower to higher. The Probe button in the top bar does the same in the 3D view.',
+        apply: {
+          view: {
+            colorBy: 'pressure',
+            flowMode: 'streamlines',
+            sectionEta: 0.35,
+            sectionProbe: PROBE_ABOVE,
+          },
+        },
+        camera: 'section',
+        highlight: ['view.sectionProbe'],
+      },
+      {
+        id: 'what-is-lift-fast-air',
+        title: 'Fast air, low pressure: a landscape',
+        body: `
+<p>Why is the pressure lower on top? Because the air up there is moving faster than the air far away. In a smooth flow, where the air speeds up its pressure drops, and where it slows down its pressure rises. This is <strong>Bernoulli's principle</strong>. It describes the trade, but not what makes the air speed up in the first place: the wing's shape and tilt do that, by bending the whole flow around it.</p>
+<p>The cross-section now shows pressure as a <strong>landscape</strong>: high pressure is a <strong>hill</strong>, low pressure a <strong>valley</strong>, and each line joins places of equal pressure, like the contour lines on a hiking map. The bright line is normal air pressure. There is a hill at the nose, where the air piles up and nearly stops, and a valley over the top of the wing.</p>
+<p>Air behaves a little like a ball on this landscape. It <strong>speeds up as it rolls downhill</strong> into the valley over the wing, and <strong>slows as it climbs</strong> the hill at the nose. Watch the smoke puffs: they are released at equal time steps, so they spread apart where the air is fast.</p>`,
+        tryIt:
+          'Find the deepest part of the valley: the fastest air sits just behind the front edge. Switch between Colours and Terrain to see the same pressure drawn two ways, and raise the angle of attack to deepen the valley.',
+        apply: {
+          view: {
+            colorBy: 'pressure',
+            flowMode: 'streamlines',
+            sectionBackdrop: 'terrain',
+            sectionProbe: null,
+          },
+        },
+        camera: 'section',
+        highlight: ['view.sectionBackdrop', 'flow.alphaDeg'],
       },
       {
         id: 'what-is-lift-downwash',
@@ -106,6 +150,21 @@ export const LESSONS: readonly Lesson[] = [
         highlight: ['flow.alphaDeg'],
       },
       {
+        id: 'what-is-lift-air-view',
+        title: "The air's view: air thrown down",
+        body: `
+<p>So far we have watched from the wing, with the wind streaming past. Switch the cross-section to the <strong>Air's view</strong>. The wind is taken away, and the arrows show only what the passing wing does to the still air (they are exaggerated; the key gives their scale).</p>
+<p>The air <strong>circulates</strong> around the wing: lifted ahead of it, pulled back over the top, pushed forward underneath, and thrown down behind. This swirl is called <strong>circulation</strong>, and its strength is what sets the lift.</p>
+<p>The Numbers card counts the result: this wing throws about <strong>6 tonnes of air downward every second</strong>, at about <strong>3 m/s</strong>. Pushing that much air down is what pushes the wing up. (That figure is an estimate from momentum theory.)</p>`,
+        tryIt:
+          'Raise the angle of attack: the circulation grows, and so do the tonnes of air thrown down and the lift. Then try a negative angle and see everything reverse.',
+        apply: {
+          view: { sectionBackdrop: 'tint', sectionFrame: 'air', flowMode: 'streamlines' },
+        },
+        camera: 'section',
+        highlight: ['view.sectionFrame', 'flow.alphaDeg'],
+      },
+      {
         id: 'what-is-lift-myth',
         title: 'Myth-buster: the race that never happens',
         body: `
@@ -120,6 +179,7 @@ export const LESSONS: readonly Lesson[] = [
             flowMode: 'streamlines',
             playbackSpeed: 0.3,
             rake: { mode: 'vertical', eta: 0.35, count: 24 },
+            sectionFrame: 'wing',
           },
         },
         camera: 'side',
@@ -133,6 +193,7 @@ export const LESSONS: readonly Lesson[] = [
 <li><strong>Pressure view:</strong> the air pushes up on the underside more than it pushes down on the top.</li>
 <li><strong>Downwash view:</strong> the wing pushes air downward, so the air pushes the wing upward.</li>
 </ul>
+<p>The <strong>Same lift, two views</strong> box in the Numbers card puts both side by side: the push on each square metre of wing, and the tonnes of air thrown down each second. Change anything and both change together, because they are one force.</p>
 <p>You can make more lift in four ways: a bigger angle of attack, more speed, a bigger wing, or denser air. The next lessons explore each one.</p>`,
         tryIt:
           'Change the angle of attack, the airspeed and the altitude one at a time. Which gives the biggest change in lift?',

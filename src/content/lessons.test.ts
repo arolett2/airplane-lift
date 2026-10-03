@@ -3,7 +3,7 @@ import { DEFAULT_STATE, PARAM_SPEC_BY_PATH, PARAM_SPECS, type CameraShot } from 
 import { getPreset } from '../state/presets';
 import { getPath } from '../state/store';
 import { applyLessonUpTo } from './applyStep';
-import { GLOSSARY, LESSONS } from './lessons';
+import { EXTRA_HIGHLIGHTS, GLOSSARY, LESSONS } from './lessons';
 
 const CAMERAS: readonly CameraShot[] = [
   'overview',
@@ -36,7 +36,7 @@ function checkHtml(html: string): string[] {
 }
 
 describe('LESSONS data', () => {
-  it('has 7 or 8 lessons with unique ids and 3 to 6 steps each', () => {
+  it('has 7 or 8 lessons with unique ids and 3 to 6 steps each (8 for the first)', () => {
     expect(LESSONS.length).toBeGreaterThanOrEqual(7);
     expect(LESSONS.length).toBeLessThanOrEqual(8);
     expect(new Set(LESSONS.map((l) => l.id)).size).toBe(LESSONS.length);
@@ -46,7 +46,8 @@ describe('LESSONS data', () => {
       expect(l.minutes, l.id).toBeGreaterThanOrEqual(3);
       expect(l.minutes, l.id).toBeLessThanOrEqual(15);
       expect(l.steps.length, l.id).toBeGreaterThanOrEqual(3);
-      expect(l.steps.length, l.id).toBeLessThanOrEqual(6);
+      // "What is lift?" also tours the probe, the pressure terrain and the air's view.
+      expect(l.steps.length, l.id).toBeLessThanOrEqual(l.id === 'what-is-lift' ? 8 : 6);
     }
   });
 
@@ -117,7 +118,10 @@ describe('LESSONS data', () => {
       for (const s of l.steps) {
         for (const path of s.highlight ?? []) {
           highlights++;
-          expect(PARAM_SPEC_BY_PATH.has(path), `${s.id} highlights unknown "${path}"`).toBe(true);
+          expect(
+            PARAM_SPEC_BY_PATH.has(path) || EXTRA_HIGHLIGHTS.includes(path),
+            `${s.id} highlights unknown "${path}"`,
+          ).toBe(true);
         }
       }
     }

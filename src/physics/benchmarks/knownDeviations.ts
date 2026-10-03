@@ -72,13 +72,4 @@ export const KNOWN_DEVIATIONS: Readonly<Record<string, string>> = {
     'On this thin, highly swept wing a leading-edge separation vortex carries the lift from CL ' +
     '0.35 to CLmax 1.02 (vortex lift). The model has no vortex lift: its strips stall like 2D ' +
     'sections and CLmax is 0.54.',
-
-  /* ----- Aircraft ----- */
-  'ac:b737-800:buffetCL':
-    'Buffet onset is the Korn drag-divergence lift + 0.2 with technology factor 0.95; that is ' +
-    'generous for the 737NG section (also noted in docs/AIRCRAFT_DATA.md: 1.9 g margin). The ' +
-    'reference is itself an estimate from the 1.3 g rule (0.74).',
-  'ac:b737-800:Mdd':
-    'Korn equation with the supercritical technology factor 0.95 for the 737 stand-in gives ' +
-    'M_dd 0.83; the 737NG cruises at 0.785 (the reference is a proxy: no M_dd is published).',
 };

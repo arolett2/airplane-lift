@@ -122,13 +122,16 @@ describe('lesson claims hold in the tunnel (real solvers)', { timeout: 120_000 }
       expect(ratio).toBeLessThan(0.38);
     });
 
-    it('737 cruise: 232 m/s at 11 km feels like 126 m/s at sea level and holds up 67 t', () => {
+    it('737 cruise: 234 m/s at 34,000 ft feels like 133 m/s at sea level and holds up 65 t', () => {
       const s = stateAt('speed-and-density', 'speed-and-density-cruise');
       const r = at(s);
+      expect(Math.abs(s.flow.altitude / 0.3048 - 34000)).toBeLessThan(300);
+      expect(Math.abs(r.velocity - 234)).toBeLessThan(1);
+      expect(Math.abs(r.velocity / KNOT - 455)).toBeLessThan(3);
       const eas = Math.sqrt((2 * r.dynamicPressure) / 1.225);
-      expect(eas).toBeGreaterThan(123);
-      expect(eas).toBeLessThan(129);
-      expect(eas / KNOT).toBeCloseTo(245, -1);
+      expect(Math.abs(eas - 133)).toBeLessThan(1);
+      expect(Math.abs(eas / KNOT - 258)).toBeLessThan(3);
+      expect(Math.abs(getPreset('b737-800')!.typicalCruiseMassKg - 65000)).toBeLessThan(1000);
       expect(Math.abs(r.lift / weightOf('b737-800') - 1)).toBeLessThan(0.03);
       // At sea level at the same speed: several times the weight.
       expect(at(s, { altitude: 0 }).lift / weightOf('b737-800')).toBeGreaterThan(2.5);
@@ -177,12 +180,13 @@ describe('lesson claims hold in the tunnel (real solvers)', { timeout: 120_000 }
   });
 
   describe('Winglets and wingtip devices', () => {
-    it('737-800: without its winglets the wing has more drag and a worse L/D', () => {
+    it('737-800: without its winglets every unit of lift costs more drag', () => {
       const s = stateAt('winglets', 'winglets-why');
       const r = at(s);
       const bare = at(s, {}, { tipDevice: { ...s.wing.tipDevice, size: 0 } });
-      expect(bare.drag).toBeGreaterThan(r.drag);
-      expect(bare.liftToDrag).toBeLessThan(r.liftToDrag);
+      // At the same angle the bare wing also makes less lift (and, so close to drag divergence,
+      // less wave drag), so the lesson points at lift per drag, not at the drag alone.
+      expect(bare.liftToDrag).toBeLessThan(0.98 * r.liftToDrag);
       expect(bare.spanEfficiency).toBeLessThan(r.spanEfficiency);
     });
 
@@ -220,11 +224,11 @@ describe('lesson claims hold in the tunnel (real solvers)', { timeout: 120_000 }
   });
 
   describe('Why jets sweep their wings', () => {
-    it('737 at Mach 0.785, 295 m/s speed of sound; drag and wave drag climb with speed', () => {
+    it('737 at Mach 0.785, 298 m/s speed of sound; drag and wave drag climb with speed', () => {
       const s = stateAt('sweep', 'sweep-speed-of-sound');
       const r = at(s);
       expect(r.mach).toBeCloseTo(0.785, 2);
-      expect(r.atmosphere.speedOfSound).toBeCloseTo(295, 0);
+      expect(Math.abs(r.atmosphere.speedOfSound - 298)).toBeLessThan(1);
       const faster = at(s, { airspeed: 245 });
       expect(faster.drag).toBeGreaterThan(r.drag);
       expect(faster.CDw).toBeGreaterThan(r.CDw);
@@ -274,7 +278,9 @@ describe('lesson claims hold in the tunnel (real solvers)', { timeout: 120_000 }
       const b737 = getPreset('b737-800')!;
       expect(b747.maxTakeoffMassKg / b737.maxTakeoffMassKg).toBeCloseTo(5, 0);
       expect(b747.typicalCruiseMassKg / 525).toBeCloseTo(640, -1);
-      expect(b737.typicalCruiseMassKg / 124.6).toBeCloseTo(540, -1);
+      expect(b737.typicalCruiseMassKg / 124.6).toBeCloseTo(520, -1);
+      // Cessna step: "about 520 to 630 for a loaded 737" (cruise to maximum take-off mass).
+      expect(b737.maxTakeoffMassKg / 124.6).toBeCloseTo(630, -1);
     });
 
     it('the slimmer 737 wing has the better L/D; both cruise below drag divergence', () => {
@@ -285,9 +291,9 @@ describe('lesson claims hold in the tunnel (real solvers)', { timeout: 120_000 }
       expect(b.liftToDrag).toBeGreaterThan(a.liftToDrag);
       expect(a.mach).toBeLessThanOrEqual(a.machDragDivergence);
       expect(b.mach).toBeLessThanOrEqual(b.machDragDivergence);
-      // "about 900 km/h" and "around 830 km/h"
+      // "about 900 km/h" and "around 840 km/h"
       expect(Math.abs(a.velocity * 3.6 - 900)).toBeLessThan(20);
-      expect(Math.abs(b.velocity * 3.6 - 830)).toBeLessThan(20);
+      expect(Math.abs(b.velocity * 3.6 - 840)).toBeLessThan(10);
     });
   });
 

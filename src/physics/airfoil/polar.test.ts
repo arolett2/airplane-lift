@@ -102,6 +102,24 @@ describe('section polar', () => {
     }
   });
 
+  it('a buffet-capped stall levels off instead of falling to the flat plate at a small angle', () => {
+    // A flap moves the zero-lift angle far negative: at a small geometric angle the section is
+    // deep past a low (buffet-capped) stall although the plate angle is only a few degrees.
+    const flapped = polarFor(naca(0.02, 0.12), { chordFrac: 0.3, deflection: 25 * DEG }, false);
+    const buffet = flapped.withLiftLimit({ scale: 0.9, cap: 0.7 });
+    const alpha = 3 * DEG;
+    expect(buffet.isStalled(alpha, RE)).toBe(true);
+    // The plain flat plate would give 2 sin(3 deg) cos(3 deg) = 0.10.
+    expect(buffet.cl(alpha, RE)).toBeGreaterThan(0.5 * buffet.clMax(RE));
+    // Separating never lowers the drag below the attached flapped section's.
+    const x = alpha - buffet.alphaZeroLift;
+    const attachedLike = buffet.cd(buffet.alphaZeroLift + 0.5 * x, RE);
+    expect(buffet.cd(alpha, RE)).toBeGreaterThan(attachedLike);
+    // At low speed (no cap) the deep stall is still the flat plate.
+    const plainDeep = 60 * DEG;
+    expect(flapped.cl(plainDeep, RE)).toBeCloseTo(Math.sin(2 * plainDeep), 6);
+  });
+
   it('stays finite, C1 and peaked at clMax across the slider extremes', () => {
     const cases: [Naca4Params, FlapState | null, boolean][] = [
       [naca(0, 0.04), null, false],

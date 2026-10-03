@@ -145,6 +145,31 @@ describe('maximum lift of the presets (real solvers)', { timeout: 120_000 }, () 
   );
 });
 
+describe('flaps at cruise Mach (real solvers)', { timeout: 120_000 }, () => {
+  // Flaps are never lowered at cruise Mach, but the slider allows it: past the buffet limit the
+  // wing must still pay for every extra degree of flap, and never lift less than the clean wing.
+  it.each(AIRLINERS.map((p) => [p.id, p] as const))(
+    '%s: drag rises with every flap step and lift stays above the clean wing',
+    (_id, p) => {
+      const at = (deg: number) =>
+        computeAero(
+          { ...p.wing, flaps: { ...p.wing.flaps, deflectionDeg: deg } },
+          p.cruise,
+          1,
+          createAeroCache(),
+        ).aero;
+      const clean = at(0);
+      let prev = clean;
+      for (let deg = 5; deg <= 40; deg += 5) {
+        const aero = at(deg);
+        expect(aero.CD, `${p.id} flaps ${deg}`).toBeGreaterThan(prev.CD);
+        expect(aero.CL, `${p.id} flaps ${deg}`).toBeGreaterThan(clean.CL);
+        prev = aero;
+      }
+    },
+  );
+});
+
 describe('tip devices on the 737-800 wing (real solvers)', { timeout: 120_000 }, () => {
   const base = getPreset('b737-800')!;
   /** Root angle (deg) that gives `target` CL, by bisection. */

@@ -23,8 +23,20 @@ import {
 import type { UnitSystem } from '../../shared/units';
 import { clamp, h, setHidden } from '../dom';
 
-/** Stall margin (clMax - cl, in section lift coefficient) below which we say "approaching stall". */
-export const APPROACHING_STALL_MARGIN = 0.3;
+/**
+ * Fraction of its maximum lift above which a strip counts as "nearly stalled". A relative test,
+ * because at cruise Mach an airliner's buffet margin is naturally only ~0.2-0.3 in cl (about
+ * 1.4 g) and that is normal, not a warning.
+ */
+export const APPROACHING_STALL_RATIO = 0.9;
+
+/** True when some part of the wing is close to its maximum lift but not yet stalled. */
+export function isApproachingStall(aero: AeroResult): boolean {
+  if (aero.stall.any) return false;
+  return aero.strips.some(
+    (s) => s.clMax > 0 && Number.isFinite(s.cl) && s.cl / s.clMax > APPROACHING_STALL_RATIO,
+  );
+}
 
 /** The lift/weight ratio treated as "level flight". */
 const LEVEL_FLIGHT_BAND: readonly [number, number] = [0.9, 1.1];
@@ -274,18 +286,18 @@ export class ReadoutPanel {
     setHidden(this.stallBanner.el, !stalled);
     if (aero && stalled) {
       const pct = Math.max(1, Math.round(aero.stall.fraction * 100));
-      this.stallBanner.title.textContent = `Stall! Air has separated from ${pct}% of the wing. `;
-      this.stallBanner.text.textContent =
-        'The smooth flow has broken away from the top surface, so lift drops and drag climbs. Lower the angle of attack to recover.';
+      if (aero.stall.highSpeed) {
+        this.stallBanner.title.textContent = `High-speed stall (buffet) on ${pct}% of the wing. `;
+        this.stallBanner.text.textContent =
+          'Shock waves on the top surface have made the air break away, so the wing shakes and loses lift. Lower the nose or slow down.';
+      } else {
+        this.stallBanner.title.textContent = `Stall! Air has separated from ${pct}% of the wing. `;
+        this.stallBanner.text.textContent =
+          'The smooth flow has broken away from the top surface, so lift drops and drag climbs. Lower the angle of attack to recover.';
+      }
     }
 
-    const margin = aero?.stall.margin;
-    const approaching =
-      aero !== null &&
-      !stalled &&
-      margin !== undefined &&
-      Number.isFinite(margin) &&
-      margin < APPROACHING_STALL_MARGIN;
+    const approaching = aero !== null && isApproachingStall(aero);
     setHidden(this.approachBanner.el, !approaching);
     if (approaching) {
       this.approachBanner.title.textContent = 'Getting close to stall. ';

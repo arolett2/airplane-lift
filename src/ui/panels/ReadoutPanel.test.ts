@@ -203,12 +203,21 @@ describe('ReadoutPanel warnings', () => {
   it('hints at an approaching stall when the margin is small', () => {
     setup(
       {},
-      { aero: makeAero({ stall: { any: false, fraction: 0, firstEta: 0.5, margin: 0.1 } }) },
+      {
+        aero: makeAero({
+          stall: { any: false, fraction: 0, firstEta: 0.5, margin: 0.1 },
+          strips: [{ cl: 1.4, clMax: 1.5 } as AeroResult['strips'][number]],
+        }),
+      },
     );
     expect(visible('.banner--approach')).toBe(true);
     expect(visible('.banner--stall')).toBe(false);
     results.set({
-      aero: makeAero({ stall: { any: false, fraction: 0, firstEta: null, margin: 0.9 } }),
+      // A normal cruise buffet margin (cl 0.6 of 0.85) is not "close to stall".
+      aero: makeAero({
+        stall: { any: false, fraction: 0, firstEta: null, margin: 0.25 },
+        strips: [{ cl: 0.6, clMax: 0.85 } as AeroResult['strips'][number]],
+      }),
     });
     expect(visible('.banner--approach')).toBe(false);
   });

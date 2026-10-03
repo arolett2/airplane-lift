@@ -104,13 +104,13 @@ describe('LessonPanel steps', () => {
     expect(prev.disabled).toBe(false);
 
     click(next);
-    expect(store.get().view.colorBy).toBe('speed'); // step 3 colours the smoke by speed
+    expect(store.get().view.camera).toBe('side'); // step 3 switches to the side view
     expect(store.get().view.camera).toBe('side');
 
     click(prev);
     expect(title()).toBe(lesson.steps[1]!.title);
     expect(store.get().lesson.step).toBe(1);
-    expect(store.get().view.colorBy).toBe('pressure'); // replayed, so step 3's change is gone
+    expect(store.get().view.camera).toBe('overview'); // replayed, so step 3's camera is gone
   });
 
   it('shows one step dot per step, marks the current one, and jumps when clicked', () => {

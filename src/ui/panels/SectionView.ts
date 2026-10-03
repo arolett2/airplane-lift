@@ -101,6 +101,9 @@ export class SectionView {
   private readonly arrowsToggle: HTMLInputElement;
   private readonly expandButton: HTMLButtonElement;
   private readonly angleValues: { tilt: HTMLElement; down: HTMLElement; feels: HTMLElement };
+  /** Operator and label of the induced-angle chip; they flip to "+ Upwash" when it is negative. */
+  private readonly downOp: HTMLElement;
+  private readonly downName: HTMLElement;
   private readonly legendLow: HTMLElement;
   private readonly legendMid: HTMLElement;
   private readonly legendHigh: HTMLElement;
@@ -243,8 +246,10 @@ export class SectionView {
       return value;
     };
     const tilt = chip('viz-angle--tilt', 'Wing tilt');
-    angles.append(make('span', 'viz-angle__op', '−'));
+    this.downOp = make('span', 'viz-angle__op', '−');
+    angles.append(this.downOp);
     const down = chip('viz-angle--down', 'Downwash');
+    this.downName = down.previousElementSibling as HTMLElement;
     angles.append(make('span', 'viz-angle__op', '='));
     const feels = chip('viz-angle--feels', 'Air feels');
     this.angleValues = { tilt, down, feels };
@@ -595,7 +600,12 @@ export class SectionView {
     const fmt = (rad: number): string =>
       Number.isFinite(rad) ? `${((rad * 180) / Math.PI).toFixed(1)}°` : '–';
     this.angleValues.tilt.textContent = section ? fmt(section.alphaGeometric) : '–';
-    this.angleValues.down.textContent = section ? fmt(section.alphaInduced) : '–';
+    // Negative induced angle is real (e.g. a still-lifting outboard wing during a partial
+    // stall pushes air UP here): say "+ Upwash" rather than "− Downwash −3°".
+    const upwash = section !== null && section.alphaInduced < 0;
+    this.downOp.textContent = upwash ? '+' : '−';
+    this.downName.textContent = upwash ? 'Upwash' : 'Downwash';
+    this.angleValues.down.textContent = section ? fmt(Math.abs(section.alphaInduced)) : '–';
     this.angleValues.feels.textContent = section ? fmt(section.alphaEffective) : '–';
   }
 

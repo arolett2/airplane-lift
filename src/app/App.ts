@@ -335,6 +335,13 @@ export async function startApp(root: HTMLElement): Promise<void> {
   }
   store.select(focusEta, () => focusCamera());
 
+  // Force arrows sit at the centreline: hidden when a span cutaway removes it, and in the close
+  // wingtip shot, where they would loom past the camera.
+  function forcesShown(): boolean {
+    const view = store.get().view;
+    return view.showForces && scene.cutaway !== 'span' && view.camera !== 'tip';
+  }
+
   // Cutaways (see SceneManager). Side / section: the scene in front of the station is clipped
   // away; show only the smoke in a thin "light sheet" at the station, keep a slab of wing, and
   // hide the force arrows (they sit at the centreline, which the cut removes). Behind / tip:
@@ -343,7 +350,7 @@ export async function startApp(root: HTMLElement): Promise<void> {
   function applyCutaway(): void {
     const kind = scene.cutaway;
     const span = kind === 'span';
-    forces.setVisible(store.get().view.showForces && !span);
+    forces.setVisible(forcesShown());
     wingMesh.setClipPlanes(span ? [scene.cutawayFarPlane] : null);
     particles.setTrailLength(kind === 'cross' ? CROSS_TRAIL_LENGTH : null);
     // End-on, trails drawn moving with the air show only the cross-flow: arcs round each tip.
@@ -406,7 +413,7 @@ export async function startApp(root: HTMLElement): Promise<void> {
       legend.setVisible(view.showSurfacePressure || view.flowMode !== 'off');
       particles.setDensity(view.particleDensity);
       wingMesh.setPressureVisible(view.showSurfacePressure);
-      forces.setVisible(view.showForces && !scene.cutawayActive);
+      forces.setVisible(forcesShown());
       spanLoad.setVisible(view.showSpanLoad);
       if (view.camera !== prev.camera && !firstFrame) scene.flyTo(view.camera);
     },

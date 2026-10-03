@@ -80,10 +80,10 @@ export const LESSONS: readonly Lesson[] = [
         body: `
 <p>Why is the pressure lower on top? Because the air up there is moving faster than the air far away.</p>
 <p>Fast air and low pressure always arrive together. In a smooth flow, where the air speeds up its pressure drops, and where it slows down its pressure rises. This is <strong>Bernoulli's principle</strong>. It describes the trade, but it does not say what makes the air speed up in the first place. The wing's shape and tilt do that, by bending the whole flow around it.</p>
-<p>The smoke is now coloured by speed. The same blue marks the fast air and the low pressure.</p>`,
+<p>Because fast air and low pressure go together, the blue smoke over the top is also the fastest air. Watch the puffs on each smoke line: they are released at equal time steps, so they spread apart where the air is fast.</p>`,
         tryIt:
           'Look at the top of the wing: the fastest, bluest air sits just behind the front edge.',
-        apply: { view: { colorBy: 'speed', flowMode: 'streamlines' } },
+        apply: { view: { colorBy: 'pressure', flowMode: 'streamlines' } },
         camera: 'side',
       },
       {
@@ -214,7 +214,7 @@ export const LESSONS: readonly Lesson[] = [
 <p>You often hear that a plane stalls "when it flies too slowly". That is a useful rule of thumb, but the real rule is about angle: a wing stalls whenever its angle of attack gets too big, at <em>any</em> speed.</p>
 <p>Slow flight matters because at low speed you need a bigger angle to make enough lift. A plane's stall speed is the speed at which the biggest usable angle only just makes enough lift to hold it up. Heavier planes, and planes in steep turns, need more lift, so they stall at higher speeds.</p>`,
         tryIt:
-          'This wing is stalled at 120 m/s. Change the airspeed up and down: the stall stays. Only lowering the angle brings the flow back.',
+          'This wing is stalled at about 230 knots. Change the airspeed up and down: the stall stays. Only lowering the angle brings the flow back.',
         apply: { flow: { alphaDeg: 20, airspeed: 120 }, view: { flowMode: 'both' } },
         camera: 'section',
         highlight: ['flow.airspeed', 'flow.alphaDeg'],
@@ -236,7 +236,7 @@ export const LESSONS: readonly Lesson[] = [
 <p>Lift depends on how hard the air pushes on the wing. That push is called <strong>dynamic pressure</strong>: half the air's density times its speed squared.</p>
 <p>The key is the square. Twice the speed does not give twice the lift but <strong>four times</strong>. Three times the speed gives nine times.</p>`,
         tryIt:
-          'Note the lift at 30 m/s. Then set the airspeed to 60 m/s. The lift should be about four times larger.',
+          'Note the lift at about 58 knots. Then set the airspeed to about 117 knots, twice as fast. The lift should be about four times larger.',
         apply: {
           preset: 'demo-rect',
           flow: { alphaDeg: 4, airspeed: 30, altitude: 0 },
@@ -495,7 +495,7 @@ export const LESSONS: readonly Lesson[] = [
 <p>A Cessna 172 cruises at about 62 m/s, which is Mach 0.19. There are no shock waves to worry about, so its wing is straight. A straight wing is simpler, lighter, and makes more lift at low speed, which is ideal for slow flight.</p>
 <p>Sweep is a trade, not an upgrade. Every wing is a compromise for its job, and airliners choose speed, so they accept the costs of sweep.</p>`,
         tryIt:
-          'Sweep the Cessna wing back to 30° and watch the lift fall at the same angle. At 62 m/s it is a poor bargain.',
+          'Sweep the Cessna wing back to 30° and watch the lift fall at the same angle. At 120 knots it is a poor bargain.',
         apply: { preset: 'cessna-172' },
         camera: 'top',
         highlight: ['wing.sweepDeg'],
@@ -626,7 +626,7 @@ export const LESSONS: readonly Lesson[] = [
 <p>A Cessna 172 stalls at around 47 knots (87 km/h) with full flaps, about a third of a 737's landing speed. It carries far less weight for its wing area: about 70 kg per square metre, against about 540 to 630 for a loaded 737.</p>
 <p>Wing loading decides landing speed. A heavy load on a small wing needs high speed to make enough lift, even with every high-lift device deployed. That is why big jets need long runways and small planes can land in a field.</p>`,
         tryIt:
-          'This Cessna is flying at 33 m/s. Raise the airspeed to 72 m/s, the 737 approach speed, and the Cessna wing would make several times its own weight in lift.',
+          'This Cessna is flying at about 64 knots. Raise the airspeed to about 140 knots, the 737 approach speed, and the Cessna wing would make several times its own weight in lift.',
         apply: {
           preset: 'cessna-172',
           flow: { alphaDeg: 8, airspeed: 33, altitude: 0 },

@@ -265,6 +265,11 @@ describe.skipIf(!physicsReady)('aero end-to-end (real solvers)', { timeout: 60_0
       expect(deep.strips.some((s) => s.stalled)).toBe(true);
       expect(deep.CL).toBeLessThan(polar.CLmax);
       expect(deep.warnings.some((w) => w.includes('buffet'))).toBe(true);
+      expect(deep.stall.highSpeed).toBe(true);
+      // The same wing stalling at low speed is an ordinary stall.
+      const slow = solve(B737_LIKE, { alphaDeg: 22, airspeed: 75, altitude: 0 }).aero;
+      expect(slow.stall.any).toBe(true);
+      expect(slow.stall.highSpeed).toBe(false);
       // Every strip's clMax is the real (compressible) maximum, not a Prandtl-Glauert-inflated one.
       for (const s of deep.strips.filter((s) => s.eta <= 1)) expect(s.clMax).toBeLessThan(1.4);
     });

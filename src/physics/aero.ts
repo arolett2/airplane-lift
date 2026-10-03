@@ -616,11 +616,12 @@ function assembleAero(state: SolvedState, requestId: number): AeroResult {
         `air behaves more like syrup, and the drag and stall estimates are rough.`,
     );
   }
+  const highSpeed = stall.any && highSpeedStall(state);
   if (stall.any) {
     const pct = Math.round(stall.fraction * 100);
     const where = pct > 0 ? `over about ${pct}% of the span` : `over part of the wing`;
     warnings.push(
-      highSpeedStall(state)
+      highSpeed
         ? `Stall (high-speed buffet): shock waves on the upper surface have made the air ` +
             `separate ${where}. Near the speed of sound a wing stalls at a much smaller angle.`
         : `Stall: the air has separated from the upper surface ${where}.`,
@@ -652,7 +653,7 @@ function assembleAero(state: SolvedState, requestId: number): AeroResult {
     liftSlope,
     machCritical: comp.machCritical,
     machDragDivergence: comp.machDragDivergence,
-    stall,
+    stall: { ...stall, highSpeed },
     strips,
     lattice,
     force: [drag, 0, lift],

@@ -345,6 +345,11 @@ export interface AeroResult {
     firstEta: number | null;
     /** min over strips of (clMax - cl), negative when stalled. */
     margin: number;
+    /**
+     * True when the stall is shock-induced (high-speed buffet near the speed of sound) rather
+     * than an ordinary low-speed stall. Absent or false when nothing is stalled.
+     */
+    highSpeed?: boolean;
   };
 
   strips: StripResult[];

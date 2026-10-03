@@ -1,9 +1,10 @@
 /**
- * Tip devices through the REAL solvers while a slider moves: dragging the device size or the
- * wing taper one step must change lift, drag and span efficiency smoothly. Small devices on a
- * long tip chord, and fences on a wide one, used to give the vortex lattice near-singular strips
- * (lift off by 10-16 %, a false stall, span efficiency from 0.1 to 8) or drop the device from the
- * lift calculation while it was still drawn.
+ * Planform sliders through the REAL solvers: moving the tip-device size, the taper or the
+ * inboard trailing-edge kink one step must change lift, drag and span efficiency smoothly.
+ * Slivers in the vortex lattice used to make these jump: small devices on a long tip chord and
+ * fences on a wide one (lift off by 10-16 %, a false stall, span efficiency from 0.1 to 8, or
+ * a device dropped from the lift calculation while still drawn), and a Yehudi kink right next
+ * to the root (lift 22 % too high).
  */
 import { describe, expect, it } from 'vitest';
 import type { FlowConditions, TipDeviceKind, WingConfig } from '../state/params';
@@ -89,6 +90,33 @@ describe('wingtip fences while the taper slider moves (real solvers)', { timeout
       const aero = solve(wing, DEFAULT_FLOW);
       expect(aero.spanEfficiency, `taper ${taper}`).toBeGreaterThan(0.85);
       expect(aero.spanEfficiency, `taper ${taper}`).toBeLessThan(1.2);
+    }
+  });
+});
+
+describe('inboard trailing-edge kink slider (real solvers)', { timeout: 120_000 }, () => {
+  it('737-800 at cruise: lift is continuous as the kink moves to the root', () => {
+    const p = getPreset('b737-800')!;
+    const at = (spanFrac: number) =>
+      solve({ ...p.wing, yehudi: { ...p.wing.yehudi, spanFrac } }, p.cruise).CL;
+    const none = at(0);
+    // A kink a few centimetres out cannot carry 22 % more lift (it did at 0.01).
+    for (const f of [0.002, 0.005, 0.01, 0.015, 0.02, 0.03]) {
+      expect(Math.abs(at(f) / none - 1), `spanFrac ${f}`).toBeLessThan(0.01);
+    }
+  });
+
+  it('a wide Yehudi on the teaching wing and on a stubby wing stays continuous', () => {
+    for (const wing of [DEFAULT_WING, { ...DEFAULT_WING, rootChord: 5, span: 10 }]) {
+      const flow = { ...DEFAULT_FLOW, alphaDeg: 5 };
+      const at = (spanFrac: number) =>
+        solve({ ...wing, yehudi: { spanFrac, chordFrac: 0.6 } }, flow).CL;
+      const none = at(0);
+      for (const f of [0.01, 0.02, 0.03, 0.05]) {
+        expect(Math.abs(at(f) / none - 1), `chord ${wing.rootChord} spanFrac ${f}`).toBeLessThan(
+          0.01,
+        );
+      }
     }
   });
 });

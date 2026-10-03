@@ -32,6 +32,13 @@ const DEG = Math.PI / 180;
 const MIN_TAPER = 0.01;
 /** Largest sweep (rad) accepted, so tan() stays finite. */
 const MAX_SWEEP = 85 * DEG;
+/**
+ * Largest forward run of the Yehudi's trailing edge per metre of span, root to kink (45 deg).
+ * A kink very close to the root would otherwise make a sliver whose trailing edge runs almost
+ * streamwise; the vortex lattice skipped it and smeared the wide root chord over the whole wing
+ * (lift ~22 % too high). Real Yehudis have a nearly straight trailing edge, so they are unaffected.
+ */
+const MAX_YEHUDI_TE_RUN = 1;
 
 /* ------------------------------------------------------------------------------------------ */
 /* Section axes                                                                                */
@@ -131,10 +138,19 @@ function buildBaseWingSections(config: WingConfig): WingSection[] {
   const trapezoidChord = (y: number): number => rootChord + (tipChord - rootChord) * (y / semispan);
   const leadingEdgeX = (y: number): number => rootChord / 4 + y * tanSweep - trapezoidChord(y) / 4;
 
-  // Yehudi: wider root chord, same leading edge, kink back on the trapezoid at yKink.
+  // Yehudi: wider root chord, same leading edge, kink back on the trapezoid at yKink. The root
+  // chord is capped so the trailing edge runs forward at most MAX_YEHUDI_TE_RUN per metre to the
+  // kink, which also shrinks the extension continuously to nothing as the kink nears the root.
   const yKink = Math.min(config.yehudi.spanFrac, 0.95) * semispan;
   const hasYehudi = config.yehudi.spanFrac > 0 && config.yehudi.chordFrac > 0 && yKink > tol;
-  const yehudiRootChord = rootChord * (1 + config.yehudi.chordFrac);
+  const kinkTrailingEdgeX = leadingEdgeX(yKink) + trapezoidChord(yKink);
+  const yehudiRootChord = Math.max(
+    rootChord,
+    Math.min(
+      rootChord * (1 + config.yehudi.chordFrac),
+      kinkTrailingEdgeX + MAX_YEHUDI_TE_RUN * yKink,
+    ),
+  );
   const chordAt = (y: number): number => {
     if (hasYehudi && y < yKink) {
       return yehudiRootChord + (trapezoidChord(yKink) - yehudiRootChord) * (y / yKink);

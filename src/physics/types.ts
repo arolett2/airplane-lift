@@ -362,7 +362,10 @@ export interface PolarSweep {
   alphaDeg: Float32Array;
   CL: Float32Array;
   CD: Float32Array;
-  /** 2D section cl of the root airfoil at the same alphas, for finite-vs-infinite wing comparison. */
+  /**
+   * 2D section cl of the root airfoil at the same alphas, for finite-vs-infinite wing comparison.
+   * Same Prandtl-Glauert factor and maximum-lift limit (sweep, buffet at high Mach) as the strips.
+   */
   sectionCl: Float32Array;
   /** Alpha (deg) at CLmax. */
   alphaStallDeg: number;

@@ -544,14 +544,26 @@ describe('computeAero', () => {
     expect(aero.warnings.some((w) => w.includes('Stall') && w.includes('25%'))).toBe(true);
   });
 
-  it('warns about compressibility above the critical Mach number', () => {
+  it('warns about compressibility only past drag divergence and beyond the model range', () => {
     const flow = { alphaDeg: 2, airspeed: 280, altitude: 11000 };
     const { aero } = computeAero(DEFAULT_WING, flow, 1, createAeroCache());
     expect(aero.mach).toBeGreaterThan(0.9);
+    expect(aero.mach).toBeGreaterThan(aero.machDragDivergence);
     expect(aero.CDw).toBeGreaterThan(0);
     expect(aero.CD).toBeCloseTo(aero.CD0 + aero.CDi + aero.CDw, 14);
     expect(aero.warnings.some((w) => w.includes('compressibility'))).toBe(true);
-    expect(aero.warnings.some((w) => w.includes('critical Mach'))).toBe(true);
+    expect(aero.warnings.some((w) => w.includes('drag divergence'))).toBe(true);
+  });
+
+  it('stays calm between the critical and the drag-divergence Mach number', () => {
+    // A swept supercritical wing at Mach ~0.78: weak shocks, a little wave drag, no warning.
+    const wing = { ...DEFAULT_WING, sweepDeg: 25, supercritical: true };
+    const flow = { alphaDeg: 2, airspeed: 231, altitude: 11000 };
+    const { aero } = computeAero(wing, flow, 1, createAeroCache());
+    expect(aero.mach).toBeGreaterThan(aero.machCritical);
+    expect(aero.mach).toBeLessThan(aero.machDragDivergence);
+    expect(aero.CDw).toBeGreaterThan(0);
+    expect(aero.warnings).toEqual([]);
   });
 
   it('warns about very low Reynolds numbers', () => {

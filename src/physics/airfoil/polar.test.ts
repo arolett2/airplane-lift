@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { FlapState, Naca4Params } from '../types';
 import { generateAirfoil } from './naca';
 import { createPanelSolver } from './panel';
-import { createSectionPolar, thinAirfoilTheory } from './polar';
+import { createSectionPolar, NO_LIFT_LIMIT, softMin, thinAirfoilTheory } from './polar';
 
 const DEG = Math.PI / 180;
 const RE = 6e6;
@@ -233,5 +233,76 @@ describe('section polar', () => {
       prev = f;
     }
     expect(prev).toBeCloseTo(0.1, 2);
+  });
+});
+
+describe('lift limits (sweep, shock-induced separation)', () => {
+  it('soft minimum: below both inputs, close to the smaller one when they differ a lot', () => {
+    expect(softMin(1, Infinity)).toBe(1);
+    expect(softMin(Infinity, 2)).toBe(2);
+    expect(softMin(1, 1)).toBeCloseTo(Math.pow(2, -1 / 4), 12);
+    expect(softMin(1, 2)).toBeLessThan(1);
+    expect(softMin(1, 2)).toBeGreaterThan(0.98);
+    expect(softMin(1, 4)).toBeGreaterThan(0.999);
+    expect(softMin(3, 1)).toBeCloseTo(softMin(1, 3), 14);
+  });
+
+  it('returns the plain polar for the identity limit, and memoises limited ones', () => {
+    expect(p2412.withLiftLimit(NO_LIFT_LIMIT)).toBe(p2412);
+    expect(p2412.withLiftLimit({ scale: 1, cap: Infinity })).toBe(p2412);
+    const a = p2412.withLiftLimit({ scale: 0.9, cap: 1.2 });
+    expect(p2412.withLiftLimit({ scale: 0.9, cap: 1.2 })).toBe(a);
+    expect(a.withLiftLimit({ scale: 0.9, cap: 1.2 })).toBe(a);
+    expect(a.liftLimit).toEqual({ scale: 0.9, cap: 1.2, flatPlateScale: 1 });
+  });
+
+  it('scales clMax and |clMin| and moves the stall angles with them, keeping the linear part', () => {
+    const lim = p2412.withLiftLimit({ scale: 0.8, cap: Infinity });
+    expect(lim.clMax(RE)).toBeCloseTo(0.8 * p2412.clMax(RE), 12);
+    expect(lim.clMin(RE)).toBeCloseTo(0.8 * p2412.clMin(RE), 12);
+    expect(lim.alphaStall(RE)).toBeLessThan(p2412.alphaStall(RE));
+    expect(lim.alphaStallNegative(RE)).toBeGreaterThan(p2412.alphaStallNegative(RE));
+    expect(lim.liftSlope).toBe(p2412.liftSlope);
+    expect(lim.alphaZeroLift).toBe(p2412.alphaZeroLift);
+    for (const deg of [-4, 0, 4, 8]) {
+      expect(lim.cl(deg * DEG, RE)).toBeCloseTo(p2412.cl(deg * DEG, RE), 12);
+      expect(lim.cm(deg * DEG, RE)).toBeCloseTo(p2412.cm(deg * DEG, RE), 12);
+    }
+    // Peak, stall flag, drag rise and separation all follow the lower limit.
+    const as = lim.alphaStall(RE);
+    expect(lim.cl(as, RE)).toBeCloseTo(lim.clMax(RE), 9);
+    expect(lim.isStalled(as + 0.5 * DEG, RE)).toBe(true);
+    expect(p2412.isStalled(as + 0.5 * DEG, RE)).toBe(false);
+    expect(lim.cd(as + 2 * DEG, RE)).toBeGreaterThan(p2412.cd(as + 2 * DEG, RE));
+    expect(lim.attachedFraction(as + 2 * DEG, RE)).toBeLessThan(1);
+  });
+
+  it('caps the maximum lift independently of Reynolds number, smoothly', () => {
+    const cap = 0.9;
+    const lim = p2412.withLiftLimit({ scale: 1, cap });
+    for (const re of [1e6, 6e6, 3e7]) {
+      expect(lim.clMax(re)).toBeLessThan(cap);
+      expect(lim.clMax(re)).toBeCloseTo(softMin(p2412.clMax(re), cap), 12);
+    }
+    // A cap far above the section's own clMax changes almost nothing.
+    const loose = p2412.withLiftLimit({ scale: 1, cap: 4 * p2412.clMax(RE) });
+    expect(loose.clMax(RE) / p2412.clMax(RE)).toBeGreaterThan(0.999);
+  });
+
+  it('scales the deep-stall (flat plate) lift by flatPlateScale only', () => {
+    const lim = p2412.withLiftLimit({ scale: 1, cap: Infinity, flatPlateScale: 0.6 });
+    expect(lim.cl(60 * DEG, RE)).toBeCloseTo(0.6 * p2412.cl(60 * DEG, RE), 9);
+    expect(lim.cl(4 * DEG, RE)).toBeCloseTo(p2412.cl(4 * DEG, RE), 12);
+    expect(lim.clMax(RE)).toBeCloseTo(p2412.clMax(RE), 12);
+  });
+
+  it('keeps the lift curve continuous through a capped stall', () => {
+    const lim = p2412.withLiftLimit({ scale: 0.85, cap: 0.8, flatPlateScale: 0.7 });
+    let prev = lim.cl(-30 * DEG, RE);
+    for (let deg = -30 + 0.05; deg <= 40; deg += 0.05) {
+      const cl = lim.cl(deg * DEG, RE);
+      expect(Math.abs(cl - prev), `jump at ${deg.toFixed(2)} deg`).toBeLessThan(0.02);
+      prev = cl;
+    }
   });
 });

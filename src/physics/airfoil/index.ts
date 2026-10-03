@@ -5,7 +5,7 @@
 import type { AirfoilGeometry, ChordwiseCp, FlapState, Naca4Params, SectionPolar } from '../types';
 import type { LinearVortexPanelSolver, PanelSolver } from './panel';
 import { createPanelSolver } from './panel';
-import type { ViscousSectionPolar } from './polar';
+import type { LiftLimit, ViscousSectionPolar } from './polar';
 import { createSectionPolar } from './polar';
 import { generateAirfoil } from './naca';
 
@@ -44,6 +44,12 @@ export interface AirfoilModelInternal extends AirfoilModel {
    * the viscous cl of the polar at alphaEffective. Used for Cp shapes.
    */
   equivalentInviscidAlpha(alphaEffective: number, reynolds: number): number;
+  /**
+   * The same section (geometry, panel solver, Cp tables) with a lift-limited polar, e.g. for
+   * sweep and shock-induced separation at high Mach (see ViscousSectionPolar.withLiftLimit).
+   * Chordwise Cp and the section flow then stall where the limited polar does. Memoised.
+   */
+  withLiftLimit(limit: LiftLimit): AirfoilModelInternal;
 }
 
 /** Panels used for every memoised airfoil model. */
@@ -189,7 +195,7 @@ function buildAirfoilModel(key: AirfoilKey): AirfoilModelInternal {
   const params = { ...key.params, thickness: Math.max(MIN_THICKNESS, key.params.thickness) };
   const geometry = generateAirfoil(params, MODEL_PANELS, key.flap);
   const solver = createPanelSolver(geometry);
-  const polar = createSectionPolar(params, solver, {
+  const plainPolar = createSectionPolar(params, solver, {
     flap: key.flap,
     slat: key.slat,
     supercritical: key.supercritical,
@@ -200,103 +206,132 @@ function buildAirfoilModel(key: AirfoilKey): AirfoilModelInternal {
   const speed = new Float64Array(n);
   const values = new Float64Array(n + 2);
 
-  const equivalentInviscidAlpha = (alphaEffective: number, reynolds: number) => {
-    const cl = polar.cl(alphaEffective, reynolds);
-    const ratio = Math.max(-1, Math.min(1, cl / solver.liftSlope));
-    return solver.alphaZeroLift + Math.asin(ratio);
-  };
-
-  const chordwiseCp = (
-    alphaEffective: number,
-    reynolds: number,
-    nStations = 41,
-    targetCl?: number,
-  ): ChordwiseCp => {
-    let table = tables.get(nStations);
-    if (!table) {
-      table = buildStationTable(geometry, nStations);
-      tables.set(nStations, table);
-    }
-    const ns = table.xc.length;
-    const f = polar.attachedFraction(alphaEffective, reynolds);
-    const severity = f < 1 ? Math.min(1, (1 - f) / 0.9) : 0;
-    // Attached flow: the Cp shape of the equivalent inviscid angle (same cl as the polar).
-    // Separated flow: the nose still sees the true incidence (stagnation point under the nose,
-    // suction around it) and the lost lift shows up in the flat separated plateau instead. The
-    // equivalent angle of a stalled flapped or highly cambered section is far below the true one
-    // and puts the stagnation point on its upper surface, which turns the plateau into a high
-    // pressure and the section's Cp lift negative. Blend towards the true angle with severity.
-    const alphaEq = equivalentInviscidAlpha(alphaEffective, reynolds);
-    solver.surfaceSpeedInto(alphaEq + severity * (alphaEffective - alphaEq), speed);
-    for (let i = 0; i < n; i++) values[i] = 1 - speed[i]! * speed[i]!;
-    const le = geometry.leIndex;
-    values[n] = 0.5 * (values[le - 1]! + values[le]!);
-    values[n + 1] = 0.5 * (values[0]! + values[n - 1]!);
-
-    const upper = new Float32Array(ns);
-    const lower = new Float32Array(ns);
-    for (let k = 0; k < ns; k++) {
-      const wu = table.upperW[k]!;
-      upper[k] = (1 - wu) * values[table.upperA[k]!]! + wu * values[table.upperB[k]!]!;
-      const wl = table.lowerW[k]!;
-      lower[k] = (1 - wl) * values[table.lowerA[k]!]! + wl * values[table.lowerB[k]!]!;
-    }
-
-    // Real boundary layers never sustain the enormous inviscid suction peaks of very thin or
-    // sharply cambered/flapped sections; soften anything beyond Cp = -6 towards -12.
-    for (let k = 0; k < ns; k++) {
-      upper[k] = softSuctionLimit(upper[k]!);
-      lower[k] = softSuctionLimit(lower[k]!);
-    }
-
-    // Separation: soften the leading-edge suction peak and flatten the suction side aft of
-    // x_sep. At high incidence the peak wraps round the nose onto the other surface (ahead of
-    // the stagnation point), so the softening applies to both surfaces.
-    if (f < 1) {
-      const suction = alphaEffective >= polar.alphaZeroLift ? upper : lower;
-      const limit = 8 - 6.8 * severity; // suction-peak limiter scale (Cp units)
-      for (const side of [upper, lower]) {
-        for (let k = 0; k < ns; k++) {
-          const cp = side[k]!;
-          if (cp < 0) side[k] = cp + severity * (-limit * Math.tanh(-cp / limit) - cp);
-        }
-      }
-      const xSep = f;
-      let plateau = NaN;
-      for (let k = 0; k < ns; k++) {
-        const x = table.xc[k]!;
-        if (x < xSep) continue;
-        if (Number.isNaN(plateau)) {
-          // Cp at x_sep, interpolated from the station just ahead.
-          const x0 = k > 0 ? table.xc[k - 1]! : x;
-          const c0 = k > 0 ? suction[k - 1]! : suction[k]!;
-          const w = x > x0 ? (xSep - x0) / (x - x0) : 0;
-          plateau = c0 + w * (suction[k]! - c0);
-        }
-        suction[k] = plateau;
-      }
-    }
-
-    if (targetCl !== undefined && Number.isFinite(targetCl)) {
-      let cl = 0;
-      for (let k = 0; k < ns; k++) cl += (lower[k]! - upper[k]!) * table.dx[k]!;
-      let scale = Math.abs(cl) > 1e-9 ? targetCl / cl : targetCl === 0 ? 0 : 3;
-      scale = Math.max(0, Math.min(3, scale));
-      for (let k = 0; k < ns; k++) {
-        const mean = 0.5 * (upper[k]! + lower[k]!);
-        const half = 0.5 * (lower[k]! - upper[k]!) * scale;
-        upper[k] = mean - half;
-        lower[k] = mean + half;
-      }
-    }
-    return { xc: table.xc.slice(), upper, lower };
-  };
-
   const ownKey: AirfoilKey = {
     params: { ...key.params },
     flap: key.flap ? { ...key.flap } : null,
     slat: key.slat,
     supercritical: key.supercritical,
   };
-  return { key: ownKey, geometry, solver, polar, chordwiseCp, equivalentInviscidAlpha };
+  const views = new Map<string, AirfoilModelInternal>();
+
+  /** The model bound to one polar (the plain one, or a lift-limited variant of it). */
+  function bind(polar: ViscousSectionPolar): AirfoilModelInternal {
+    const equivalentInviscidAlpha = (alphaEffective: number, reynolds: number) => {
+      const cl = polar.cl(alphaEffective, reynolds);
+      const ratio = Math.max(-1, Math.min(1, cl / solver.liftSlope));
+      return solver.alphaZeroLift + Math.asin(ratio);
+    };
+
+    const chordwiseCp = (
+      alphaEffective: number,
+      reynolds: number,
+      nStations = 41,
+      targetCl?: number,
+    ): ChordwiseCp => {
+      let table = tables.get(nStations);
+      if (!table) {
+        table = buildStationTable(geometry, nStations);
+        tables.set(nStations, table);
+      }
+      const ns = table.xc.length;
+      const f = polar.attachedFraction(alphaEffective, reynolds);
+      const severity = f < 1 ? Math.min(1, (1 - f) / 0.9) : 0;
+      // Attached flow: the Cp shape of the equivalent inviscid angle (same cl as the polar).
+      // Separated flow: the nose still sees the true incidence (stagnation point under the nose,
+      // suction around it) and the lost lift shows up in the flat separated plateau instead. The
+      // equivalent angle of a stalled flapped or highly cambered section is far below the true one
+      // and puts the stagnation point on its upper surface, which turns the plateau into a high
+      // pressure and the section's Cp lift negative. Blend towards the true angle with severity.
+      const alphaEq = equivalentInviscidAlpha(alphaEffective, reynolds);
+      solver.surfaceSpeedInto(alphaEq + severity * (alphaEffective - alphaEq), speed);
+      for (let i = 0; i < n; i++) values[i] = 1 - speed[i]! * speed[i]!;
+      const le = geometry.leIndex;
+      values[n] = 0.5 * (values[le - 1]! + values[le]!);
+      values[n + 1] = 0.5 * (values[0]! + values[n - 1]!);
+
+      const upper = new Float32Array(ns);
+      const lower = new Float32Array(ns);
+      for (let k = 0; k < ns; k++) {
+        const wu = table.upperW[k]!;
+        upper[k] = (1 - wu) * values[table.upperA[k]!]! + wu * values[table.upperB[k]!]!;
+        const wl = table.lowerW[k]!;
+        lower[k] = (1 - wl) * values[table.lowerA[k]!]! + wl * values[table.lowerB[k]!]!;
+      }
+
+      // Real boundary layers never sustain the enormous inviscid suction peaks of very thin or
+      // sharply cambered/flapped sections; soften anything beyond Cp = -6 towards -12.
+      for (let k = 0; k < ns; k++) {
+        upper[k] = softSuctionLimit(upper[k]!);
+        lower[k] = softSuctionLimit(lower[k]!);
+      }
+
+      // Separation: soften the leading-edge suction peak and flatten the suction side aft of
+      // x_sep. At high incidence the peak wraps round the nose onto the other surface (ahead of
+      // the stagnation point), so the softening applies to both surfaces.
+      if (f < 1) {
+        const suction = alphaEffective >= polar.alphaZeroLift ? upper : lower;
+        const limit = 8 - 6.8 * severity; // suction-peak limiter scale (Cp units)
+        for (const side of [upper, lower]) {
+          for (let k = 0; k < ns; k++) {
+            const cp = side[k]!;
+            if (cp < 0) side[k] = cp + severity * (-limit * Math.tanh(-cp / limit) - cp);
+          }
+        }
+        const xSep = f;
+        let plateau = NaN;
+        for (let k = 0; k < ns; k++) {
+          const x = table.xc[k]!;
+          if (x < xSep) continue;
+          if (Number.isNaN(plateau)) {
+            // Cp at x_sep, interpolated from the station just ahead.
+            const x0 = k > 0 ? table.xc[k - 1]! : x;
+            const c0 = k > 0 ? suction[k - 1]! : suction[k]!;
+            const w = x > x0 ? (xSep - x0) / (x - x0) : 0;
+            plateau = c0 + w * (suction[k]! - c0);
+          }
+          suction[k] = plateau;
+        }
+      }
+
+      if (targetCl !== undefined && Number.isFinite(targetCl)) {
+        let cl = 0;
+        for (let k = 0; k < ns; k++) cl += (lower[k]! - upper[k]!) * table.dx[k]!;
+        let scale = Math.abs(cl) > 1e-9 ? targetCl / cl : targetCl === 0 ? 0 : 3;
+        scale = Math.max(0, Math.min(3, scale));
+        for (let k = 0; k < ns; k++) {
+          const mean = 0.5 * (upper[k]! + lower[k]!);
+          const half = 0.5 * (lower[k]! - upper[k]!) * scale;
+          upper[k] = mean - half;
+          lower[k] = mean + half;
+        }
+      }
+      return { xc: table.xc.slice(), upper, lower };
+    };
+
+    const model: AirfoilModelInternal = {
+      key: ownKey,
+      geometry,
+      solver,
+      polar,
+      chordwiseCp,
+      equivalentInviscidAlpha,
+      withLiftLimit(limit: LiftLimit): AirfoilModelInternal {
+        const limitedPolar = plainPolar.withLiftLimit(limit);
+        if (limitedPolar === plainPolar) return plain;
+        const l = limitedPolar.liftLimit;
+        const k = `${l.scale}|${l.cap}|${l.flatPlateScale}`;
+        let hit = views.get(k);
+        if (!hit) {
+          hit = bind(limitedPolar);
+          views.set(k, hit);
+          if (views.size > 16) views.delete(views.keys().next().value!);
+        }
+        return hit;
+      },
+    };
+    return model;
+  }
+
+  const plain = bind(plainPolar);
+  return plain;
 }

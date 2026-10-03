@@ -1,0 +1,434 @@
+{
+  "source": "AVL 3.x (M. Drela & H. Youngren, MIT) through OptVL 2.5.0 (MDO Lab, https://github.com/mdolab/OptVL), Trefftz-plane CDi and e (CDff); AeroSandbox 4.2.10 VortexLatticeMethod (P. Sharpe, https://github.com/peterdsharpe/AeroSandbox) as a second lattice code, near-field forces. Geometry: the app's buildWingGeometry sections (thin camber surface, no thickness), reference area/span/MAC of the trapezoid, wake along +x, Prandtl-Glauert in AVL for Mach > 0.",
+  "generator": "scripts/benchmarks/generate_reference.py",
+  "alphasDeg": [0.0, 2.0, 4.0],
+  "cases": [
+    {
+      "id": "rect-ar6",
+      "label": "Rectangular, AR 6, NACA 0012",
+      "mach": 0.0,
+      "config": {
+        "span": 6.0,
+        "rootChord": 1.0,
+        "taperRatio": 1.0,
+        "sweepDeg": 0.0,
+        "dihedralDeg": 0.0,
+        "rootIncidenceDeg": 0.0,
+        "washoutDeg": 0.0,
+        "yehudi": {
+          "spanFrac": 0.0,
+          "chordFrac": 0.0
+        },
+        "airfoil": {
+          "camber": 0.0,
+          "camberPos": 0.4,
+          "thickness": 0.12
+        }
+      },
+      "reference": {
+        "S": 6.0,
+        "b": 6.0,
+        "mac": 1.0,
+        "AR": 6.0
+      },
+      "sections": [
+        {
+          "le": [0.0, 0.0, 0.0],
+          "chord": 1.0,
+          "twist": 0.0,
+          "roll": 0.0
+        },
+        {
+          "le": [0.0, 3.0, 0.0],
+          "chord": 1.0,
+          "twist": 0.0,
+          "roll": 0.0
+        }
+      ],
+      "avl": {
+        "CLalphaPerRad": 4.206537984279741,
+        "points": [
+          {
+            "alphaDeg": 0.0,
+            "CL": 2.3287945726004252e-14,
+            "CDi": 3.052137331034481e-29,
+            "e": 0.9426645313957513
+          },
+          {
+            "alphaDeg": 2.0,
+            "CL": 0.14704732079202806,
+            "CDi": 0.0011665613063672347,
+            "e": 0.983888755808625
+          },
+          {
+            "alphaDeg": 4.0,
+            "CL": 0.29367175174357113,
+            "CDi": 0.004660561856045904,
+            "e": 0.9838887558086267
+          }
+        ]
+      },
+      "avlMeshConvergence": {
+        "fine": "16 chordwise x 48 spanwise (cosine) per semispan",
+        "coarse": "8 x 24",
+        "CLalphaRelativeChange": 2.3297305226321896e-5
+      },
+      "aerosandbox": {
+        "CLalphaPerRad": 4.3256930193825305,
+        "points": [
+          {
+            "alphaDeg": 0.0,
+            "CL": 5.307530025982711e-16,
+            "CDnearField": -5.045594567510429e-32
+          },
+          {
+            "alphaDeg": 2.0,
+            "CL": 0.15121065967895195,
+            "CDnearField": 0.0011803004585870345
+          },
+          {
+            "alphaDeg": 4.0,
+            "CL": 0.30199034247504075,
+            "CDnearField": 0.0047068322012326766
+          }
+        ]
+      }
+    },
+    {
+      "id": "taper-ar8",
+      "label": "Tapered 0.4, unswept c/4, AR 8, NACA 0012",
+      "mach": 0.0,
+      "config": {
+        "span": 8.0,
+        "rootChord": 1.4285714285714286,
+        "taperRatio": 0.4,
+        "sweepDeg": 0.0,
+        "dihedralDeg": 0.0,
+        "rootIncidenceDeg": 0.0,
+        "washoutDeg": 0.0,
+        "yehudi": {
+          "spanFrac": 0.0,
+          "chordFrac": 0.0
+        },
+        "airfoil": {
+          "camber": 0.0,
+          "camberPos": 0.4,
+          "thickness": 0.12
+        }
+      },
+      "reference": {
+        "S": 8.0,
+        "b": 8.0,
+        "mac": 1.0612244897959184,
+        "AR": 8.0
+      },
+      "sections": [
+        {
+          "le": [0.0, 0.0, 0.0],
+          "chord": 1.4285714285714286,
+          "twist": 0.0,
+          "roll": 0.0
+        },
+        {
+          "le": [0.21428571428571427, 4.0, 0.0],
+          "chord": 0.5714285714285715,
+          "twist": 0.0,
+          "roll": 0.0
+        }
+      ],
+      "avl": {
+        "CLalphaPerRad": 4.736557275754289,
+        "points": [
+          {
+            "alphaDeg": 0.0,
+            "CL": 2.5470598405308476e-14,
+            "CDi": 2.628968204425347e-29,
+            "e": 0.9818679937642868
+          },
+          {
+            "alphaDeg": 2.0,
+            "CL": 0.1655528450455238,
+            "CDi": 0.0010959189832364167,
+            "e": 0.9955348222678577
+          },
+          {
+            "alphaDeg": 4.0,
+            "CL": 0.3306740786848468,
+            "CDi": 0.004378336725820058,
+            "e": 0.9955348222678565
+          }
+        ]
+      },
+      "avlMeshConvergence": {
+        "fine": "16 chordwise x 48 spanwise (cosine) per semispan",
+        "coarse": "8 x 24",
+        "CLalphaRelativeChange": 4.491383151794537e-5
+      },
+      "aerosandbox": {
+        "CLalphaPerRad": 4.812794992912412,
+        "points": [
+          {
+            "alphaDeg": 0.0,
+            "CL": 5.904109884160615e-16,
+            "CDnearField": -5.885134067914804e-32
+          },
+          {
+            "alphaDeg": 2.0,
+            "CL": 0.1682148424701027,
+            "CDnearField": 0.001091882821928778
+          },
+          {
+            "alphaDeg": 4.0,
+            "CL": 0.33599647539927563,
+            "CDnearField": 0.004354238100000027
+          }
+        ]
+      }
+    },
+    {
+      "id": "swept35-ar6",
+      "label": "35 deg c/4 sweep, taper 0.4, AR 6, NACA 0012",
+      "mach": 0.0,
+      "config": {
+        "span": 6.0,
+        "rootChord": 1.4285714285714286,
+        "taperRatio": 0.4,
+        "sweepDeg": 35.0,
+        "dihedralDeg": 0.0,
+        "rootIncidenceDeg": 0.0,
+        "washoutDeg": 0.0,
+        "yehudi": {
+          "spanFrac": 0.0,
+          "chordFrac": 0.0
+        },
+        "airfoil": {
+          "camber": 0.0,
+          "camberPos": 0.4,
+          "thickness": 0.12
+        }
+      },
+      "reference": {
+        "S": 5.999999999999999,
+        "b": 6.0,
+        "mac": 1.0612244897959184,
+        "AR": 6.000000000000001
+      },
+      "sections": [
+        {
+          "le": [0.0, 0.0, 0.0],
+          "chord": 1.4285714285714286,
+          "twist": 0.0,
+          "roll": 0.0
+        },
+        {
+          "le": [2.3149083289148438, 3.0, 0.0],
+          "chord": 0.5714285714285715,
+          "twist": 0.0,
+          "roll": 0.0
+        }
+      ],
+      "avl": {
+        "CLalphaPerRad": 3.920681897828164,
+        "points": [
+          {
+            "alphaDeg": 0.0,
+            "CL": 2.1513658813225785e-14,
+            "CDi": 2.581958714716045e-29,
+            "e": 0.9509947883806872
+          },
+          {
+            "alphaDeg": 2.0,
+            "CL": 0.13705452969286736,
+            "CDi": 0.0010131582989678048,
+            "e": 0.9841209340270581
+          },
+          {
+            "alphaDeg": 4.0,
+            "CL": 0.27371523216178706,
+            "CDi": 0.004047697190480327,
+            "e": 0.984120934027057
+          }
+        ]
+      },
+      "avlMeshConvergence": {
+        "fine": "16 chordwise x 48 spanwise (cosine) per semispan",
+        "coarse": "8 x 24",
+        "CLalphaRelativeChange": 0.0007586307061582254
+      },
+      "aerosandbox": {
+        "CLalphaPerRad": 4.000712991183948,
+        "points": [
+          {
+            "alphaDeg": 0.0,
+            "CL": 4.908441736456903e-16,
+            "CDnearField": -4.7529243987509656e-32
+          },
+          {
+            "alphaDeg": 2.0,
+            "CL": 0.13984315770297032,
+            "CDnearField": 0.0010211647569919344
+          },
+          {
+            "alphaDeg": 4.0,
+            "CL": 0.2793024564938836,
+            "CDnearField": 0.004072226801239683
+          }
+        ]
+      }
+    },
+    {
+      "id": "b737-800-wing",
+      "label": "737-800 preset base wing (no winglet): AR 10.3, 25 deg, yehudi, 6 deg dihedral, 3 deg washout",
+      "mach": 0.0,
+      "config": {
+        "span": 34.4,
+        "rootChord": 5.2,
+        "taperRatio": 0.28,
+        "sweepDeg": 25.0,
+        "dihedralDeg": 6.0,
+        "rootIncidenceDeg": 0.0,
+        "washoutDeg": 3.0,
+        "yehudi": {
+          "spanFrac": 0.33,
+          "chordFrac": 0.35
+        },
+        "airfoil": {
+          "camber": 0.018,
+          "camberPos": 0.45,
+          "thickness": 0.11
+        }
+      },
+      "reference": {
+        "S": 114.4832,
+        "b": 34.4,
+        "mac": 3.6790000000000003,
+        "AR": 10.336538461538462
+      },
+      "sections": [
+        {
+          "le": [0.0, 0.0, 0.0],
+          "chord": 7.0200000000000005,
+          "twist": 0.0,
+          "roll": 0.10471975511965978
+        },
+        {
+          "le": [2.955642267687772, 5.676, 0.5965716393679796],
+          "chord": 3.96448,
+          "twist": -0.017278759594743863,
+          "roll": 0.10471975511965978
+        },
+        {
+          "le": [8.956491720265976, 17.2, 1.8077928465696351],
+          "chord": 1.4560000000000004,
+          "twist": -0.05235987755982989,
+          "roll": 0.10471975511965978
+        }
+      ],
+      "avl": {
+        "CLalphaPerRad": 5.072627716337671,
+        "points": [
+          {
+            "alphaDeg": 0.0,
+            "CL": 0.09900084290120398,
+            "CDi": 0.000528977665845569,
+            "e": 0.5690066086579086
+          },
+          {
+            "alphaDeg": 2.0,
+            "CL": 0.27623465062318997,
+            "CDi": 0.0026769686550199563,
+            "e": 0.8753339059539214
+          },
+          {
+            "alphaDeg": 4.0,
+            "CL": 0.45313706441325724,
+            "CDi": 0.006780197274412556,
+            "e": 0.929959773095402
+          }
+        ]
+      },
+      "avlMeshConvergence": {
+        "fine": "16 chordwise x 48 spanwise (cosine) per semispan",
+        "coarse": "8 x 24",
+        "CLalphaRelativeChange": 0.0008813515827178486
+      }
+    },
+    {
+      "id": "b737-800-wing-m0.785",
+      "label": "737-800 preset base wing (no winglet): AR 10.3, 25 deg, yehudi, 6 deg dihedral, 3 deg washout, Mach 0.785 (Prandtl-Glauert)",
+      "mach": 0.785,
+      "config": {
+        "span": 34.4,
+        "rootChord": 5.2,
+        "taperRatio": 0.28,
+        "sweepDeg": 25.0,
+        "dihedralDeg": 6.0,
+        "rootIncidenceDeg": 0.0,
+        "washoutDeg": 3.0,
+        "yehudi": {
+          "spanFrac": 0.33,
+          "chordFrac": 0.35
+        },
+        "airfoil": {
+          "camber": 0.018,
+          "camberPos": 0.45,
+          "thickness": 0.11
+        }
+      },
+      "reference": {
+        "S": 114.4832,
+        "b": 34.4,
+        "mac": 3.6790000000000003,
+        "AR": 10.336538461538462
+      },
+      "sections": [
+        {
+          "le": [0.0, 0.0, 0.0],
+          "chord": 7.0200000000000005,
+          "twist": 0.0,
+          "roll": 0.10471975511965978
+        },
+        {
+          "le": [2.955642267687772, 5.676, 0.5965716393679796],
+          "chord": 3.96448,
+          "twist": -0.017278759594743863,
+          "roll": 0.10471975511965978
+        },
+        {
+          "le": [8.956491720265976, 17.2, 1.8077928465696351],
+          "chord": 1.4560000000000004,
+          "twist": -0.05235987755982989,
+          "roll": 0.10471975511965978
+        }
+      ],
+      "avl": {
+        "CLalphaPerRad": 6.850761846128288,
+        "points": [
+          {
+            "alphaDeg": 0.0,
+            "CL": 0.142964064891673,
+            "CDi": 0.0009139388698895144,
+            "e": 0.685172892204292
+          },
+          {
+            "alphaDeg": 2.0,
+            "CL": 0.38229979692523186,
+            "CDi": 0.004836121618672586,
+            "e": 0.9263033823831018
+          },
+          {
+            "alphaDeg": 4.0,
+            "CL": 0.6212374668314481,
+            "CDi": 0.012279903141953858,
+            "e": 0.963183722130393
+          }
+        ]
+      },
+      "avlMeshConvergence": {
+        "fine": "16 chordwise x 48 spanwise (cosine) per semispan",
+        "coarse": "8 x 24",
+        "CLalphaRelativeChange": 0.001271136594274247
+      }
+    }
+  ]
+}

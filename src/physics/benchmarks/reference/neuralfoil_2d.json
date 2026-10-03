@@ -1,0 +1,295 @@
+{
+  "source": "NeuralFoil 0.3.3 (P. Sharpe, https://github.com/peterdsharpe/NeuralFoil), model 'xxxlarge', a neural-network surrogate trained on XFOIL; n_crit = 9 (free transition, smooth model), Mach 0, include_360_deg_effects = False. Airfoil contour: the app's NACA 4-digit equations (closed trailing edge). Flaps: AeroSandbox Airfoil.add_control_surface (plain flap, geometry deflected about the hinge on the camber line), Re = 6e6.",
+  "generator": "scripts/benchmarks/generate_reference.py",
+  "method": "liftSlope / alphaZeroLift: least-squares line through cl(alpha) for alpha in [aL0 - 2, aL0 + 6] deg; clMax / alphaStall: first lift peak; cdMin: minimum cd in [aL0 - 4, aL0 + 10]; cmQuarterChord: mean cm over the linear range.",
+  "polars": [
+    {
+      "section": "0006",
+      "params": {
+        "camber": 0.0,
+        "camberPos": 0.4,
+        "thickness": 0.06
+      },
+      "reynolds": 3000000.0,
+      "flap": null,
+      "liftSlopePerDeg": 0.11093249608457334,
+      "alphaZeroLiftDeg": -0.01716318127903418,
+      "clMax": 1.0788950098077381,
+      "alphaStallDeg": 11.0,
+      "cdMin": 0.0036521994402298136,
+      "cmQuarterChord": -0.0007034244879229039,
+      "minConfidenceToStall": 0.669733032418959
+    },
+    {
+      "section": "0006",
+      "params": {
+        "camber": 0.0,
+        "camberPos": 0.4,
+        "thickness": 0.06
+      },
+      "reynolds": 6000000.0,
+      "flap": null,
+      "liftSlopePerDeg": 0.10790673487658009,
+      "alphaZeroLiftDeg": 0.008506695863539757,
+      "clMax": 1.3725566254757282,
+      "alphaStallDeg": 15.0,
+      "cdMin": 0.004289962413375905,
+      "cmQuarterChord": 0.001147576358785471,
+      "minConfidenceToStall": 0.8147308025046849
+    },
+    {
+      "section": "0006",
+      "params": {
+        "camber": 0.0,
+        "camberPos": 0.4,
+        "thickness": 0.06
+      },
+      "reynolds": 9000000.0,
+      "flap": null,
+      "liftSlopePerDeg": 0.10680060821865837,
+      "alphaZeroLiftDeg": 0.006045913308741245,
+      "clMax": 1.4966209601425924,
+      "alphaStallDeg": 16.0,
+      "cdMin": 0.004486364007974431,
+      "cmQuarterChord": 0.0014793446118926837,
+      "minConfidenceToStall": 0.9306922216684437
+    },
+    {
+      "section": "0012",
+      "params": {
+        "camber": 0.0,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 3000000.0,
+      "flap": null,
+      "liftSlopePerDeg": 0.10121087845457247,
+      "alphaZeroLiftDeg": 0.0012585348971964447,
+      "clMax": 1.5702612552930335,
+      "alphaStallDeg": 18.25,
+      "cdMin": 0.005045622594538808,
+      "cmQuarterChord": 0.0051948847818997605,
+      "minConfidenceToStall": 0.9590180109478774
+    },
+    {
+      "section": "0012",
+      "params": {
+        "camber": 0.0,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 6000000.0,
+      "flap": null,
+      "liftSlopePerDeg": 0.1030310985350709,
+      "alphaZeroLiftDeg": -0.003930087379169704,
+      "clMax": 1.707324372766539,
+      "alphaStallDeg": 19.75,
+      "cdMin": 0.004998830592731469,
+      "cmQuarterChord": 0.004158168242825686,
+      "minConfidenceToStall": 0.9687194868723296
+    },
+    {
+      "section": "0012",
+      "params": {
+        "camber": 0.0,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 9000000.0,
+      "flap": null,
+      "liftSlopePerDeg": 0.10451324144858629,
+      "alphaZeroLiftDeg": -0.002314546995900851,
+      "clMax": 1.7771875175334535,
+      "alphaStallDeg": 20.25,
+      "cdMin": 0.005036020435207088,
+      "cmQuarterChord": 0.003513412671956522,
+      "minConfidenceToStall": 0.9660860992085427
+    },
+    {
+      "section": "2412",
+      "params": {
+        "camber": 0.02,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 3000000.0,
+      "flap": null,
+      "liftSlopePerDeg": 0.1023219734167234,
+      "alphaZeroLiftDeg": -2.240697795424439,
+      "clMax": 1.6551562683217165,
+      "alphaStallDeg": 18.25,
+      "cdMin": 0.0050701877967250135,
+      "cmQuarterChord": -0.049476470155175284,
+      "minConfidenceToStall": 0.9549477954547054
+    },
+    {
+      "section": "2412",
+      "params": {
+        "camber": 0.02,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 6000000.0,
+      "flap": null,
+      "liftSlopePerDeg": 0.10512491756025823,
+      "alphaZeroLiftDeg": -2.2130709731621154,
+      "clMax": 1.7749452138326884,
+      "alphaStallDeg": 19.25,
+      "cdMin": 0.005110437097440609,
+      "cmQuarterChord": -0.04997650615560026,
+      "minConfidenceToStall": 0.9499434438214596
+    },
+    {
+      "section": "2412",
+      "params": {
+        "camber": 0.02,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 9000000.0,
+      "flap": null,
+      "liftSlopePerDeg": 0.10589393669008801,
+      "alphaZeroLiftDeg": -2.202561064623634,
+      "clMax": 1.838858631637267,
+      "alphaStallDeg": 20.0,
+      "cdMin": 0.0050995487539455065,
+      "cmQuarterChord": -0.04969590998525998,
+      "minConfidenceToStall": 0.9357602981502803
+    },
+    {
+      "section": "4412",
+      "params": {
+        "camber": 0.04,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 3000000.0,
+      "flap": null,
+      "liftSlopePerDeg": 0.10521922943560864,
+      "alphaZeroLiftDeg": -4.370781675072649,
+      "clMax": 1.7403478223228277,
+      "alphaStallDeg": 18.25,
+      "cdMin": 0.005101941512261847,
+      "cmQuarterChord": -0.10089277739076588,
+      "minConfidenceToStall": 0.8499211162703391
+    },
+    {
+      "section": "4412",
+      "params": {
+        "camber": 0.04,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 6000000.0,
+      "flap": null,
+      "liftSlopePerDeg": 0.10761457538853085,
+      "alphaZeroLiftDeg": -4.324638639139849,
+      "clMax": 1.857094668221428,
+      "alphaStallDeg": 19.25,
+      "cdMin": 0.0053045329669316015,
+      "cmQuarterChord": -0.10134494912245638,
+      "minConfidenceToStall": 0.7979839679712366
+    },
+    {
+      "section": "4412",
+      "params": {
+        "camber": 0.04,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 9000000.0,
+      "flap": null,
+      "liftSlopePerDeg": 0.10865489094073827,
+      "alphaZeroLiftDeg": -4.3021020867268005,
+      "clMax": 1.9190496856103367,
+      "alphaStallDeg": 19.75,
+      "cdMin": 0.005210562172453327,
+      "cmQuarterChord": -0.10134564395725819,
+      "minConfidenceToStall": 0.7467378856116429
+    },
+    {
+      "section": "0012",
+      "params": {
+        "camber": 0.0,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 6000000.0,
+      "flap": {
+        "chordFrac": 0.25,
+        "deflectionDeg": 10.0
+      },
+      "liftSlopePerDeg": 0.10599288568925341,
+      "alphaZeroLiftDeg": -6.204767662984081,
+      "clMax": 1.9887947758925102,
+      "alphaStallDeg": 18.0,
+      "cdMin": 0.004021076980914888,
+      "cmQuarterChord": -0.11256162003960421,
+      "minConfidenceToStall": 0.6711276832664859,
+      "clAtZeroAlpha": 0.6474121375867037
+    },
+    {
+      "section": "0012",
+      "params": {
+        "camber": 0.0,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 6000000.0,
+      "flap": {
+        "chordFrac": 0.25,
+        "deflectionDeg": 20.0
+      },
+      "liftSlopePerDeg": 0.11998683210984898,
+      "alphaZeroLiftDeg": -12.357021175058364,
+      "clMax": 2.108940875716751,
+      "alphaStallDeg": 15.75,
+      "cdMin": 0.0038568075840644195,
+      "cmQuarterChord": -0.2272273116520022,
+      "minConfidenceToStall": 0.9246660152816751,
+      "clAtZeroAlpha": 1.1281843318370732
+    },
+    {
+      "section": "2412",
+      "params": {
+        "camber": 0.02,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 6000000.0,
+      "flap": {
+        "chordFrac": 0.25,
+        "deflectionDeg": 10.0
+      },
+      "liftSlopePerDeg": 0.11261046239086893,
+      "alphaZeroLiftDeg": -8.301764173426522,
+      "clMax": 2.042729522549893,
+      "alphaStallDeg": 17.5,
+      "cdMin": 0.004183584658467967,
+      "cmQuarterChord": -0.16449011508425804,
+      "minConfidenceToStall": 0.6292130779454289,
+      "clAtZeroAlpha": 0.8787055583002669
+    },
+    {
+      "section": "2412",
+      "params": {
+        "camber": 0.02,
+        "camberPos": 0.4,
+        "thickness": 0.12
+      },
+      "reynolds": 6000000.0,
+      "flap": {
+        "chordFrac": 0.25,
+        "deflectionDeg": 20.0
+      },
+      "liftSlopePerDeg": 0.12051461156326358,
+      "alphaZeroLiftDeg": -14.470158553873278,
+      "clMax": 2.1787073380361974,
+      "alphaStallDeg": 16.25,
+      "cdMin": 0.00417293058037912,
+      "cmQuarterChord": -0.27173456384222006,
+      "minConfidenceToStall": 0.8890299274487505,
+      "clAtZeroAlpha": 1.2818407737422481
+    }
+  ]
+}

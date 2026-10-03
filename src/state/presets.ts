@@ -72,8 +72,9 @@ export const PRESETS: readonly AircraftPreset[] = [
     wing: DEFAULT_WING,
     cruise: DEFAULT_FLOW,
     approach: { alphaDeg: 8, airspeed: 35, altitude: 0 },
-    maxTakeoffMassKg: 1000,
-    typicalCruiseMassKg: 900,
+    // Sized so the default flight (60 m/s, 5 deg, sea level) holds it up: ~100% of weight.
+    maxTakeoffMassKg: 2000,
+    typicalCruiseMassKg: 1860,
     facts: [
       'Real wings are tapered and swept. This one is a plain rectangle so you can see the basic physics without any extras.',
       'Its section is a NACA 2412: 2% camber and 12% thickness, a classic light-aircraft profile.',

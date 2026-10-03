@@ -221,3 +221,47 @@ export function computeSection(
 // app/App.ts
 export function startApp(root: HTMLElement): Promise<void>;
 ```
+
+## Additions from the polish round
+
+These are optional extras on top of the contracts above. App uses them.
+
+```ts
+// render/SceneManager.ts
+setFocus(pivot: Vec3, semispan: number, framing?: WingFraming): void; // frame shots on the wing, not the tunnel
+setViewInsets(insets: Partial<ViewInsets>): void; // CSS px covered by floating UI; centres the projection in the rest
+readonly cutaway: CutawayKind;       // 'none' | 'span' (side/section shots) | 'cross' (behind/tip shots)
+readonly cutawayActive: boolean;
+onCutawayChange(cb: (kind: CutawayKind) => void): () => void;
+
+// render/flow/ParticleSystem.ts
+setAlpha(alphaRad: number): void;               // spawn band follows the pitched wing
+setLightSheet(sheet: LightSheet | null): void;  // show particles only in a thin slab (cutaway shots)
+setTrailLength(transitFraction: number | null): void;
+setTrailDrift(fraction: number): void;
+setTrails(on: boolean): void;
+
+// render/overlay/PressureLegend.ts — viewport colour key ("Low pressure · fast air" ↔ "High pressure · slowed air")
+
+// ui/AppShell.ts
+getViewInsets(): ViewInsets;
+onViewInsetsChange(listener: (insets: ViewInsets) => void): () => void;
+
+// ui/panels/SectionView.ts
+setExpanded(on: boolean): void; // large dialog view of the cross-section (Esc / backdrop closes)
+isExpanded(): boolean;
+
+// ui/panels/ReadoutPanel.ts
+export function machLevel(mach: number, critical: number, divergence: number): 'none' | 'info' | 'warning';
+export function isApproachingStall(aero: AeroResult): boolean; // any strip above 90% of its clMax
+
+// physics/types.ts — AeroResult.stall.highSpeed?: boolean (shock-induced buffet stall);
+// SectionFlow.separated?: Uint8Array and SectionFlow.fieldCl?: number (stall bubble rendering)
+```
+
+## Visual integration checks
+
+`npm run snapshot` (with `npm run dev` running) drives headless Chrome over the DevTools protocol
+through a list of scenarios and writes screenshots and console errors. See
+`scripts/snapshot.mjs`. The dev-only `window.__tunnel` handle (`store`, `results`, `scene`) lets
+scenarios set any app state.
